@@ -1,126 +1,93 @@
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
-#include "boost/date_time/posix_time/posix_time.hpp"
+#include <chrono> // Replaces boost/date_time
 #include "Random.h"
 #include "Utils.h"
 
 namespace NEAT
 {
-
-
-// Seeds the random number generator with this value
-void RNG::Seed(long a_Seed)
-{
-    srand(a_Seed);
-}
-
-void RNG::TimeSeed()
-{
-    auto now = boost::posix_time::second_clock::local_time();
-    Seed(now.time_of_day().total_milliseconds());
-}
-
-// Returns randomly either 1 or -1
-int RNG::RandPosNeg()
-{
-    int choice = rand() % 2;
-    if (choice == 0)
-        return -1;
-    else
-        return 1;
-}
-
-// Returns a random integer between X and Y
-int RNG::RandInt(int aX, int aY)
-{
-    if (aX == aY)
+    // Seeds the RNG with this value
+    void RNG::Seed(long a_Seed)
     {
-        return aX;
+        srand((unsigned int)a_Seed);
     }
-    if (aX == (aY-1))
+
+    // Seeds the RNG using the current time in ms
+    void RNG::TimeSeed()
     {
-        // for two consecutives, pick either with equal probability
-        if (RandFloat() < 0.5)
+        using namespace std::chrono;
+        auto now = system_clock::now();
+        auto ms = duration_cast<milliseconds>(now.time_since_epoch()).count();
+        Seed((long)ms);
+    }
+
+    int RNG::RandPosNeg()
+    {
+        return (rand() % 2) ? 1 : -1;
+    }
+
+    int RNG::RandInt(int aX, int aY)
+    {
+        if(aX==aY) return aX;
+        return aX + (rand() % (aY - aX + 1));
+    }
+
+    double RNG::RandFloat()
+    {
+        return (double)rand() / (double)RAND_MAX;
+    }
+
+    double RNG::RandFloatSigned()
+    {
+        return RandFloat() - RandFloat();
+    }
+
+    double RNG::RandGaussSigned()
+    {
+        // Using Box-Muller or simple approach
+        static int t_iset=0;
+        static double t_gset;
+        double t_fac,t_rsq,t_v1,t_v2;
+
+        if (t_iset==0)
         {
-            return aX;
+            do {
+                t_v1=2.0*RandFloat()-1.0;
+                t_v2=2.0*RandFloat()-1.0;
+                t_rsq = t_v1*t_v1 + t_v2*t_v2;
+            } while(t_rsq>=1.0 || t_rsq==0.0);
+            t_fac = sqrt(-2.0*log(t_rsq)/t_rsq);
+            t_gset = t_v1*t_fac;
+            t_iset = 1;
+            double tmp = t_v2*t_fac;
+            if(tmp>1.0) tmp=1.0;
+            if(tmp<-1.0) tmp=-1.0;
+            return tmp;
         }
         else
         {
-            return aY;
+            t_iset=0;
+            double tmp = t_gset;
+            if(tmp>1.0) tmp=1.0;
+            if(tmp<-1.0) tmp=-1.0;
+            return tmp;
         }
     }
-    return aX + (rand() % (aY - aX + 1));
-}
 
-// Returns a random number from a uniform distribution in the range of [0 .. 1]
-double RNG::RandFloat()
-{
-    return (double)(rand() % RAND_MAX) / RAND_MAX;
-}
-
-// Returns a random number from a uniform distribution in the range of [-1 .. 1]
-double RNG::RandFloatSigned()
-{
-    return (RandFloat() - RandFloat());
-}
-
-// Returns a random number from a gaussian (normal) distribution in the range of [-1 .. 1]
-double RNG::RandGaussSigned()
-{
-    static int t_iset=0;
-    static double t_gset;
-    double t_fac,t_rsq,t_v1,t_v2;
-    
-    if (t_iset==0)
+    int RNG::Roulette(std::vector<double>& a_probs)
     {
-        do
+        double t_total = 0.0;
+        for (auto &p : a_probs) t_total += p;
+        double r = RandFloat() * t_total;
+        double run = 0.0;
+        int idx=0;
+        for (; idx<(int)a_probs.size(); idx++)
         {
-            t_v1=2.0*(RandFloat())-1.0;
-            t_v2=2.0*(RandFloat())-1.0;
-            t_rsq=t_v1*t_v1+t_v2*t_v2;
+            run += a_probs[idx];
+            if(run>=r) break;
         }
-        while (t_rsq>=1.0 || t_rsq==0.0);
-    
-        t_fac=sqrt(-2.0*log(t_rsq)/t_rsq);
-        t_gset=t_v1*t_fac;
-        t_iset=1;
-    
-        double t_tmp = t_v2*t_fac;
-    
-        Clamp(t_tmp, -1.0, 1.0);
-        return t_tmp;
+        return idx;
     }
-    else
-    {
-        t_iset=0;
-        double t_tmp = t_gset;
-        Clamp(t_tmp, -1.0, 1.0);
-        return t_tmp;
-    }
-}
 
-int RNG::Roulette(std::vector<double>& a_probs)
-{
-
-    double t_marble = 0, t_spin = 0, t_total_score = 0;
-    for(unsigned int i=0; i<a_probs.size(); i++)
-    {
-        t_total_score += a_probs[i];
-    }
-    t_marble = RandFloat() * t_total_score;
-    
-    int t_chosen = 0;
-    t_spin = a_probs[t_chosen];
-    while(t_spin < t_marble)
-    {
-        t_chosen++;
-        t_spin += a_probs[t_chosen];
-    }
-    
-    return t_chosen;
-}
-
-
-}
- // namespace NEAT
+} // namespace NEAT

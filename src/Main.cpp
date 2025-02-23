@@ -63,10 +63,10 @@ double xortest(Genome& g)
         //    f += 0.00005;
     }*/
     
-    if (boost::get<std::string>(g.m_GenomeGene.m_Traits["y"].value) == "c")
-        f += 1 * (double)(boost::get<int>(g.m_GenomeGene.m_Traits["v"].value));
+    if (std::get<std::string>(g.m_GenomeGene.m_Traits["y"].value) == "c")
+        f += 1 * (double)(std::get<int>(g.m_GenomeGene.m_Traits["v"].value));
     else
-        f += 1 * (double)(boost::get<double>(g.m_GenomeGene.m_Traits["x"].value));
+        f += 1 * (double)(std::get<double>(g.m_GenomeGene.m_Traits["x"].value));
 
     return f+1000;
 }

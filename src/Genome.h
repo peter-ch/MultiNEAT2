@@ -1,12 +1,6 @@
 #ifndef _GENOME_H
 #define _GENOME_H
 
-#include <boost/shared_ptr.hpp>
-
-#include <boost/graph/graph_traits.hpp>
-#include <boost/graph/adjacency_list.hpp>
-#include <boost/graph/topological_sort.hpp>
-
 #include <vector>
 #include <queue>
 
@@ -33,11 +27,6 @@ namespace NEAT
     class PhenotypeBehavior;
 
     extern ActivationFunction GetRandomActivation(Parameters &a_Parameters, RNG &a_RNG);
-
-    namespace bs = boost;
-
-    typedef bs::adjacency_list <bs::vecS, bs::vecS, bs::directedS> Graph;
-    typedef bs::graph_traits<Graph>::vertex_descriptor Vertex;
 
 	enum GenomeSeedType
 	{
@@ -335,7 +324,7 @@ namespace NEAT
 
         // Adds a new neuron to the genome
         // returns true if succesful
-        bool Mutate_AddNeuron(InnovationDatabase &a_Innovs, const Parameters &a_Parameters, RNG &a_RNG);
+        bool Mutate_AddNeuron(InnovationDatabase &a_Innovs, Parameters &a_Parameters, RNG &a_RNG);
 
         // Adds a new link to the genome
         // returns true if succesful

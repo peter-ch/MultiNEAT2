@@ -11,13 +11,13 @@ using namespace NEAT;
 
 // XOR input and output pairs
 std::vector<std::pair<std::vector<double>, double>> xor_data = {
-    {{0, 0}, 0},
-    {{0, 1}, 1},
-    {{1, 0}, 1},
-    {{1, 1}, 0}
+    { {0, 0}, 0 },
+    { {0, 1}, 1 },
+    { {1, 0}, 1 },
+    { {1, 1}, 0 }
 };
 
-// Function to evaluate the XOR fitness of a genome
+// Function to evaluate the XOR fitness of a genome.
 double xortest(Genome& g) {
     NeuralNetwork nn;
     g.BuildPhenotype(nn);
@@ -32,13 +32,10 @@ double xortest(Genome& g) {
         nn.Activate();
         nn.Activate();
         double output = nn.Output()[0];
-
         total_error += std::fabs(expected_output - output);
     }
-
-    // Calculate fitness based on error (smaller error translates to higher fitness)
-    double fitness = (4.0 - total_error)*(4.0 - total_error); // Maximum total_error is 16
-
+    // Fitness is higher when error is lower.
+    double fitness = (4.0 - total_error) * (4.0 - total_error);
     return fitness;
 }
 
@@ -59,51 +56,42 @@ int main() {
     params.RouletteWheelSelection = false;
     params.RecurrentProb = 0.0;
     params.OverallMutationRate = 0.3;
-
     params.ArchiveEnforcement = false;
-
     params.MutateWeightsProb = 0.25;
-
     params.WeightMutationMaxPower = 0.5;
     params.WeightReplacementMaxPower = 8.0;
     params.MutateWeightsSevereProb = 0.0;
     params.WeightMutationRate = 0.85;
     params.WeightReplacementRate = 0.2;
-
     params.MaxWeight = 8;
-
     params.MutateAddNeuronProb = 0.001;
     params.MutateAddLinkProb = 0.03;
     params.MutateRemLinkProb = 0.0;
-
     params.MinActivationA = 4.9;
     params.MaxActivationA = 4.9;
-
     params.ActivationFunction_SignedSigmoid_Prob = 0.0;
     params.ActivationFunction_UnsignedSigmoid_Prob = 1.0;
     params.ActivationFunction_Tanh_Prob = 0.0;
     params.ActivationFunction_SignedStep_Prob = 0.0;
-
     params.CrossoverRate = 0.0;
     params.MultipointCrossoverRate = 0.0;
     params.SurvivalRate = 0.2;
-
     params.MutateNeuronTraitsProb = 0;
     params.MutateLinkTraitsProb = 0;
 
     params.AllowLoops = false;
     params.AllowClones = false;
 
-    GenomeInitStruct ints;
-    ints.NumInputs = 3;
-    ints.NumOutputs = 1;
-    ints.NumHidden = 0;
-    ints.SeedType = PERCEPTRON;
-    ints.HiddenActType = UNSIGNED_SIGMOID;
-    ints.OutputActType = UNSIGNED_SIGMOID;
+    GenomeInitStruct init;
+    init.NumInputs = 3;
+    init.NumOutputs = 1;
+    init.NumHidden = 0;
+    init.SeedType = PERCEPTRON;
+    init.HiddenActType = UNSIGNED_SIGMOID;
+    init.OutputActType = UNSIGNED_SIGMOID;
 
-    Genome genomePrototype(params, ints);
-    Population pop(genomePrototype, params, true, 1.0, time(0));
+    Genome genomePrototype(params, init);
+    Population pop(genomePrototype, params, true, 1.0, static_cast<int>(time(nullptr)));
 
     const int generations = 1000;
     for (int gen = 0; gen < generations; ++gen) {
@@ -114,15 +102,11 @@ int main() {
                 individual.SetEvaluated();
             }
         }
-
-        auto bestGenome = pop.GetBestGenome();
+        Genome bestGenome = pop.GetBestGenome();
         double bestFitness = bestGenome.GetFitness();
-        printf("Generation: %d, Best Fitness: %3.5f\n", gen, bestFitness);
-
+        std::cout << "Generation: " << gen << ", Best Fitness: " << bestFitness << std::endl;
         pop.Epoch();
     }
-
     std::cout << "\nSimulation completed.\n";
     return 0;
 }
-

@@ -94,7 +94,7 @@ def main():
     # Create the initial population.
     pop = pnt.Population(genome_prototype, params, True, 1.0, int(time.time()))
 
-    generations = 300  # total number of generations
+    generations = 100  # total number of generations
     for gen in range(generations):
         # Evaluate all genomes in every species on the XOR task.
         for species in pop.m_Species:

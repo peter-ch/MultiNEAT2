@@ -65,6 +65,7 @@ import matplotlib.pyplot as plt
 
 # Import common neuron type names from pnt.
 INPUT  = pnt.INPUT
+BIAS  = pnt.BIAS
 OUTPUT = pnt.OUTPUT
 HIDDEN = pnt.HIDDEN
 
@@ -200,47 +201,85 @@ def get_topologically_sorted_nodes(genome):
         return sorted_nodes
 
 
-def DrawGenome(genome, figsize=(12, 8), node_size=600):
+def DrawGenome(genome, figsize=(12, 8), node_size=600, with_edge_labels=False):
     """
     Draws the given MultiNEAT Genome as a neural network diagram.
-    The layout is computed so that:
-      • Input nodes are arranged as a row on the top (y = 1),
-      • Output nodes as a row on the bottom (y = 0),
-      • Hidden nodes are placed between according to their m_SplitY value.
-    Arrowed edges are drawn to show edge direction.
+    
+    This improved version:
+      • Uses compute_node_positions() so that input, output, and hidden nodes are laid out consistently.
+      • Draws inputs (square, light green), hidden (circle, light blue) and output nodes (diamond, salmon) in different colors.
+      • Colors edges according to their weight (green for positive, red for negative, gray for zero) and scales their width.
+      • Draws recurrent edges with a dashed style.
+      • Optionally displays edge labels (e.g. edge weight).
+      • Adds a legend indicating node types.
+    
+    The default layout is:
+         - Input nodes on the top (y=1.0),
+         - Output nodes on the bottom (y=0.0),
+         - Hidden nodes between (using y = 1 - m_SplitY when available).
     """
+    # Get the networkx graph and positions.
     G = Genome2NX(genome)
+    pos = compute_node_positions(genome)
     
     # Partition nodes by type.
     input_nodes  = [n for n, d in G.nodes(data=True) if d.get("type") == INPUT]
     output_nodes = [n for n, d in G.nodes(data=True) if d.get("type") == OUTPUT]
     hidden_nodes = [n for n, d in G.nodes(data=True) if d.get("type") not in (INPUT, OUTPUT)]
     
-    pos = {}
-    # Compute positions: inputs evenly spaced at y=1, outputs at y=0.
-    if input_nodes:
-        n = len(input_nodes)
-        for i, node in enumerate(sorted(input_nodes)):
-            pos[node] = ((i + 1) / (n + 1), 1.0)
-    if output_nodes:
-        n = len(output_nodes)
-        for i, node in enumerate(sorted(output_nodes)):
-            pos[node] = ((i + 1) / (n + 1), 0.0)
-    if hidden_nodes:
-        n = len(hidden_nodes)
-        # Use the "split_y" attribute if available.
-        for i, node in enumerate(sorted(hidden_nodes)):
-            data = G.nodes[node]
-            split_y = data.get("split_y", 0.5)
-            y = 1 - split_y  # so that lower split_y gives lower position
-            pos[node] = ((i + 1) / (n + 1), y)
+    # Set up the matplotlib axis.
+    fig, ax = plt.subplots(figsize=figsize)
     
-    plt.figure(figsize=figsize)
+    # Draw nodes with different shapes and colors.
+    nx.draw_networkx_nodes(G, pos, nodelist=input_nodes, node_color='lightgreen', node_shape='s',
+                           node_size=node_size, ax=ax)
+    nx.draw_networkx_nodes(G, pos, nodelist=hidden_nodes, node_color='lightblue', node_shape='o',
+                           node_size=node_size, ax=ax)
+    nx.draw_networkx_nodes(G, pos, nodelist=output_nodes, node_color='salmon', node_shape='D',
+                           node_size=node_size, ax=ax)
     
-    # Draw nodes.
-    nx.draw_networkx_nodes(G, pos, node_color='lightblue', node_size=node_size)
+    # Prepare edge groups based on recurrence.
+    normal_edges = []
+    normal_edge_colors = []
+    normal_edge_widths = []
     
-    # Create labels for nodes.
+    recurrent_edges = []
+    recurrent_edge_colors = []
+    recurrent_edge_widths = []
+    
+    for u, v, edata in G.edges(data=True):
+        weight = edata.get("weight", 1)
+        # Choose color based on sign.
+        if weight > 0:
+            color = "green"
+        elif weight < 0:
+            color = "red"
+        else:
+            color = "gray"
+        # Scale edge width (with at least width=1).
+        width = max(1, abs(weight))
+        
+        if edata.get("is_recurrent", False):
+            recurrent_edges.append((u, v))
+            recurrent_edge_colors.append(color)
+            recurrent_edge_widths.append(width)
+        else:
+            normal_edges.append((u, v))
+            normal_edge_colors.append(color)
+            normal_edge_widths.append(width)
+    
+    # Draw non-recurrent (normal) edges.
+    if normal_edges:
+        nx.draw_networkx_edges(G, pos, edgelist=normal_edges, width=normal_edge_widths,
+                               edge_color=normal_edge_colors, arrows=True,
+                               arrowstyle='-|>', arrowsize=10, ax=ax)
+    # Draw recurrent edges in dashed style.
+    if recurrent_edges:
+        nx.draw_networkx_edges(G, pos, edgelist=recurrent_edges, width=recurrent_edge_widths,
+                               edge_color=recurrent_edge_colors, style='dashed', arrows=True,
+                               arrowstyle='-|>', arrowsize=10, ax=ax)
+    
+    # Create labels for nodes (showing node ID and type).
     labels = {}
     for node, data in G.nodes(data=True):
         node_type = data.get("type")
@@ -250,17 +289,32 @@ def DrawGenome(genome, figsize=(12, 8), node_size=600):
             ttype = "Output"
         elif node_type == HIDDEN:
             ttype = "Hidden"
+        elif node_type == BIAS:
+            ttype = "Bias"
         else:
             ttype = str(node_type)
         labels[node] = f"{node}\n{ttype}"
+    nx.draw_networkx_labels(G, pos, labels=labels, font_size=8, ax=ax)
     
-    nx.draw_networkx_labels(G, pos, labels=labels, font_size=8)
+    # Optionally, draw edge labels (e.g. weight values).
+    if with_edge_labels:
+        edge_labels = {}
+        for u, v, edata in G.edges(data=True):
+            edge_labels[(u, v)] = f"{edata.get('weight', 0):.2f}"
+        nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=7, ax=ax)
     
-    # Draw edges with arrowheads.
-    nx.draw_networkx_edges(G, pos, arrows=True, arrowstyle='-|>', arrowsize=10, edge_color='gray')
+    # Build a legend for node types.
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], marker='s', color='w', markerfacecolor='lightgreen', markersize=10, label='Input'),
+        Line2D([0], [0], marker='o', color='w', markerfacecolor='lightblue', markersize=10, label='Hidden'),
+        Line2D([0], [0], marker='D', color='w', markerfacecolor='salmon', markersize=10, label='Output')
+    ]
+    ax.legend(handles=legend_elements, loc='upper center', ncol=3)
     
-    plt.title("Genome Network")
-    plt.axis("off")
+    ax.set_title("Genome Network")
+    ax.axis("off")
+    plt.tight_layout()
     plt.show()
 
 

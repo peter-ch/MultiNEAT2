@@ -8,18 +8,18 @@ namespace py = pybind11;
 
 // Include ALL the MultiNEAT headers
 #include "Assert.h"
-#include "Genes.h"             // defines Gene, LinkGene, NeuronGene, NeuronType, ActivationFunction
-#include "Genome.h"            // defines Genome, GenomeInitStruct
-#include "Innovation.h"        // defines Innovation and InnovationDatabase
-#include "NeuralNetwork.h"     // defines Connection, Neuron, NeuralNetwork
-#include "Parameters.h"        // defines Parameters
-#include "PhenotypeBehavior.h" // defines PhenotypeBehavior
-#include "Population.h"        // defines Population
-#include "Species.h"           // defines Species
-#include "Random.h"            // defines RNG
-#include "Substrate.h"         // defines Substrate
-#include "Traits.h"            // defines intsetelement, floatsetelement, IntTraitParameters, FloatTraitParameters, StringTraitParameters, IntSetTraitParameters, FloatSetTraitParameters, TraitParameters, Trait
-#include "Utils.h"             // utility inline functions (if desired)
+#include "Genes.h"             
+#include "Genome.h"            
+#include "Innovation.h"        
+#include "NeuralNetwork.h"     
+#include "Parameters.h"        
+#include "PhenotypeBehavior.h" 
+#include "Population.h"        
+#include "Species.h"           
+#include "Random.h"            
+#include "Substrate.h"         
+#include "Traits.h"            
+#include "Utils.h"             
 
 
 // Create a pybind11 module called "pymultineat"
@@ -599,3 +599,5 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite("m_min_time_const", &NEAT::Substrate::m_min_time_const)
         .def_readwrite("m_max_time_const", &NEAT::Substrate::m_max_time_const);
 }; 
+
+

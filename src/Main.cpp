@@ -11,10 +11,10 @@ using namespace NEAT;
 
 // XOR input and output pairs
 std::vector<std::pair<std::vector<double>, double>> xor_data = {
-    { {0, 0}, 0 },
-    { {0, 1}, 1 },
-    { {1, 0}, 1 },
-    { {1, 1}, 0 }
+    { {0, 0, 1}, 0 },
+    { {0, 1, 1}, 1 },
+    { {1, 0, 1}, 1 },
+    { {1, 1, 1}, 0 }
 };
 
 // Function to evaluate the XOR fitness of a genome.

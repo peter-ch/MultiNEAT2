@@ -3,7 +3,7 @@
 
 import time
 import pymultineat as pnt
-from multineat2 import DrawGenome
+from neattools import DrawGenome
 
 # Define the XOR training data.
 # Note that the genome is initialized with three inputs: two (the XOR inputs)

@@ -17,7 +17,13 @@ The following main functions are provided:
          • Output nodes are arranged as a row across the bottom,
          • Hidden nodes are placed in between according to a “split_y” value
            (or simply evenly if not provided).
+      The title of the diagram now reflects the individual’s ID and fitness.
       Arrowheads indicate edge direction.
+
+  • DrawGenomes(genomes, …)
+      Draws a list of genomes in a grid of subplots, automatically determining
+      how many rows and columns to use so that the overall layout is approximately 
+      in a 5:3 aspect ratio (e.g. 15 genomes will be drawn in 3 rows of 5 columns).
 
   • narrate_traits(genome)
       Prints out (narrates) the traits in the genome. It prints the genome’s own traits,
@@ -40,7 +46,7 @@ Note:
   (such as m_NeuronGenes, m_LinkGenes, and the neuron/link/tratis members) are accessible.
 
 Usage example:
-  from multineat2 import Genome2NX, DrawGenome, narrate_traits, get_layered_nodes, print_genome_summary
+  from multineat2 import Genome2NX, DrawGenome, DrawGenomes, narrate_traits, get_layered_nodes, print_genome_summary
   from pnt import Genome, Parameters, GenomeInitStruct, INPUT, OUTPUT, HIDDEN, UNSIGNED_SIGMOID
   params = Parameters()
   init = GenomeInitStruct()
@@ -54,6 +60,7 @@ Usage example:
   print_genome_summary(seed_genome)
   narrate_traits(seed_genome)
   DrawGenome(seed_genome)
+  DrawGenomes([seed_genome, ...])
   layers = get_layered_nodes(seed_genome)
   print("Layers (top-to-bottom):", layers)
   export_genome_graph(seed_genome, "genome.dot")
@@ -62,10 +69,11 @@ Usage example:
 import pymultineat as pnt
 import networkx as nx
 import matplotlib.pyplot as plt
+import math
 
 # Import common neuron type names from pnt.
 INPUT  = pnt.INPUT
-BIAS  = pnt.BIAS
+BIAS   = pnt.BIAS
 OUTPUT = pnt.OUTPUT
 HIDDEN = pnt.HIDDEN
 
@@ -131,7 +139,7 @@ def compute_node_positions(genome):
     # Sort by m_ID for consistency
     input_nodes.sort(key=lambda n: n.m_ID)
     output_nodes.sort(key=lambda n: n.m_ID)
-    # For hidden nodes, sort by m_SplitY if available. (Lower m_SplitY means it appeared later in evolution.)
+    # For hidden nodes, sort by m_SplitY if available.
     hidden_nodes.sort(key=lambda n: getattr(n, "m_SplitY", 0.5))
     
     n_in = len(input_nodes)
@@ -148,12 +156,10 @@ def compute_node_positions(genome):
     
     # Position hidden nodes.
     for i, n in enumerate(hidden_nodes):
-        # Try to use m_SplitY to determine vertical position:
         try:
             sy = n.m_SplitY
         except AttributeError:
             sy = 0.5
-        # In DrawGenome we used: y = 1 - (split_y) so that lower split_y means lower position.
         y = 1.0 - sy
         pos[n.m_ID] = ((i + 1) / (n_hidden + 1), y)
         
@@ -170,16 +176,12 @@ def get_layered_nodes(genome):
     pos = compute_node_positions(genome)
     layers = {}
     for nid, (x, y) in pos.items():
-        # Quantize layer by rounding y to one decimal place.
         layer = round(y, 1)
         layers.setdefault(layer, []).append((nid, x))
-    # Sort nodes in each layer by increasing x.
     for layer in layers:
         layers[layer].sort(key=lambda tup: tup[1])
-        # Now extract only node IDs.
         layers[layer] = [nid for nid, x in layers[layer]]
     
-    # Return layers sorted by descending layer (top = highest y)
     sorted_layers = dict(sorted(layers.items(), key=lambda item: item[0], reverse=True))
     return sorted_layers
 
@@ -201,23 +203,13 @@ def get_topologically_sorted_nodes(genome):
         return sorted_nodes
 
 
-def DrawGenome(genome, figsize=(12, 8), node_size=600, with_edge_labels=False):
-    """
-    Draws the given MultiNEAT Genome as a neural network diagram.
-    
-    This improved version:
-      • Uses compute_node_positions() so that input, output, and hidden nodes are laid out consistently.
-      • Draws inputs (square, light green), hidden (circle, light blue) and output nodes (diamond, salmon) in different colors.
-      • Colors edges according to their weight (green for positive, red for negative, gray for zero) and scales their width.
-      • Draws recurrent edges with a dashed style.
-      • Optionally displays edge labels (e.g. edge weight).
-      • Adds a legend indicating node types.
-    
-    The default layout is:
-         - Input nodes on the top (y=1.0),
-         - Output nodes on the bottom (y=0.0),
-         - Hidden nodes between (using y = 1 - m_SplitY when available).
-    """
+def DrawGenome(genome, ax=None, node_size=100, with_edge_labels=False):
+    # If no axis is provided, create one.
+    own_fig = False
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(12, 8))
+        own_fig = True
+
     # Get the networkx graph and positions.
     G = Genome2NX(genome)
     pos = compute_node_positions(genome)
@@ -226,9 +218,6 @@ def DrawGenome(genome, figsize=(12, 8), node_size=600, with_edge_labels=False):
     input_nodes  = [n for n, d in G.nodes(data=True) if d.get("type") == INPUT]
     output_nodes = [n for n, d in G.nodes(data=True) if d.get("type") == OUTPUT]
     hidden_nodes = [n for n, d in G.nodes(data=True) if d.get("type") not in (INPUT, OUTPUT)]
-    
-    # Set up the matplotlib axis.
-    fig, ax = plt.subplots(figsize=figsize)
     
     # Draw nodes with different shapes and colors.
     nx.draw_networkx_nodes(G, pos, nodelist=input_nodes, node_color='lightgreen', node_shape='s',
@@ -249,14 +238,12 @@ def DrawGenome(genome, figsize=(12, 8), node_size=600, with_edge_labels=False):
     
     for u, v, edata in G.edges(data=True):
         weight = edata.get("weight", 1)
-        # Choose color based on sign.
         if weight > 0:
             color = "green"
         elif weight < 0:
             color = "red"
         else:
             color = "gray"
-        # Scale edge width (with at least width=1).
         width = max(1, abs(weight))
         
         if edata.get("is_recurrent", False):
@@ -268,7 +255,7 @@ def DrawGenome(genome, figsize=(12, 8), node_size=600, with_edge_labels=False):
             normal_edge_colors.append(color)
             normal_edge_widths.append(width)
     
-    # Draw non-recurrent (normal) edges.
+    # Draw normal edges.
     if normal_edges:
         nx.draw_networkx_edges(G, pos, edgelist=normal_edges, width=normal_edge_widths,
                                edge_color=normal_edge_colors, arrows=True,
@@ -293,27 +280,75 @@ def DrawGenome(genome, figsize=(12, 8), node_size=600, with_edge_labels=False):
             ttype = "Bias"
         else:
             ttype = str(node_type)
-        labels[node] = f"{node}\n{ttype}"
+        labels[node] = f"{node}"
     nx.draw_networkx_labels(G, pos, labels=labels, font_size=8, ax=ax)
     
-    # Optionally, draw edge labels (e.g. weight values).
     if with_edge_labels:
         edge_labels = {}
         for u, v, edata in G.edges(data=True):
             edge_labels[(u, v)] = f"{edata.get('weight', 0):.2f}"
         nx.draw_networkx_edge_labels(G, pos, edge_labels=edge_labels, font_size=7, ax=ax)
     
-    # Build a legend for node types.
-    from matplotlib.lines import Line2D
-    legend_elements = [
-        Line2D([0], [0], marker='s', color='w', markerfacecolor='lightgreen', markersize=10, label='Input'),
-        Line2D([0], [0], marker='o', color='w', markerfacecolor='lightblue', markersize=10, label='Hidden'),
-        Line2D([0], [0], marker='D', color='w', markerfacecolor='salmon', markersize=10, label='Output')
-    ]
-    ax.legend(handles=legend_elements, loc='upper center', ncol=3)
+    # Set the plot title to include the genome's ID and fitness.
+    try:
+        individual_id = genome.GetID()
+    except AttributeError:
+        individual_id = "N/A"
+    try:
+        fitness = genome.GetFitness()
+    except AttributeError:
+        fitness = "N/A"
+    ax.set_title(f"ID: {individual_id} | Fitness: {fitness}")
     
-    ax.set_title("Genome Network")
     ax.axis("off")
+    if own_fig:
+        plt.tight_layout()
+        plt.show()
+
+
+def DrawGenomes(genomes, node_size=600, with_edge_labels=False):
+    """
+    Draws a list of genomes as neural network diagrams in subplots.
+
+    The function automatically determines the subplots grid so that the overall
+    figure has an approximate 5:3 (width:height) aspect ratio. For example, if there
+    are 15 genomes in the list, the grid will be 3 rows x 5 columns.
+
+    Each genome is drawn by calling DrawGenome() on its respective subplot.
+    """
+    n = len(genomes)
+    if n == 0:
+        print("No genomes to draw.")
+        return
+
+    # Determine optimal grid dimensions.
+    target_ratio = 5 / 3  # desired ratio columns/rows
+    best_diff = None
+    best_rows, best_cols = 1, n
+    for rows in range(1, n + 1):
+        cols = math.ceil(n / rows)
+        ratio = cols / rows
+        diff = abs(ratio - target_ratio)
+        if best_diff is None or diff < best_diff:
+            best_diff = diff
+            best_rows, best_cols = rows, cols
+
+    # Create subplots. Each subplot is assigned approximate width=5 and height=3.
+    fig, axes = plt.subplots(best_rows, best_cols, figsize=(best_cols * 5, best_rows * 3))
+    # Flatten axes in case there is more than one.
+    if hasattr(axes, "flatten"):
+        axes = axes.flatten()
+    else:
+        axes = [axes]
+
+    # Draw each genome in its corresponding subplot.
+    for ax, genome in zip(axes, genomes):
+        DrawGenome(genome, ax=ax, node_size=node_size, with_edge_labels=with_edge_labels)
+    
+    # Turn off any extra subplots that don't have a genome.
+    for ax in axes[len(genomes):]:
+        ax.axis("off")
+    
     plt.tight_layout()
     plt.show()
 
@@ -325,7 +360,6 @@ def narrate_traits(genome):
     """
     print("===== Genome Traits =====", flush=True)
     try:
-        # Genome-level traits.
         print("GenomeGene Traits:", flush=True)
         for key, value in genome.m_GenomeGene.m_Traits.items():
             print(f"  {key}: {value}", flush=True)
@@ -438,7 +472,7 @@ if __name__ == "__main__":
     print_genome_summary(seed_genome)
     narrate_traits(seed_genome)
     
-    # Draw the genome.
+    # Draw the genome in its own figure.
     DrawGenome(seed_genome)
     
     # Generate and print layered node grouping.
@@ -459,3 +493,8 @@ if __name__ == "__main__":
     # Also convert to networkx graph and print basic info.
     G = Genome2NX(seed_genome)
     print(f"Converted genome contains {G.number_of_nodes()} nodes and {G.number_of_edges()} edges.", flush=True)
+    
+    # Demonstration: if you have a list of genomes, you can draw them all together.
+    # For demonstration, we will use a list containing several copies of seed_genome.
+    demo_genomes = [seed_genome for _ in range(15)]
+    DrawGenomes(demo_genomes)

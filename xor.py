@@ -3,7 +3,7 @@
 
 import time
 import pymultineat as pnt
-from neattools import DrawGenome
+from neattools import DrawGenome, DrawGenomes
 
 # Define the XOR training data.
 # Note that the genome is initialized with three inputs: two (the XOR inputs)
@@ -114,7 +114,9 @@ def main():
 
     print("Simulation completed.", flush=True)
 
-    DrawGenome(bestGenome)
+    # DrawGenome(bestGenome)
+    gs = [x.m_Individuals[0] for x in pop.m_Species]
+    DrawGenomes(gs)
 
 
 if __name__ == "__main__":

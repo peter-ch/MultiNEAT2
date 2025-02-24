@@ -994,8 +994,78 @@ namespace NEAT
                 break;
             }
         }
-
     }
+
+    // The Serialize method writes a header block plus the number of individuals
+// and then calls Genome::Serialize() for each genome.
+std::string Species::Serialize() const {
+    std::ostringstream oss;
+    // Use markers so that when unpickling we know where the species block starts/ends.
+    oss << "SpeciesStart\n";
+    // Write header fields: id, best species flag, worst species flag,
+    // age in generations, age in evaluations, required offspring,
+    // best fitness, generations & evaluations without improvement, and the color and average fitness.
+    oss << m_ID << " " << m_BestSpecies << " " << m_WorstSpecies << " " 
+        << m_AgeGenerations << " " << m_AgeEvaluations << " " << m_OffspringRqd << " "
+        << m_BestFitness << " " << m_GensNoImprovement << " " << m_EvalsNoImprovement << " "
+        << m_R << " " << m_G << " " << m_B << " " << m_AverageFitness << "\n";
+    // Write how many genomes are contained.
+    oss << m_Individuals.size() << "\n";
+    // For each genome use its own serialization.
+    for (const auto &genome : m_Individuals) {
+         oss << genome.Serialize() << "\n";
+    }
+    oss << "SpeciesEnd\n";
+    return oss.str();
+}
+
+// The Deserialize method reads the header in order and then reads the given number of genomes.
+Species Species::Deserialize(const std::string &data) {
+    std::istringstream iss(data);
+    std::string token;
+
+    iss >> token;
+    if (token != "SpeciesStart")
+         throw std::runtime_error("Species::Deserialize: missing SpeciesStart marker.");
+    
+    Species s;
+    // Read header values in order.
+    iss >> s.m_ID
+        >> s.m_BestSpecies
+        >> s.m_WorstSpecies
+        >> s.m_AgeGenerations
+        >> s.m_AgeEvaluations
+        >> s.m_OffspringRqd
+        >> s.m_BestFitness
+        >> s.m_GensNoImprovement
+        >> s.m_EvalsNoImprovement
+        >> s.m_R >> s.m_G >> s.m_B >> s.m_AverageFitness;
+    
+    size_t numIndividuals;
+    iss >> numIndividuals;
+    
+    // Consume any leftover newline.
+    std::string dummy;
+    std::getline(iss, dummy);
+    
+    s.m_Individuals.clear();
+    // For each genome, assume Genome::Serialize produced a one‐line string.
+    for (size_t i = 0; i < numIndividuals; i++) {
+         std::string genomeBlock;
+         std::getline(iss, genomeBlock);
+         // In case of empty lines, skip
+         while(genomeBlock.empty() && std::getline(iss, genomeBlock)) {}
+         NEAT::Genome g = NEAT::Genome::Deserialize(genomeBlock);
+         s.m_Individuals.push_back(g);
+    }
+    
+    iss >> token;
+    if (token != "SpeciesEnd")
+         throw std::runtime_error("Species::Deserialize: missing SpeciesEnd marker.");
+    
+    return s;
+}
+
 
 } // namespace NEAT
 

@@ -333,7 +333,15 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite("m_num_inputs", &NEAT::NeuralNetwork::m_num_inputs)
         .def_readwrite("m_num_outputs", &NEAT::NeuralNetwork::m_num_outputs)
         .def_readwrite("m_connections", &NEAT::NeuralNetwork::m_connections)
-        .def_readwrite("m_neurons", &NEAT::NeuralNetwork::m_neurons);
+        .def_readwrite("m_neurons", &NEAT::NeuralNetwork::m_neurons)
+        .def(py::pickle(
+            [](const NEAT::NeuralNetwork &nn) -> std::string {
+                return nn.Serialize();
+            },
+            [](const std::string &state) {
+                return NEAT::NeuralNetwork::Deserialize(state);
+            }
+        ));
 
         py::class_<NEAT::Parameters>(m, "Parameters")
             .def(py::init<>())
@@ -527,7 +535,11 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite("m_Generation", &NEAT::Population::m_Generation)
         .def_readwrite("m_Species", &NEAT::Population::m_Species)
         .def_readwrite("m_ID", &NEAT::Population::m_ID)
-        .def_readwrite("m_NumEvaluations", &NEAT::Population::m_NumEvaluations);
+        .def_readwrite("m_NumEvaluations", &NEAT::Population::m_NumEvaluations)
+        .def(py::pickle(
+            [](const NEAT::Population &pop) -> std::string { return pop.Serialize(); },
+            [](const std::string &state) { return NEAT::Population::Deserialize(state); }
+        ));
 
     // ========================
     // Bindings for Species
@@ -558,7 +570,11 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite("m_G", &NEAT::Species::m_G)
         .def_readwrite("m_B", &NEAT::Species::m_B)
         .def_readwrite("m_AverageFitness", &NEAT::Species::m_AverageFitness)
-        .def_readwrite("m_Individuals", &NEAT::Species::m_Individuals);
+        .def_readwrite("m_Individuals", &NEAT::Species::m_Individuals)
+        .def(py::pickle(
+            [](const NEAT::Species &s) -> std::string { return s.Serialize(); },
+            [](const std::string &state) { return NEAT::Species::Deserialize(state); }
+        ));
 
     // ========================
     // Bindings for RNG

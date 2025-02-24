@@ -1299,5 +1299,73 @@ double Population::ComputeSparseness(Genome& genome)
 }
 
 
+std::string Population::Serialize() const {
+    std::ostringstream oss;
+    // Use markers for clarity.
+    oss << "PopulationStart\n";
+    oss << m_Generation << " " << m_NumEvaluations << " " 
+        << m_NextGenomeID << " " << m_NextSpeciesID << " " 
+        << m_BestFitnessEver << "\n";
+    // Write the number of species.
+    oss << m_Species.size() << "\n";
+    // For each species, write its serialization
+    for (const auto &spec : m_Species) {
+         oss << spec.Serialize() << "\n";
+    }
+    oss << "PopulationEnd\n";
+    return oss.str();
+}
+
+Population Population::Deserialize(const std::string &data) {
+    std::istringstream iss(data);
+    std::string token;
+    iss >> token;
+    if (token != "PopulationStart")
+        throw std::runtime_error("Population::Deserialize: missing PopulationStart marker.");
+    
+    Population pop;
+    iss >> pop.m_Generation >> pop.m_NumEvaluations >> pop.m_NextGenomeID 
+        >> pop.m_NextSpeciesID >> pop.m_BestFitnessEver;
+    
+    size_t numSpecies = 0;
+    iss >> numSpecies;
+    
+    // Consume the rest of the line.
+    std::string dummy;
+    std::getline(iss, dummy);
+    
+    pop.m_Species.clear();
+    // For each species we have a block (which might span multiple lines) delimited by the markers.
+    for (size_t i = 0; i < numSpecies; i++) {
+         std::ostringstream speciesStream;
+         std::string l;
+         // Keep reading until we encounter "SpeciesEnd" in a line.
+         // First, we expect a line beginning with "SpeciesStart".
+         while (std::getline(iss, l)) {
+             if (l.find("SpeciesStart") != std::string::npos) {
+                 speciesStream << l << "\n";
+                 break;
+             }
+         }
+         // Now read until the "SpeciesEnd" marker.
+         while (std::getline(iss, l)) {
+             speciesStream << l << "\n";
+             if (l.find("SpeciesEnd") != std::string::npos) {
+                 break;
+             }
+         }
+         NEAT::Species s = NEAT::Species::Deserialize(speciesStream.str());
+         pop.m_Species.push_back(s);
+    }
+    
+    iss >> token;
+    if (token != "PopulationEnd")
+         throw std::runtime_error("Population::Deserialize: missing PopulationEnd marker.");
+    
+    return pop;
+}
+
+
+
 } // namespace NEAT
 

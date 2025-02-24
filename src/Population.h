@@ -260,6 +260,9 @@ public:
     // counters for archive stagnation
     unsigned int m_GensSinceLastArchiving;
     unsigned int m_QuickAddCounter;
+
+    std::string Serialize() const;
+    static Population Deserialize(const std::string &data);
         
     };
 

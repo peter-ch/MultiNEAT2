@@ -367,4 +367,52 @@ namespace NEAT
         std::ifstream t_DataFile(a_filename);
         return Load(t_DataFile);
     }
+
+    std::string NeuralNetwork::Serialize() const {
+        std::ostringstream oss;
+        oss << m_num_inputs << " " << m_num_outputs << "\n";
+        oss << m_neurons.size() << "\n";
+        for (const auto &n : m_neurons) {
+            // Save all the necessary data: here we assume that an int can represent the enums
+            oss << static_cast<int>(n.m_type) << " " << n.m_a << " " << n.m_b << " " 
+                << n.m_timeconst << " " << n.m_bias << " " 
+                << static_cast<int>(n.m_activation_function_type) << " " 
+                << n.m_split_y << "\n";
+        }
+        oss << m_connections.size() << "\n";
+        for (const auto &c : m_connections) {
+            oss << c.m_source_neuron_idx << " " << c.m_target_neuron_idx << " " 
+                << c.m_weight << " " << c.m_recur_flag << " " 
+                << c.m_hebb_rate << " " << c.m_hebb_pre_rate << "\n";
+        }
+        return oss.str();
+    }
+    
+    NeuralNetwork NeuralNetwork::Deserialize(const std::string &data) {
+        NeuralNetwork nn;
+        std::istringstream iss(data);
+        iss >> nn.m_num_inputs >> nn.m_num_outputs;
+        int num_neurons = 0;
+        iss >> num_neurons;
+        for (int i = 0; i < num_neurons; ++i) {
+            Neuron n;
+            int type_int, af_int;
+            iss >> type_int >> n.m_a >> n.m_b >> n.m_timeconst >> n.m_bias >> af_int >> n.m_split_y;
+            n.m_type = static_cast<NeuronType>(type_int);
+            n.m_activation_function_type = static_cast<ActivationFunction>(af_int);
+            nn.m_neurons.push_back(n);
+        }
+        int num_connections = 0;
+        iss >> num_connections;
+        for (int i = 0; i < num_connections; ++i) {
+            Connection c;
+            int src, tgt, is_recur;
+            iss >> src >> tgt >> c.m_weight >> is_recur >> c.m_hebb_rate >> c.m_hebb_pre_rate;
+            c.m_source_neuron_idx = src;
+            c.m_target_neuron_idx = tgt;
+            c.m_recur_flag = is_recur != 0;
+            nn.m_connections.push_back(c);
+        }
+        return nn;
+    }
 }

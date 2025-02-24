@@ -103,6 +103,9 @@ namespace NEAT
             m_total_weight_change.clear();
             SetInputOutputDimentions(0, 0);
         }
+
+        std::string Serialize() const;
+        static NeuralNetwork Deserialize(const std::string &data);
     };
 }
 #endif

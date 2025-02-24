@@ -206,6 +206,9 @@ public:
     }
 
 
+    std::string Serialize() const;
+    static Species Deserialize(const std::string &data);
+
 
     ////////////////////////////////////////
     // Real-time methods

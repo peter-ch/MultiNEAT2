@@ -118,6 +118,8 @@ def main():
     gs = [x.m_Individuals[0] for x in pop.m_Species]
     DrawGenomes(gs)
 
+    import pickle as pkl 
+    pkl.dump(gs, open('shit.pkl','wb'))
 
 if __name__ == "__main__":
     main()

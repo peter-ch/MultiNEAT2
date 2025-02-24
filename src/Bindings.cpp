@@ -226,7 +226,18 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite("m_Evaluated", &NEAT::Genome::m_Evaluated)
         .def_readwrite("m_PhenotypeBehavior", &NEAT::Genome::m_PhenotypeBehavior)
         .def_readwrite("m_initial_num_neurons", &NEAT::Genome::m_initial_num_neurons)
-        .def_readwrite("m_initial_num_links", &NEAT::Genome::m_initial_num_links);
+        .def_readwrite("m_initial_num_links", &NEAT::Genome::m_initial_num_links)
+        .def(py::pickle(
+            // __getstate__: returns a string with the serialized genome.
+            [](const NEAT::Genome &g) -> std::string {
+                return g.Serialize();  
+            },
+            // __setstate__: creates a genome from the serialized string.
+            [](const std::string &s) {
+                return NEAT::Genome::Deserialize(s);
+            }
+        ));
+        
 
     py::class_<NEAT::GenomeInitStruct>(m, "GenomeInitStruct")
         .def(py::init<>())

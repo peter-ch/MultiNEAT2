@@ -12,6 +12,7 @@
 #include <map>
 #include <queue>
 #include <stdexcept>
+#include <sstream>
 #include <string>
 #include <vector>
 #include "Assert.h"
@@ -319,6 +320,92 @@ Genome::Genome(const Parameters &a_Parameters, const GenomeInitStruct &in)
     m_initial_num_links   = static_cast<int>(NumLinks());
 }
 
+
+Genome::Genome(std::istream &data)
+{
+    if (!data)
+        throw std::runtime_error("Invalid input stream provided to Genome constructor.");
+
+    std::string token;
+    // Read until we reach "GenomeStart"
+    do {
+        data >> token;
+    } while (token != "GenomeStart" && !data.eof());
+
+    // Read the genome ID
+    data >> m_ID;
+
+    // Read the remainder of the genome data
+    do {
+        data >> token;
+        if (token == "Neuron")
+        {
+            int tid, ttype, tact;
+            double tsplity, ta, tb, ttc, tbias;
+            data >> tid >> ttype >> tsplity >> tact >> ta >> tb >> ttc >> tbias;
+            NeuronGene N(static_cast<NeuronType>(ttype), tid, tsplity);
+            N.m_ActFunction = static_cast<ActivationFunction>(tact);
+            N.m_A = ta; N.m_B = tb; N.m_TimeConstant = ttc; N.m_Bias = tbias;
+            m_NeuronGenes.push_back(N);
+        }
+        else if (token == "Link")
+        {
+            int from, to, innov, isrec;
+            double weight;
+            data >> from >> to >> innov >> isrec >> weight;
+            LinkGene L(from, to, innov, weight, static_cast<bool>(isrec));
+            m_LinkGenes.push_back(L);
+        }
+    } while (token != "GenomeEnd" && !data.eof());
+
+    // Do not call data.close() here—since the stream might is not an fstream
+
+    // Count inputs and outputs
+    m_NumInputs = 0;
+    m_NumOutputs = 0;
+    for (const auto &ng : m_NeuronGenes)
+    {
+        if (ng.Type() == INPUT || ng.Type() == BIAS)
+            ++m_NumInputs;
+        else if (ng.Type() == OUTPUT)
+            ++m_NumOutputs;
+    }
+
+    m_Fitness = 0;
+    m_AdjustedFitness = 0;
+    m_OffspringAmount = 0;
+    m_Depth = 0;
+    m_Evaluated = false;
+    m_PhenotypeBehavior = nullptr;
+    m_initial_num_neurons = static_cast<int>(m_NeuronGenes.size());
+    m_initial_num_links   = static_cast<int>(m_LinkGenes.size());
+}
+
+
+// Use a stringstream to write out the genome (similar to your Save() method).
+std::string Genome::Serialize() const {
+    std::ostringstream oss;
+    // For example, write out all genes (this is similar to how Save(FILE*) works):
+    oss << "GenomeStart " << GetID() << "\n";
+    for (const auto &ng : m_NeuronGenes) {
+        oss << "Neuron " << ng.m_ID << " " << static_cast<int>(ng.m_Type) << " " 
+            << ng.m_SplitY << " " << static_cast<int>(ng.m_ActFunction) << " " 
+            << ng.m_A << " " << ng.m_B << " " << ng.m_TimeConstant << " " 
+            << ng.m_Bias << "\n";
+    }
+    for (const auto &lg : m_LinkGenes) {
+        oss << "Link " << lg.m_FromNeuronID << " " << lg.m_ToNeuronID << " " 
+            << lg.m_InnovationID << " " << static_cast<int>(lg.m_IsRecurrent) 
+            << " " << lg.m_Weight << "\n";
+    }
+    oss << "GenomeEnd\n";
+    return oss.str();
+}
+
+Genome Genome::Deserialize(const std::string &data) {
+    std::istringstream iss(data);
+    return Genome(iss);  
+}
 
 void Genome::SetDepth(unsigned int a_d) { m_Depth = a_d; }
 unsigned int Genome::GetDepth() const { return m_Depth; }

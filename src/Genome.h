@@ -139,10 +139,6 @@ namespace NEAT
         // A pointer to a class representing the phenotype's behavior
         // Used in novelty searches
         PhenotypeBehavior *m_PhenotypeBehavior;
-        // A Python object behavior
-#ifdef USE_BOOST_PYTHON
-        py::object m_behavior;
-#endif
 
         ////////////////////////////
         // Constructors
@@ -166,6 +162,9 @@ namespace NEAT
 
         // Builds this genome from an opened file
         Genome(std::ifstream &a_DataFile);
+        
+        // Builds this genome from an input stream
+        Genome::Genome(std::istream &data); 
 
         // This creates a standart minimal genome - perceptron-like structure
         Genome(const Parameters &a_Parameters,
@@ -400,6 +399,9 @@ namespace NEAT
         void SetEvaluated();
 
         void ResetEvaluated();
+
+        std::string Serialize() const;
+        static Genome Deserialize(const std::string &data);
 
     };
 

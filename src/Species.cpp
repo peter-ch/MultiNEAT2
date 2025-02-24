@@ -11,23 +11,23 @@
 namespace NEAT
 {
     RNG global_rng;
-        
+
     bool genome_greater(Genome& ls, Genome& rs)
     {
         return (ls.GetFitness() > rs.GetFitness());
     }
-    
+
     bool idxfitnesspair_greater(std::pair<int, double>& ls, std::pair<int, double>& rs)
     {
         return (ls.second > rs.second);
     }
-    
-    
+
+
     // initializes a species with a representative genome and an ID number
-    Species::Species(const Genome &a_Genome, const Parameters& a_Parameters, int a_ID)
+    Species::Species(const Genome& a_Genome, const Parameters& a_Parameters, int a_ID)
     {
         m_ID = a_ID;
-        
+
         // copy the initializing genome locally.
         m_BestGenome = a_Genome;
 
@@ -42,15 +42,15 @@ namespace NEAT
         m_BestSpecies = true;
         m_WorstSpecies = false;
         m_AverageFitness = 0;
-     
+
         // Choose a random color
         m_R = static_cast<int>(global_rng.RandFloat() * 255);
         m_G = static_cast<int>(global_rng.RandFloat() * 255) + 100;
-        if (m_G > 255) m_G=255;
+        if (m_G > 255) m_G = 255;
         m_B = static_cast<int>(global_rng.RandFloat() * 255);
     }
 
-    Species &Species::operator=(const Species &a_S)
+    Species& Species::operator=(const Species& a_S)
     {
         // self assignment guard
         if (this != &a_S)
@@ -76,14 +76,14 @@ namespace NEAT
 
 
     // adds a new member to the species and updates variables
-    void Species::AddIndividual(Genome &a_Genome)
+    void Species::AddIndividual(Genome& a_Genome)
     {
         m_Individuals.emplace_back(a_Genome);
     }
 
 
     // Individual selection routine
-    Genome& Species::GetIndividual(Parameters &a_Parameters, RNG &a_RNG) //const
+    Genome& Species::GetIndividual(Parameters& a_Parameters, RNG& a_RNG) //const
     {
         if (m_Individuals.size() == 0)
         {
@@ -120,22 +120,22 @@ namespace NEAT
 
         // Warning!!!! The individuals must be sorted by best fitness for this to work
         int t_chosen_one = 0;
-        
+
         if (a_Parameters.TournamentSelection)
         {
             std::vector< std::pair<int, double> > t_picked;
             // choose N individuals at random
-            for(int i=0; i<a_Parameters.TournamentSize; i++)
+            for (int i = 0; i < a_Parameters.TournamentSize; i++)
             {
-                int c = a_RNG.RandInt(0, t_Evaluated.size()-1);
-                t_picked.push_back( t_Evaluated[c] );
+                int c = a_RNG.RandInt(0, t_Evaluated.size() - 1);
+                t_picked.push_back(t_Evaluated[c]);
             }
-    
+
             std::sort(t_picked.begin(), t_picked.end(), idxfitnesspair_greater);
             std::vector<double> t_probs;
             for (int i = 0; i < t_picked.size(); i++)
             {
-                t_probs.push_back(t_picked.size()-i);//t_picked[i].second);
+                t_probs.push_back(t_picked.size() - i);//t_picked[i].second);
             }
             t_chosen_one = t_picked[a_RNG.Roulette(t_probs)].first;
         }
@@ -143,12 +143,12 @@ namespace NEAT
         {
             // sort them here just to make sure
             std::sort(t_Evaluated.begin(), t_Evaluated.end(), idxfitnesspair_greater);
-            
+
             // Here might be introduced better selection scheme, but this works OK for now
             if (!a_Parameters.RouletteWheelSelection)
             {
-                int t_num_parents = (int) (a_Parameters.SurvivalRate * (double) (m_Individuals.size()));
-        
+                int t_num_parents = (int)(a_Parameters.SurvivalRate * (double)(m_Individuals.size()));
+
                 if (t_num_parents >= t_Evaluated.size())
                 {
                     t_num_parents = t_Evaluated.size() - 1;
@@ -157,7 +157,7 @@ namespace NEAT
                 {
                     t_num_parents = 1;
                 }
-        
+
                 t_chosen_one = t_Evaluated[a_RNG.RandInt(0, t_num_parents)].first;
             }
             else
@@ -178,7 +178,7 @@ namespace NEAT
 
 
     // returns a completely random individual
-    Genome& Species::GetRandomIndividual(RNG &a_RNG) //const
+    Genome& Species::GetRandomIndividual(RNG& a_RNG) //const
     {
         if (m_Individuals.size() == 0) // no members yet, return representative
         {
@@ -187,16 +187,16 @@ namespace NEAT
             throw std::runtime_error(s);
         }
         else
-        if (m_Individuals.size() == 1)
-        {
-            return m_Individuals[0];
-        }
-        else
-        {
-            int t_rand_choice = 0;
-            t_rand_choice = a_RNG.RandInt(0, static_cast<int>(m_Individuals.size() - 1));
-            return (m_Individuals[t_rand_choice]);
-        }
+            if (m_Individuals.size() == 1)
+            {
+                return m_Individuals[0];
+            }
+            else
+            {
+                int t_rand_choice = 0;
+                t_rand_choice = a_RNG.RandInt(0, static_cast<int>(m_Individuals.size() - 1));
+                return (m_Individuals[t_rand_choice]);
+            }
     }
 
     // returns the leader (the member having the best fitness)
@@ -254,7 +254,7 @@ namespace NEAT
 
     // this method performs fitness sharing
     // it also boosts the fitness of the young and penalizes old species
-    void Species::AdjustFitness(Parameters &a_Parameters)
+    void Species::AdjustFitness(Parameters& a_Parameters)
     {
         ASSERT(m_Individuals.size() > 0);
 
@@ -268,7 +268,7 @@ namespace NEAT
 
             // this prevents the fitness to be below zero
             if (t_fitness <= 0.0) t_fitness = 0.0000000001;
-            
+
             // this prevents nan or infinity to be fitness
             if (std::isnan(t_fitness)) t_fitness = 0.0000000001;
             if (std::isinf(t_fitness)) t_fitness = 0.0000000001;
@@ -279,7 +279,7 @@ namespace NEAT
                 m_BestFitness = t_fitness;
                 m_GensNoImprovement = 0;
             }
-            
+
             // boost the fitness up to some young age
             if (m_AgeGenerations < a_Parameters.YoungAgeTreshold)
             {
@@ -304,7 +304,7 @@ namespace NEAT
                     t_fitness *= 0.0000001;
                 }
             }
-            
+
             unsigned int ms = m_Individuals.size();
             ASSERT(ms > 0);
             if (ms == 0)
@@ -336,7 +336,7 @@ namespace NEAT
     // because some babies may turn out to belong in another species
     // that have to be created.
     // Also calls Birth() for every new baby
-    void Species::Reproduce(Population &a_Pop, Parameters &a_Parameters, RNG &a_RNG)
+    void Species::Reproduce(Population& a_Pop, Parameters& a_Parameters, RNG& a_RNG)
     {
         Genome t_baby; // temp genome for reproduction
 
@@ -364,7 +364,7 @@ namespace NEAT
         {
             // clear baby just in case
             t_baby = Genome();
-            
+
             // Select the elite first..
 
             if (elite_count < elite_offspring)
@@ -375,7 +375,7 @@ namespace NEAT
             else
             {
                 unsigned int t_constraint_trials = a_Parameters.ConstraintTrials; // to prevent infinite loops
-                
+
                 do // - while the baby already exists somewhere in the new population or turned invalid in some way
                 {
                     // this tells us if the baby is a result of mating
@@ -383,7 +383,7 @@ namespace NEAT
 
                     // There must be individuals there..
                     ASSERT(NumIndividuals() > 0);
-    
+
                     // for a species of size 1 we can only mutate
                     // NOTE: but does it make sense since we know this is the champ?
                     if (NumIndividuals() == 1)
@@ -391,7 +391,7 @@ namespace NEAT
                         t_baby = GetIndividual(a_Parameters, a_RNG);
                         t_mated = false;
                     }
-                        // else we can mate
+                    // else we can mate
                     else
                     {
                         // choose whether to mate at all
@@ -409,8 +409,8 @@ namespace NEAT
                             {
                                 /// Find different species via roulette over average fitness as probability
                                 std::vector<double> probs;
-                                double allp=0;
-                                for(int i=0; i<a_Pop.m_Species.size(); i++)
+                                double allp = 0;
+                                for (int i = 0; i < a_Pop.m_Species.size(); i++)
                                 {
                                     if ((a_Pop.m_Species[i].m_ID == m_ID))
                                     {
@@ -420,7 +420,7 @@ namespace NEAT
                                     {
                                         probs.push_back(a_Pop.m_Species[i].m_AverageFitness);
                                     }
-                                    allp += probs[probs.size()-1];
+                                    allp += probs[probs.size() - 1];
                                 }
                                 if (allp > 0)
                                 {
@@ -448,7 +448,7 @@ namespace NEAT
                                     t_mom = GetIndividual(a_Parameters, a_RNG);
                                     t_dad = GetIndividual(a_Parameters, a_RNG);
                                 }
-                                
+
                                 t_interspecies = false;
                             }
 
@@ -465,21 +465,21 @@ namespace NEAT
 
                             t_mated = true;
                         }
-                            // don't mate - reproduce one individual asexually
+                        // don't mate - reproduce one individual asexually
                         else
                         {
                             t_baby = GetIndividual(a_Parameters, a_RNG);
                             t_mated = false;
                         }
                     }
-                    
+
                     // Mutate the baby
-                    bool dummy=false;
+                    bool dummy = false;
                     if ((!t_mated) || (a_RNG.RandFloat() < a_Parameters.OverallMutationRate))
                     {
                         MutateGenome(dummy, a_Pop, t_baby, a_Parameters, a_RNG);
                     }
-    
+
                     // Check if this baby is already present somewhere in the offspring
                     // we don't want that
                     t_baby_exists_in_pop = false;
@@ -491,9 +491,9 @@ namespace NEAT
                             for (unsigned int j = 0; j < a_Pop.m_TempSpecies[i].m_Individuals.size(); j++)
                             {
                                 if (
-                                        (t_baby.CompatibilityDistance(a_Pop.m_TempSpecies[i].m_Individuals[j],
-                                                                      a_Parameters) < a_Parameters.MinDeltaCompatEqualGenomes) // identical genome?
-                                        )
+                                    (t_baby.CompatibilityDistance(a_Pop.m_TempSpecies[i].m_Individuals[j],
+                                        a_Parameters) < a_Parameters.MinDeltaCompatEqualGenomes) // identical genome?
+                                    )
                                 {
                                     t_baby_exists_in_pop = true;
                                     break;
@@ -508,17 +508,16 @@ namespace NEAT
                         for (unsigned int i = 0; i < a_Pop.m_GenomeArchive.size(); i++)
                         {
                             if (
-                                    (t_baby.CompatibilityDistance(a_Pop.m_GenomeArchive[i],
-                                                                  a_Parameters) < a_Parameters.MinDeltaCompatEqualGenomes) // identical genome?
-                                    )
+                                (t_baby.CompatibilityDistance(a_Pop.m_GenomeArchive[i],
+                                    a_Parameters) < a_Parameters.MinDeltaCompatEqualGenomes) // identical genome?
+                                )
                             {
                                 t_baby_exists_in_pop = true;
                                 break;
                             }
                         }
                     }
-                }
-                while ((t_baby_exists_in_pop || (t_baby.FailsConstraints(a_Parameters))) && (t_constraint_trials--)); // end do
+                } while ((t_baby_exists_in_pop || (t_baby.FailsConstraints(a_Parameters))) && (t_constraint_trials--)); // end do
             }
 
             // We have a new offspring now
@@ -535,7 +534,7 @@ namespace NEAT
             t_baby.SetOffspringAmount(0);
 
             t_baby.ResetEvaluated();
-                
+
             // Archive the baby if needed
             if (a_Parameters.ArchiveEnforcement)
             {
@@ -578,7 +577,7 @@ namespace NEAT
                     else
                     {
                         // keep searching for a matching species
-                        while(1)
+                        while (1)
                         {
                             t_cur_species++;
                             if (t_cur_species == a_Pop.m_TempSpecies.end())
@@ -638,7 +637,7 @@ namespace NEAT
     }
 
 
-    Genome Species::ReproduceOne(Population &a_Pop, Parameters &a_Parameters, RNG &a_RNG)
+    Genome Species::ReproduceOne(Population& a_Pop, Parameters& a_Parameters, RNG& a_RNG)
     {
         //////////////////////////
         // Reproduction
@@ -648,17 +647,17 @@ namespace NEAT
 
         // Spawn only one baby
         Genome t_baby; // for storing the result
-    
+
         do // - while the baby turned invalid in some way
         {
             t_baby = Genome(); // clear baby
-    
+
             // this tells us if the baby is a result of mating
             bool t_mated = false;
-        
+
             // There must be individuals there..
             ASSERT(NumIndividuals() > 0);
-        
+
             // for a species of size 1 we can only mutate
             // NOTE: but does it make sense since we know this is the champ?
             if (NumIndividuals() == 1)
@@ -666,7 +665,7 @@ namespace NEAT
                 t_baby = GetIndividual(a_Parameters, a_RNG);
                 t_mated = false;
             }
-                // else we can mate
+            // else we can mate
             else
             {
                 // choose whether to mate at all
@@ -677,15 +676,15 @@ namespace NEAT
                     Genome t_mom;
                     Genome t_dad;
                     bool t_interspecies = false;
-                
+
                     // There is a probability that the father may come from another species
                     if ((a_RNG.RandFloat() < a_Parameters.InterspeciesCrossoverRate) &&
                         (a_Pop.m_Species.size() > 1))
                     {
                         // Find different species via roulette over average fitness as probability
                         std::vector<double> probs;
-                        double allp=0;
-                        for(int i=0; i<a_Pop.m_Species.size(); i++)
+                        double allp = 0;
+                        for (int i = 0; i < a_Pop.m_Species.size(); i++)
                         {
                             if ((a_Pop.m_Species[i].m_ID == m_ID) || (a_Pop.m_Species[i].NumEvaluated() == 0))
                             {
@@ -695,7 +694,7 @@ namespace NEAT
                             {
                                 probs.push_back(a_Pop.m_Species[i].m_AverageFitness);
                             }
-                            allp += probs[probs.size()-1];
+                            allp += probs[probs.size() - 1];
                         }
                         if (allp > 0)
                         {
@@ -714,11 +713,11 @@ namespace NEAT
                         // Mate within species
                         t_mom = GetIndividual(a_Parameters, a_RNG);
                         t_dad = GetIndividual(a_Parameters, a_RNG);
-                    
+
                         // The other parent should be a different one
                         // number of tries to find different parent
                         // we can mate the same mom and dad and still get different baby
-                        int t_tries=32;
+                        int t_tries = 32;
                         while (((t_mom.GetID() == t_dad.GetID())) && (t_tries--))
                         {
                             t_mom = GetIndividual(a_Parameters, a_RNG);
@@ -726,7 +725,7 @@ namespace NEAT
                         }
                         t_interspecies = false;
                     }
-                
+
                     // OK we have both mom and dad so mate them
                     // Choose randomly one of two types of crossover
                     if (a_RNG.RandFloat() < a_Parameters.MultipointCrossoverRate)
@@ -750,10 +749,10 @@ namespace NEAT
                     t_mated = false;
                 }
             }
-            
+
             // Mutate the baby
             t_baby_is_clone = false;
-            bool dummy=false;
+            bool dummy = false;
             if ((!t_mated) || (a_RNG.RandFloat() < a_Parameters.OverallMutationRate))
             {
                 MutateGenome(dummy, a_Pop, t_baby, a_Parameters, a_RNG);
@@ -773,9 +772,9 @@ namespace NEAT
                     for (unsigned int j = 0; j < a_Pop.m_Species[i].m_Individuals.size(); j++)
                     {
                         if (
-                                (t_baby.CompatibilityDistance(a_Pop.m_Species[i].m_Individuals[j],
-                                                              a_Parameters) < a_Parameters.MinDeltaCompatEqualGenomes) // identical genome?
-                                )
+                            (t_baby.CompatibilityDistance(a_Pop.m_Species[i].m_Individuals[j],
+                                a_Parameters) < a_Parameters.MinDeltaCompatEqualGenomes) // identical genome?
+                            )
                         {
                             t_baby_exists_in_pop = true;
                             break;
@@ -790,17 +789,16 @@ namespace NEAT
                 for (unsigned int i = 0; i < a_Pop.m_GenomeArchive.size(); i++)
                 {
                     if (
-                            (t_baby.CompatibilityDistance(a_Pop.m_GenomeArchive[i],
-                                                          a_Parameters) < a_Parameters.MinDeltaCompatEqualGenomes) // identical genome?
-                            )
+                        (t_baby.CompatibilityDistance(a_Pop.m_GenomeArchive[i],
+                            a_Parameters) < a_Parameters.MinDeltaCompatEqualGenomes) // identical genome?
+                        )
                     {
                         t_baby_exists_in_pop = true;
                         break;
                     }
                 }
             }
-        }
-        while ((t_baby_exists_in_pop || t_baby.FailsConstraints(a_Parameters)) && (t_constraint_trials--)); // end do
+        } while ((t_baby_exists_in_pop || t_baby.FailsConstraints(a_Parameters)) && (t_constraint_trials--)); // end do
 
 
         // We have a new offspring now
@@ -817,7 +815,7 @@ namespace NEAT
         t_baby.SetOffspringAmount(0);
 
         t_baby.ResetEvaluated();
-    
+
         // Compute the baby's behavior if possible, before it's added to the species
         // In case of archiving, add the new baby to the archive
         if (a_Parameters.ArchiveEnforcement)
@@ -835,7 +833,7 @@ namespace NEAT
 
     // Mutates a genome
     void
-    Species::MutateGenome(bool t_baby_is_clone, Population &a_Pop, Genome &t_baby, Parameters &a_Parameters, RNG &a_RNG)
+        Species::MutateGenome(bool t_baby_is_clone, Population& a_Pop, Genome& t_baby, Parameters& a_Parameters, RNG& a_RNG)
     {
         // We will perform roulette wheel selection to choose the type of mutation and will mutate the baby
         // This method guarantees that the baby will be mutated at least with one mutation
@@ -847,46 +845,46 @@ namespace NEAT
         };
         std::vector<int> t_muts;
         std::vector<double> t_mut_probs;
-    
+
         // ADD_NODE;
         t_mut_probs.emplace_back(a_Parameters.MutateAddNeuronProb);
-    
+
         // ADD_LINK;
         t_mut_probs.emplace_back(a_Parameters.MutateAddLinkProb);
-    
+
         // REMOVE_NODE;
         t_mut_probs.emplace_back(a_Parameters.MutateRemSimpleNeuronProb);
-    
+
         // REMOVE_LINK;
         t_mut_probs.emplace_back(a_Parameters.MutateRemLinkProb);
-    
+
         // CHANGE_ACTIVATION_FUNCTION;
         t_mut_probs.emplace_back(a_Parameters.MutateNeuronActivationTypeProb);
-    
+
         // MUTATE_WEIGHTS;
         t_mut_probs.emplace_back(a_Parameters.MutateWeightsProb);
-    
+
         // MUTATE_ACTIVATION_A;
         t_mut_probs.emplace_back(a_Parameters.MutateActivationAProb);
-    
+
         // MUTATE_ACTIVATION_B;
         t_mut_probs.emplace_back(a_Parameters.MutateActivationBProb);
-    
+
         // MUTATE_TIMECONSTS;
         t_mut_probs.emplace_back(a_Parameters.MutateNeuronTimeConstantsProb);
-    
+
         // MUTATE_BIASES;
         t_mut_probs.emplace_back(a_Parameters.MutateNeuronBiasesProb);
-    
+
         // MUTATE_NEURON_TRAITS;
-        t_mut_probs.emplace_back( a_Parameters.MutateNeuronTraitsProb );
-    
+        t_mut_probs.emplace_back(a_Parameters.MutateNeuronTraitsProb);
+
         // MUTATE_LINK_TRAITS;
-        t_mut_probs.emplace_back( a_Parameters.MutateLinkTraitsProb );
-    
+        t_mut_probs.emplace_back(a_Parameters.MutateLinkTraitsProb);
+
         // MUTATE_GENOME_TRAITS;
-        t_mut_probs.emplace_back( a_Parameters.MutateGenomeTraitsProb );
-    
+        t_mut_probs.emplace_back(a_Parameters.MutateGenomeTraitsProb);
+
         // Special consideration for phased searching - do not allow certain mutations depending on the search mode
         // also don't use additive mutations if we just want to get rid of the clones
         if ((a_Pop.GetSearchMode() == SIMPLIFYING) || t_baby_is_clone)
@@ -899,106 +897,105 @@ namespace NEAT
             t_mut_probs[REMOVE_NODE] = 0; // rem node
             t_mut_probs[REMOVE_LINK] = 0; // rem link
         }
-    
+
         bool t_mutation_success = false;
-    
+
         // repeat until successful
         while (t_mutation_success == false)
         {
             int ChosenMutation = a_RNG.Roulette(t_mut_probs);
-        
+
             // Now mutate based on the choice
             switch (ChosenMutation)
             {
-                case ADD_NODE:
-                    t_mutation_success = t_baby.Mutate_AddNeuron(a_Pop.AccessInnovationDatabase(), a_Parameters, a_RNG);
-                    break;
-            
-                case ADD_LINK:
-                    t_mutation_success = t_baby.Mutate_AddLink(a_Pop.AccessInnovationDatabase(), a_Parameters, a_RNG);
-                    break;
-            
-                case REMOVE_NODE:
-                    t_mutation_success = t_baby.Mutate_RemoveSimpleNeuron(a_Pop.AccessInnovationDatabase(), a_Parameters, a_RNG);
-                    break;
-            
-                case REMOVE_LINK:
+            case ADD_NODE:
+                t_mutation_success = t_baby.Mutate_AddNeuron(a_Pop.AccessInnovationDatabase(), a_Parameters, a_RNG);
+                break;
+
+            case ADD_LINK:
+                t_mutation_success = t_baby.Mutate_AddLink(a_Pop.AccessInnovationDatabase(), a_Parameters, a_RNG);
+                break;
+
+            case REMOVE_NODE:
+                t_mutation_success = t_baby.Mutate_RemoveSimpleNeuron(a_Pop.AccessInnovationDatabase(), a_Parameters, a_RNG);
+                break;
+
+            case REMOVE_LINK:
+            {
+                // Keep doing this mutation until it is sure that the baby will not
+                // end up having dead ends or no links
+                Genome t_saved_baby = t_baby;
+                bool t_no_links = false, t_has_dead_ends = false;
+
+                int t_tries = 128;
+                do
                 {
-                    // Keep doing this mutation until it is sure that the baby will not
-                    // end up having dead ends or no links
-                    Genome t_saved_baby = t_baby;
-                    bool t_no_links = false, t_has_dead_ends = false;
-                
-                    int t_tries = 128;
-                    do
+                    t_tries--;
+                    if (t_tries <= 0)
                     {
-                        t_tries--;
-                        if (t_tries <= 0)
-                        {
-                            t_saved_baby = t_baby;
-                            break; // give up
-                        }
-                    
                         t_saved_baby = t_baby;
-                        t_mutation_success = t_saved_baby.Mutate_RemoveLink(a_RNG);
-                    
-                        t_no_links = t_has_dead_ends = false;
-                    
-                        if (t_saved_baby.NumLinks() == 0)
-                            t_no_links = true;
-                    
-                        t_has_dead_ends = t_saved_baby.HasDeadEnds();
-                    
+                        break; // give up
                     }
-                    while (t_no_links || t_has_dead_ends);
-                
-                    t_baby = t_saved_baby;
-                }
-                    break;
-            
-                case CHANGE_ACTIVATION_FUNCTION:
-                    t_mutation_success = t_baby.Mutate_NeuronActivation_Type(a_Parameters, a_RNG);
-                    break;
-            
-                case MUTATE_WEIGHTS:
-                    t_mutation_success = t_baby.Mutate_LinkWeights(a_Parameters, a_RNG);
-                    break;
-            
-                case MUTATE_ACTIVATION_A:
-                    t_mutation_success = t_baby.Mutate_NeuronActivations_A(a_Parameters, a_RNG);
-                    break;
-            
-                case MUTATE_ACTIVATION_B:
-                    t_mutation_success = t_baby.Mutate_NeuronActivations_B(a_Parameters, a_RNG);
-                    break;
-            
-                case MUTATE_TIMECONSTS:
-                    t_mutation_success = t_baby.Mutate_NeuronTimeConstants(a_Parameters, a_RNG);
-                    break;
-            
-                case MUTATE_BIASES:
-                    t_mutation_success = t_baby.Mutate_NeuronBiases(a_Parameters, a_RNG);
-                    break;
-            
-                case MUTATE_NEURON_TRAITS:
-                    t_mutation_success = t_baby.Mutate_NeuronTraits(a_Parameters, a_RNG);
-                    break;
-            
-                case MUTATE_LINK_TRAITS:
-                    t_mutation_success = t_baby.Mutate_LinkTraits(a_Parameters, a_RNG);
-                    break;
-            
-                case MUTATE_GENOME_TRAITS:
-                    t_mutation_success = t_baby.Mutate_GenomeTraits(a_Parameters, a_RNG);
-                    break;
-            
-                default:
-                    t_mutation_success = false;
-                    break;
+
+                    t_saved_baby = t_baby;
+                    t_mutation_success = t_saved_baby.Mutate_RemoveLink(a_RNG);
+
+                    t_no_links = t_has_dead_ends = false;
+
+                    if (t_saved_baby.NumLinks() == 0)
+                        t_no_links = true;
+
+                    t_has_dead_ends = t_saved_baby.HasDeadEnds();
+
+                } while (t_no_links || t_has_dead_ends);
+
+                t_baby = t_saved_baby;
+            }
+            break;
+
+            case CHANGE_ACTIVATION_FUNCTION:
+                t_mutation_success = t_baby.Mutate_NeuronActivation_Type(a_Parameters, a_RNG);
+                break;
+
+            case MUTATE_WEIGHTS:
+                t_mutation_success = t_baby.Mutate_LinkWeights(a_Parameters, a_RNG);
+                break;
+
+            case MUTATE_ACTIVATION_A:
+                t_mutation_success = t_baby.Mutate_NeuronActivations_A(a_Parameters, a_RNG);
+                break;
+
+            case MUTATE_ACTIVATION_B:
+                t_mutation_success = t_baby.Mutate_NeuronActivations_B(a_Parameters, a_RNG);
+                break;
+
+            case MUTATE_TIMECONSTS:
+                t_mutation_success = t_baby.Mutate_NeuronTimeConstants(a_Parameters, a_RNG);
+                break;
+
+            case MUTATE_BIASES:
+                t_mutation_success = t_baby.Mutate_NeuronBiases(a_Parameters, a_RNG);
+                break;
+
+            case MUTATE_NEURON_TRAITS:
+                t_mutation_success = t_baby.Mutate_NeuronTraits(a_Parameters, a_RNG);
+                break;
+
+            case MUTATE_LINK_TRAITS:
+                t_mutation_success = t_baby.Mutate_LinkTraits(a_Parameters, a_RNG);
+                break;
+
+            case MUTATE_GENOME_TRAITS:
+                t_mutation_success = t_baby.Mutate_GenomeTraits(a_Parameters, a_RNG);
+                break;
+
+            default:
+                t_mutation_success = false;
+                break;
             }
         }
 
     }
-    
+
 } // namespace NEAT
 

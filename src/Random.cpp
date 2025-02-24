@@ -1,93 +1,96 @@
-#include <stdlib.h>
-#include <math.h>
-#include <time.h>
-#include <chrono> // Replaces boost/date_time
 #include "Random.h"
-#include "Utils.h"
+
+#include <chrono>
+#include <cmath>
+#include <limits>
+#include <stdexcept>
 
 namespace NEAT
 {
-    // Seeds the RNG with this value
-    void RNG::Seed(long a_Seed)
+    void RNG::Seed(long seed)
     {
-        srand((unsigned int)a_Seed);
+        // seed the mt19937 engine
+        m_Engine.seed(static_cast<std::mt19937::result_type>(seed));
     }
 
-    // Seeds the RNG using the current time in ms
     void RNG::TimeSeed()
     {
         using namespace std::chrono;
         auto now = system_clock::now();
         auto ms = duration_cast<milliseconds>(now.time_since_epoch()).count();
-        Seed((long)ms);
+        Seed((long) ms);
     }
 
     int RNG::RandPosNeg()
     {
-        return (rand() % 2) ? 1 : -1;
+        // Return either 1 or -1
+        // We can just pick RandInt(0,1) then transform
+        int r = RandInt(0, 1);
+        return (r == 0) ? -1 : 1;
     }
 
-    int RNG::RandInt(int aX, int aY)
+    int RNG::RandInt(int x, int y)
     {
-        if(aX==aY) return aX;
-        return aX + (rand() % (aY - aX + 1));
+        if(x > y)
+        {
+            throw std::runtime_error("RNG::RandInt: invalid range (x>y).");
+        }
+        std::uniform_int_distribution<int> dist(x, y);
+        return dist(m_Engine);
     }
 
     double RNG::RandFloat()
     {
-        return (double)rand() / (double)RAND_MAX;
+        // uniform distribution in [0,1)
+        std::uniform_real_distribution<double> dist(0.0, 1.0);
+        return dist(m_Engine);
     }
 
     double RNG::RandFloatSigned()
     {
-        return RandFloat() - RandFloat();
+        // uniform in [-1,1)
+        // or we can do 2 * RandFloat() - 1
+        return 2.0 * RandFloat() - 1.0;
     }
 
     double RNG::RandGaussSigned()
     {
-        // Using Box-Muller or simple approach
-        static int t_iset=0;
-        static double t_gset;
-        double t_fac,t_rsq,t_v1,t_v2;
-
-        if (t_iset==0)
-        {
-            do {
-                t_v1=2.0*RandFloat()-1.0;
-                t_v2=2.0*RandFloat()-1.0;
-                t_rsq = t_v1*t_v1 + t_v2*t_v2;
-            } while(t_rsq>=1.0 || t_rsq==0.0);
-            t_fac = sqrt(-2.0*log(t_rsq)/t_rsq);
-            t_gset = t_v1*t_fac;
-            t_iset = 1;
-            double tmp = t_v2*t_fac;
-            if(tmp>1.0) tmp=1.0;
-            if(tmp<-1.0) tmp=-1.0;
-            return tmp;
-        }
-        else
-        {
-            t_iset=0;
-            double tmp = t_gset;
-            if(tmp>1.0) tmp=1.0;
-            if(tmp<-1.0) tmp=-1.0;
-            return tmp;
-        }
+        // Use a normal distribution. We will clamp to [-1,1] like old code.
+        // The original Box-Muller code effectively rarely returns > 1, but let's replicate clamp.
+        std::normal_distribution<double> dist(0.0, 1.0); // mean=0, stddev=1
+        double val = dist(m_Engine);
+        // clamp to [-1,1]
+        if(val > 1.0) val = 1.0;
+        if(val < -1.0) val = -1.0;
+        return val;
     }
 
     int RNG::Roulette(std::vector<double>& a_probs)
     {
-        double t_total = 0.0;
-        for (auto &p : a_probs) t_total += p;
-        double r = RandFloat() * t_total;
+        double total = 0.0;
+        for (auto &p : a_probs) total += p;
+        if(total <= 0.0)
+        {
+            // fallback: pick random index ignoring weights
+            // or return 0
+            if(a_probs.empty()) return 0;
+            std::uniform_int_distribution<int> dist(0, (int)a_probs.size()-1);
+            return dist(m_Engine);
+        }
+        std::uniform_real_distribution<double> dist(0.0, total);
+        double r = dist(m_Engine);
+
         double run = 0.0;
-        int idx=0;
-        for (; idx<(int)a_probs.size(); idx++)
+        for(int idx=0; idx<(int)a_probs.size(); idx++)
         {
             run += a_probs[idx];
-            if(run>=r) break;
+            if(run >= r)
+            {
+                return idx;
+            }
         }
-        return idx;
+        // if floating error, return last
+        return (int)a_probs.size()-1;
     }
 
 } // namespace NEAT

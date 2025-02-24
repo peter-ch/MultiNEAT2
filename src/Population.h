@@ -189,36 +189,7 @@ public:
     
     
     // Make sure no same genome IDs exist in the population
-    void SameGenomeIDCheck()
-    {
-        // count how much each ID found has occured
-        std::map<int, int> ids;
-        for(unsigned int i=0; i<m_Species.size(); i++)
-        {
-            for (unsigned int j = 0; j < m_Species[i].m_Individuals.size(); j++)
-            {
-                ids[m_Species[i].m_Individuals[j].GetID()] = 0;
-            }
-        }
-        for(unsigned int i=0; i<m_Species.size(); i++)
-        {
-            for (unsigned int j = 0; j < m_Species[i].m_Individuals.size(); j++)
-            {
-                ids[m_Species[i].m_Individuals[j].GetID()] += 1;
-            }
-        }
-        
-        for(auto it = ids.begin(); it != ids.end(); it++)
-        {
-            if (it->second > 1)
-            {
-                char s[256];
-                sprintf(s, "Genome ID %d appears %d times in the population\n", it->first, it->second);
-                throw std::runtime_error(s);
-            }
-        }
-    }
-
+    void SameGenomeIDCheck();
     Genome& AccessGenomeByIndex(int const a_idx);
     Genome& AccessGenomeByID(int const a_id);
 

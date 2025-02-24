@@ -3,6 +3,7 @@
 
 import time
 import pymultineat as pnt
+from multineat2 import DrawGenome
 
 # Define the XOR training data.
 # Note that the genome is initialized with three inputs: two (the XOR inputs)
@@ -93,7 +94,7 @@ def main():
     # Create the initial population.
     pop = pnt.Population(genome_prototype, params, True, 1.0, int(time.time()))
 
-    generations = 1000  # total number of generations
+    generations = 300  # total number of generations
     for gen in range(generations):
         # Evaluate all genomes in every species on the XOR task.
         for species in pop.m_Species:
@@ -112,6 +113,8 @@ def main():
         pop.Epoch()
 
     print("Simulation completed.", flush=True)
+
+    DrawGenome(bestGenome)
 
 
 if __name__ == "__main__":

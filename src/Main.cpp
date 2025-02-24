@@ -64,8 +64,8 @@ int main() {
     params.WeightMutationRate = 0.85;
     params.WeightReplacementRate = 0.2;
     params.MaxWeight = 8;
-    params.MutateAddNeuronProb = 0.001;
-    params.MutateAddLinkProb = 0.03;
+    params.MutateAddNeuronProb = 0.01;
+    params.MutateAddLinkProb = 0.1;
     params.MutateRemLinkProb = 0.0;
     params.MinActivationA = 4.9;
     params.MaxActivationA = 4.9;

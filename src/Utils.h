@@ -8,14 +8,12 @@
 #include <iostream>
 #include <vector>
 #include <limits>
-#include <algorithm>  // added for std::minmax_element
+#include <algorithm>
 #include "Assert.h"
 #include "Random.h"
 
 using namespace std;
 
-//---------------------------------------------------------------------
-// GetMaxMin – now implemented with std::minmax_element for efficiency.
 inline void GetMaxMin(const vector<double>& a_Vals, double& a_Min, double& a_Max)
 {
     if(a_Vals.empty()){
@@ -28,7 +26,6 @@ inline void GetMaxMin(const vector<double>& a_Vals, double& a_Min, double& a_Max
     a_Max = *result.second;
 }
 
-// Converts an integer to a string.
 inline std::string itos(const int a_Arg)
 {
     std::ostringstream t_Buffer;
@@ -36,7 +33,6 @@ inline std::string itos(const int a_Arg)
     return t_Buffer.str();
 }
 
-// Converts a double to a string.
 inline std::string ftos(const double a_Arg)
 {
     std::ostringstream t_Buffer;
@@ -44,8 +40,6 @@ inline std::string ftos(const double a_Arg)
     return t_Buffer.str();
 }
 
-//---------------------------------------------------------------------
-// Clamp functions
 inline void Clamp(double &a_Arg, const double a_Min, const double a_Max)
 {
     ASSERT(a_Min <= a_Max);
@@ -91,24 +85,20 @@ inline void Clamp(int &a_Arg, const int a_Min, const int a_Max)
     }
 }
 
-//---------------------------------------------------------------------
-// Rounding helper functions
 inline int Rounded(const double a_Val)
 {
-    const int t_Integral = static_cast<int>(a_Val);
-    const double t_Mantissa = a_Val - t_Integral;
+    int t_Integral = static_cast<int>(a_Val);
+    double t_Mantissa = a_Val - t_Integral;
     return (t_Mantissa < 0.5) ? t_Integral : t_Integral + 1;
 }
 
 inline int RoundUnderOffset(const double a_Val, const double a_Offset)
 {
-    const int t_Integral = static_cast<int>(a_Val);
-    const double t_Mantissa = a_Val - t_Integral;
+    int t_Integral = static_cast<int>(a_Val);
+    double t_Mantissa = a_Val - t_Integral;
     return (t_Mantissa < a_Offset) ? t_Integral : t_Integral + 1;
 }
 
-//---------------------------------------------------------------------
-// Scale functions – now checking for division by zero.
 inline void Scale(double& a,
                   const double a_min,
                   const double a_max,
@@ -120,9 +110,9 @@ inline void Scale(double& a,
         a = (a_tr_min + a_tr_max) / 2.0;
         return;
     }
-    const double t_a_r = a_max - a_min;
-    const double t_r = a_tr_max - a_tr_min;
-    const double rel_a = (a - a_min) / t_a_r;
+    double t_a_r = a_max - a_min;
+    double t_r = a_tr_max - a_tr_min;
+    double rel_a = (a - a_min) / t_a_r;
     a = a_tr_min + t_r * rel_a;
 }
 
@@ -137,9 +127,9 @@ inline void Scale(float& a,
         a = static_cast<float>((a_tr_min + a_tr_max) / 2.0);
         return;
     }
-    const double t_a_r = a_max - a_min;
-    const double t_r = a_tr_max - a_tr_min;
-    const double rel_a = (a - a_min) / t_a_r;
+    double t_a_r = a_max - a_min;
+    double t_r = a_tr_max - a_tr_min;
+    double rel_a = (a - a_min) / t_a_r;
     a = static_cast<float>(a_tr_min + t_r * rel_a);
 }
 

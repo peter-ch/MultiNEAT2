@@ -6,45 +6,22 @@
 
 namespace NEAT
 {
-
-class RNG
-{
-private:
-    std::mt19937 m_Engine; // Our Mersenne Twister engine
-
-public:
-    // constructor
-    RNG()
+    class RNG
     {
-        // By default, we seed by time
-        TimeSeed();
-    }
+    private:
+        std::mt19937 m_Engine;
 
-    // Seeds the random number generator with this value
-    void Seed(long seed);
-
-    // Seeds the random number generator with the current time in ms
-    void TimeSeed();
-
-    // Returns randomly either 1 or -1
-    int RandPosNeg();
-
-    // Returns a random integer between [x, y]
-    int RandInt(int x, int y);
-
-    // Returns a random number from a uniform distribution in the range of [0 .. 1]
-    double RandFloat();
-
-    // Returns a random number from a uniform distribution in the range of [-1 .. 1]
-    double RandFloatSigned();
-
-    // Returns a random number from a gaussian (normal) distribution in the range of [-1 .. 1]
-    double RandGaussSigned();
-
-    // Returns an index given a vector of probabilities
-    int Roulette(std::vector<double>& a_probs);
-};
-
-} // namespace NEAT
+    public:
+        RNG() { TimeSeed(); }
+        void Seed(long seed);
+        void TimeSeed();
+        int RandPosNeg();
+        int RandInt(int x, int y);
+        double RandFloat();
+        double RandFloatSigned();
+        double RandGaussSigned();
+        int Roulette(const std::vector<double>& a_probs);
+    };
+}
 
 #endif

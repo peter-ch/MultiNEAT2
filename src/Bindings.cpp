@@ -197,8 +197,6 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("GetDepth", &NEAT::Genome::GetDepth)
         .def("SetDepth", &NEAT::Genome::SetDepth)
         .def("HasDeadEnds", &NEAT::Genome::HasDeadEnds)
-        //.def("LinksInputtingFrom", &NEAT::Genome::LinksInputtingFrom)
-        //.def("LinksOutputtingTo", &NEAT::Genome::LinksOutputtingTo)
         .def("GetLastNeuronID", &NEAT::Genome::GetLastNeuronID)
         .def("GetLastInnovationID", &NEAT::Genome::GetLastInnovationID)
         .def("BuildPhenotype", &NEAT::Genome::BuildPhenotype)

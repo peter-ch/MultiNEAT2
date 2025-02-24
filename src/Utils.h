@@ -8,178 +8,144 @@
 #include <iostream>
 #include <vector>
 #include <limits>
+#include <algorithm>  // added for std::minmax_element
 #include "Assert.h"
 #include "Random.h"
 
 using namespace std;
 
-
+//---------------------------------------------------------------------
+// GetMaxMin – now implemented with std::minmax_element for efficiency.
 inline void GetMaxMin(const vector<double>& a_Vals, double& a_Min, double& a_Max)
 {
-    a_Max = std::numeric_limits<double>::min();
-    a_Min = std::numeric_limits<double>::max();
-    for(vector<double>::const_iterator t_It = a_Vals.begin(); t_It != a_Vals.end(); ++t_It)
-    {
-        const double t_CurrentVal = (*t_It);
-        if (t_CurrentVal > a_Max) a_Max = t_CurrentVal;
-
-        if (t_CurrentVal < a_Min) a_Min = t_CurrentVal;
+    if(a_Vals.empty()){
+        a_Min = 0;
+        a_Max = 0;
+        return;
     }
+    auto result = std::minmax_element(a_Vals.begin(), a_Vals.end());
+    a_Min = *result.first;
+    a_Max = *result.second;
 }
 
-//converts an integer to a string
+// Converts an integer to a string.
 inline std::string itos(const int a_Arg)
 {
     std::ostringstream t_Buffer;
-
-    //send the int to the ostringstream
     t_Buffer << a_Arg;
-
-    //capture the string
     return t_Buffer.str();
 }
 
-//converts a double to a string
+// Converts a double to a string.
 inline std::string ftos(const double a_Arg)
 {
     std::ostringstream t_Buffer;
-
-    //send the int to the ostringstream
     t_Buffer << a_Arg;
-
-    //capture the string
     return t_Buffer.str();
 }
 
-//clamps the first argument between the second two
+//---------------------------------------------------------------------
+// Clamp functions
 inline void Clamp(double &a_Arg, const double a_Min, const double a_Max)
 {
     ASSERT(a_Min <= a_Max);
-
-    if (a_Arg < a_Min)
+    if(a_Arg < a_Min)
     {
         a_Arg = a_Min;
         return;
     }
-
-    if (a_Arg > a_Max)
+    if(a_Arg > a_Max)
     {
         a_Arg = a_Max;
         return;
     }
 }
 
-//clamps the first argument between the second two
 inline void Clamp(float &a_Arg, const float a_Min, const float a_Max)
 {
     ASSERT(a_Min <= a_Max);
-
-    if (a_Arg < a_Min)
+    if(a_Arg < a_Min)
     {
         a_Arg = a_Min;
         return;
     }
-
-    if (a_Arg > a_Max)
+    if(a_Arg > a_Max)
     {
         a_Arg = a_Max;
         return;
     }
 }
 
-//clamps the first argument between the second two
 inline void Clamp(int &a_Arg, const int a_Min, const int a_Max)
 {
     ASSERT(a_Min <= a_Max);
-
-    if (a_Arg < a_Min)
+    if(a_Arg < a_Min)
     {
         a_Arg = a_Min;
         return;
     }
-
-    if (a_Arg > a_Max)
+    if(a_Arg > a_Max)
     {
         a_Arg = a_Max;
         return;
     }
 }
 
-//rounds a double up or down depending on its value
+//---------------------------------------------------------------------
+// Rounding helper functions
 inline int Rounded(const double a_Val)
 {
     const int t_Integral = static_cast<int>(a_Val);
     const double t_Mantissa = a_Val - t_Integral;
-
-    if (t_Mantissa < 0.5)
-    {
-        return t_Integral;
-    }
-
-    else
-    {
-        return t_Integral + 1;
-    }
+    return (t_Mantissa < 0.5) ? t_Integral : t_Integral + 1;
 }
 
-//rounds a double up or down depending on whether its
-//mantissa is higher or lower than offset
 inline int RoundUnderOffset(const double a_Val, const double a_Offset)
 {
     const int t_Integral = static_cast<int>(a_Val);
     const double t_Mantissa = a_Val - t_Integral;
-
-    if (t_Mantissa < a_Offset)
-    {
-        return t_Integral;
-    }
-    else
-    {
-        return t_Integral + 1;
-    }
+    return (t_Mantissa < a_Offset) ? t_Integral : t_Integral + 1;
 }
 
-
-// Scales the value "a", that is in range [a_min .. a_max] into its relative value in the range [tr_min .. tr_max]
-// Example: A=2, in the range [0 .. 4] .. we want to scale it to the range [-12 .. 12] .. we get 0..
-inline void Scale(    double& a,
-                    const double a_min,
-                    const double a_max,
-                    const double a_tr_min,
-                    const double a_tr_max)
+//---------------------------------------------------------------------
+// Scale functions – now checking for division by zero.
+inline void Scale(double& a,
+                  const double a_min,
+                  const double a_max,
+                  const double a_tr_min,
+                  const double a_tr_max)
 {
+    if (fabs(a_max - a_min) < std::numeric_limits<double>::epsilon())
+    {
+        a = (a_tr_min + a_tr_max) / 2.0;
+        return;
+    }
     const double t_a_r = a_max - a_min;
     const double t_r = a_tr_max - a_tr_min;
     const double rel_a = (a - a_min) / t_a_r;
     a = a_tr_min + t_r * rel_a;
 }
 
-// Scales the value "a", that is in range [a_min .. a_max] into its relative value in the range [tr_min .. tr_max]
-// Example: A=2, in the range [0 .. 4] .. we want to scale it to the range [-12 .. 12] .. we get 0..
-inline void Scale(    float& a,
-                    const double a_min,
-                    const double a_max,
-                    const double a_tr_min,
-                    const double a_tr_max)
+inline void Scale(float& a,
+                  const double a_min,
+                  const double a_max,
+                  const double a_tr_min,
+                  const double a_tr_max)
 {
+    if (fabs(a_max - a_min) < std::numeric_limits<double>::epsilon())
+    {
+        a = static_cast<float>((a_tr_min + a_tr_max) / 2.0);
+        return;
+    }
     const double t_a_r = a_max - a_min;
     const double t_r = a_tr_max - a_tr_min;
     const double rel_a = (a - a_min) / t_a_r;
-    a = a_tr_min + t_r * rel_a;
+    a = static_cast<float>(a_tr_min + t_r * rel_a);
 }
 
 inline double Abs(double x)
 {
-	if (x<0)
-	{
-		return -x;
-	}
-	else
-	{
-		return x;
-	}
+    return (x < 0) ? -x : x;
 }
 
-
 #endif
-

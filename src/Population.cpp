@@ -1260,38 +1260,42 @@ bool Population::NoveltySearchTick(Genome& a_SuccessfulGenome)
 
 double Population::ComputeSparseness(Genome& genome)
 {
-    // this will hold the distances from our new behavior
-    std::vector< double > t_distances_list;
-    t_distances_list.clear();
-
-    // first add all distances from the population
+    std::vector<double> distances;
+    distances.clear();
     for(unsigned int i=0; i<m_Species.size(); i++)
     {
         for(unsigned int j=0; j<m_Species[i].m_Individuals.size(); j++)
         {
-            double distance = genome.m_PhenotypeBehavior->Distance_To( m_Species[i].m_Individuals[j].m_PhenotypeBehavior );
-            t_distances_list.emplace_back( distance );
+            distances.emplace_back( genome.m_PhenotypeBehavior->Distance_To( m_Species[i].m_Individuals[j].m_PhenotypeBehavior ) );
         }
     }
-
-    // then add all distances from the archive
-    for(unsigned int i=0; i<m_BehaviorArchive->size(); i++)
+    if(m_BehaviorArchive)
     {
-        t_distances_list.emplace_back( genome.m_PhenotypeBehavior->Distance_To( &((*m_BehaviorArchive)[i])));
+        for(unsigned int i=0; i<m_BehaviorArchive->size(); i++)
+        {
+            distances.emplace_back( genome.m_PhenotypeBehavior->Distance_To( &((*m_BehaviorArchive)[i]) ) );
+        }
     }
-
-    // sort the list, smaller first
-    std::sort( t_distances_list.begin(), t_distances_list.end() );
-
-    // now compute the sparseness
-    double t_sparseness = 0;
-    for(unsigned int i=1; i< (m_Parameters.NoveltySearch_K+1); i++)
-    {
-        t_sparseness += t_distances_list[i];
+    
+    if(distances.empty())
+        return 0.0;
+    
+    // Remove the self-distance (assumed to be the smallest—usually zero)
+    auto selfIt = std::min_element(distances.begin(), distances.end());
+    if(selfIt != distances.end()){
+        distances.erase(selfIt);
     }
-    t_sparseness /= m_Parameters.NoveltySearch_K;
-
-    return t_sparseness;
+    
+    int k = m_Parameters.NoveltySearch_K;
+    if(distances.size() < static_cast<size_t>(k))
+        k = distances.size();
+    
+    std::nth_element(distances.begin(), distances.begin() + k, distances.end());
+    double sum = 0.0;
+    for (int i = 0; i < k; i++){
+        sum += distances[i];
+    }
+    return sum / k;
 }
 
 

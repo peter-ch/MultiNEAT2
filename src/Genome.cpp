@@ -20,19 +20,12 @@
 #include "Parameters.h"
 #include "Substrate.h"
 
-// Use helper macros if needed
-//#define ASSERT(x) assert(x)
-
 namespace NEAT
 {
 
 // Helper inline
 inline double sqr(double x) { return x * x; }
 
-
-// ----------------------------
-// GetNeuronIndex: using std::find_if
-// ----------------------------
 int Genome::GetNeuronIndex(int a_ID) const
 {
     ASSERT(a_ID > 0);
@@ -43,9 +36,6 @@ int Genome::GetNeuronIndex(int a_ID) const
     return -1;
 }
 
-// ----------------------------
-// GetLinkIndex: using std::find_if
-// ----------------------------
 int Genome::GetLinkIndex(int a_InnovID) const
 {
     ASSERT(a_InnovID > 0 && !m_LinkGenes.empty());
@@ -56,10 +46,6 @@ int Genome::GetLinkIndex(int a_InnovID) const
     return -1;
 }
 
-
-// ----------------------------
-// RemoveLinkGene: use find_if then erase
-// ----------------------------
 void Genome::RemoveLinkGene(int a_innovid)
 {
     auto it = std::find_if(m_LinkGenes.begin(), m_LinkGenes.end(),
@@ -69,9 +55,6 @@ void Genome::RemoveLinkGene(int a_innovid)
 }
 
 
-// ----------------------------
-// RemoveNeuronGene: erase all connected links in one pass then erase neuron
-// ----------------------------
 void Genome::RemoveNeuronGene(int a_ID)
 {
     m_LinkGenes.erase(std::remove_if(m_LinkGenes.begin(), m_LinkGenes.end(),
@@ -85,9 +68,6 @@ void Genome::RemoveNeuronGene(int a_ID)
 }
 
 
-// ----------------------------
-// HasNeuronID: use range-based loop
-// ----------------------------
 bool Genome::HasNeuronID(int a_ID) const
 {
     ASSERT(a_ID > 0);
@@ -100,9 +80,6 @@ bool Genome::HasNeuronID(int a_ID) const
 }
 
 
-// ----------------------------
-// HasLink: use range-based loop
-// ----------------------------
 bool Genome::HasLink(int a_n1id, int a_n2id) const
 {
     ASSERT(a_n1id > 0 && a_n2id > 0);
@@ -115,9 +92,6 @@ bool Genome::HasLink(int a_n1id, int a_n2id) const
 }
 
 
-// ----------------------------
-// Genome constructor: empty (default initializer list can also be used)
-// ----------------------------
 Genome::Genome()
   : m_ID(0), m_Fitness(0.0), m_AdjustedFitness(0.0),
     m_OffspringAmount(0.0), m_Depth(0), m_NumInputs(0), m_NumOutputs(0),
@@ -127,9 +101,6 @@ Genome::Genome()
 }
 
 
-// ----------------------------
-// Copy constructor and assignment (unchanged except for using member–initializer lists)
-// ----------------------------
 Genome::Genome(const Genome &a_G)
   : m_ID(a_G.m_ID), m_Fitness(a_G.m_Fitness), m_AdjustedFitness(a_G.m_AdjustedFitness),
     m_OffspringAmount(a_G.m_OffspringAmount), m_Depth(a_G.m_Depth),
@@ -167,11 +138,6 @@ Genome &Genome::operator=(const Genome &a_G)
 }
 
 
-// ----------------------------
-// The main Genome constructor (using GenomeInitStruct etc.)
-// – Many parts of this function remain unchanged logically.
-// – Minor improvements: using pre–increment and caching loop sizes.
-// ----------------------------
 Genome::Genome(const Parameters &a_Parameters, const GenomeInitStruct &in)
 {
     ASSERT(in.NumInputs > 1 && in.NumOutputs > 0);
@@ -354,12 +320,6 @@ Genome::Genome(const Parameters &a_Parameters, const GenomeInitStruct &in)
 }
 
 
-// ----------------------------
-// The rest of the member functions follow, with improvements such as caching container sizes,
-// range–based loops, and using standard library algorithms where appropriate.
-// Many mutation functions have been left mostly intact except for using pre–increment and caching vector sizes.
-// ----------------------------
-
 void Genome::SetDepth(unsigned int a_d) { m_Depth = a_d; }
 unsigned int Genome::GetDepth() const { return m_Depth; }
 void Genome::SetID(int a_id) { m_ID = a_id; }
@@ -491,10 +451,6 @@ bool Genome::IsEvaluated() const { return m_Evaluated; }
 void Genome::SetEvaluated() { m_Evaluated = true; }
 void Genome::ResetEvaluated() { m_Evaluated = false; }
 
-
-// ----------------------------
-// HasLinkByInnovID remains similar.
-// ----------------------------
 bool Genome::HasLinkByInnovID(int id) const
 {
     ASSERT(id > 0);
@@ -506,10 +462,6 @@ bool Genome::HasLinkByInnovID(int id) const
     return false;
 }
 
-
-// ----------------------------
-// HasLoops: perform DFS on built phenotype adjacency
-// ----------------------------
 bool Genome::HasLoops()
 {
     NeuralNetwork net;
@@ -547,9 +499,6 @@ bool Genome::HasLoops()
 }
 
 
-// ----------------------------
-// BuildPhenotype: construct NeuralNetwork from the genome.
-// ----------------------------
 void Genome::BuildPhenotype(NeuralNetwork &a_Net)
 {
     a_Net.Clear();
@@ -595,9 +544,6 @@ void Genome::BuildPhenotype(NeuralNetwork &a_Net)
 }
 
 
-// ----------------------------
-// GetRandomActivation remains the same
-// ----------------------------
 ActivationFunction GetRandomActivation(Parameters &a_Parameters, RNG &a_RNG)
 {
     std::vector<double> t_probs = {
@@ -844,14 +790,6 @@ void Genome::BuildHyperNEATPhenotype(NeuralNetwork &net, Substrate &subst)
     }
 }
 
-
-// ----------------------------
-// DerivePhenotypicChanges, CompatibilityDistance, IsCompatible, and mutation functions
-// are left essentially the same, but have been gently updated to use range-based loops,
-// pre-increment operators, local size caching and the standard library where appropriate.
-// (See the complete code above for the full implementations.)
-// ----------------------------
-
 void Genome::DerivePhenotypicChanges(NeuralNetwork &a_Net)
 {
     if (a_Net.m_connections.size() != m_LinkGenes.size())
@@ -1010,11 +948,6 @@ bool Genome::IsCompatibleWith(Genome &a_G, Parameters &a_Parameters)
     return (dist <= a_Parameters.CompatTreshold);
 }
 
-
-// ----------------------------
-// All mutation functions (Mutate_LinkWeights, Randomize_LinkWeights, etc.) have been updated to use loops with cached sizes and pre--increment.
-// For brevity, please refer to the full implementations above which follow the same style.
-// ----------------------------
 
 bool Genome::Mutate_LinkWeights(const Parameters &a_Parameters, RNG &a_RNG)
 {

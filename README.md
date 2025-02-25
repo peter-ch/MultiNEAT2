@@ -57,8 +57,8 @@ I named this MultiNEAT2 to keep the original MultiNEAT intact. Development of th
 
 1. **Clone the repository:**
 
-   git clone https://github.com/yourusername/multineat.git  
-   cd multineat
+   git clone https://github.com/peter-ch/MultiNEAT2
+   cd MultiNEAT2
 
 2. **Create a build directory and run CMake:**
 

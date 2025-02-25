@@ -1,6 +1,8 @@
-# MultiNEAT
+# MultiNEAT2
 
-MultiNEAT is a powerful, open–source C++ implementation of NEAT (NeuroEvolution of Augmenting Topologies) with Python bindings. MultiNEAT evolves neural networks by gradually complexifying their topology while optimizing connection weights. The project features a full C++ library (with modern C++17 features) plus a Python module (via pybind11) that lets you experiment with neuroevolution, run training simulations (for example on the XOR problem), and visualize results using networkx and matplotlib.
+MultiNEAT2 is a powerful, open–source C++ implementation of NEAT (NeuroEvolution of Augmenting Topologies) with Python bindings. MultiNEAT2 evolves neural networks by gradually complexifying their topology while optimizing connection weights. The project features a full C++ library (with modern C++17 features) plus a Python module (via pybind11) that lets you experiment with neuroevolution, run training simulations (for example on the XOR problem), and visualize results using networkx and matplotlib.
+
+I named this MultiNEAT2 to keep the original MultiNEAT intact. Development of the original library is shutting down and work continues on this new project. 
 
 ---
 

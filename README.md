@@ -122,3 +122,9 @@ Below is a brief outline of the steps used in the `xor.py` script:
 
 6. **Display Result:**  
    After evolution completes, the best genome is drawn via matplotlib.
+
+---
+
+## License
+
+Apache 2.0 

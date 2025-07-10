@@ -1,12 +1,15 @@
-// Include pybind11 headers and STL bindings
-#define assert(x) (true)
+// Must include Python.h first on Linux
+#include <Python.h>
 
+// Then include pybind11 headers
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
+#include <pybind11/operators.h>
+
 namespace py = pybind11;
 
-// Include ALL the MultiNEAT headers
+// Then include MultiNEAT headers
 #include "Assert.h"
 #include "Genes.h"             
 #include "Genome.h"            
@@ -361,7 +364,26 @@ PYBIND11_MODULE(pymultineat, m) {
             .def_readwrite("AllowClones", &NEAT::Parameters::AllowClones)
             .def_readwrite("ArchiveEnforcement", &NEAT::Parameters::ArchiveEnforcement)
             .def_readwrite("NormalizeGenomeSize", &NEAT::Parameters::NormalizeGenomeSize)
-            .def_readwrite("CustomConstraints", &NEAT::Parameters::CustomConstraints)
+                .def_property("CustomConstraints",
+                    [](NEAT::Parameters &p) { 
+                        if (p.CustomConstraints) {
+                            return std::function<bool(NEAT::Genome&)>([&p](NEAT::Genome& g) { 
+                                return p.CustomConstraints(g); 
+                            });
+                        }
+                        return std::function<bool(NEAT::Genome&)>();
+                    },
+                    [](NEAT::Parameters &p, std::function<bool(NEAT::Genome&)> func) { 
+                        if (func) {
+                            // Store the std::function in a persistent object
+                            static auto persistent_func = func;
+                            p.CustomConstraints = [](NEAT::Genome& g) { 
+                                return persistent_func(g); 
+                            };
+                        } else {
+                            p.CustomConstraints = nullptr;
+                        }
+                    })
             // GA Parameters
             .def_readwrite("YoungAgeTreshold", &NEAT::Parameters::YoungAgeTreshold)
             .def_readwrite("YoungAgeFitnessBoost", &NEAT::Parameters::YoungAgeFitnessBoost)
@@ -625,6 +647,4 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite("m_max_weight_and_bias", &NEAT::Substrate::m_max_weight_and_bias)
         .def_readwrite("m_min_time_const", &NEAT::Substrate::m_min_time_const)
         .def_readwrite("m_max_time_const", &NEAT::Substrate::m_max_time_const);
-}; 
-
-
+};

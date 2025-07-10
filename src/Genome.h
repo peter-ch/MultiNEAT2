@@ -164,7 +164,7 @@ namespace NEAT
         Genome(std::ifstream &a_DataFile);
         
         // Builds this genome from an input stream
-        Genome::Genome(std::istream &data); 
+        Genome(std::istream &data); 
 
         // This creates a standart minimal genome - perceptron-like structure
         Genome(const Parameters &a_Parameters,

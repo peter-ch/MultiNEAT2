@@ -5,10 +5,19 @@ import gym
 import pymultineat as pnt
 import numpy as np
 import time
+import multiprocessing
 from tqdm import tqdm
 
+# Worker initialization function for multiprocessing
+def init_worker():
+    global worker_env
+    worker_env = gym.make('BipedalWalker-v3')
+
 # Define the evaluation function for a genome
-def evaluate_genome(genome, env, render=False, max_steps=1000):
+def evaluate_genome(genome, env=None, render=False, max_steps=1000):
+    # Use worker environment if none provided
+    if env is None:
+        env = worker_env
     nn = pnt.NeuralNetwork()
     genome.BuildPhenotype(nn)
     # Get initial observation
@@ -55,27 +64,36 @@ def evaluate_genome(genome, env, render=False, max_steps=1000):
     fitness = total_reward + abs(min_reward) + 1
     return fitness
 
+import argparse
+
 def main():
-    # Create training environment (no rendering for faster evaluation)
-    env_train = gym.make('BipedalWalker-v3')
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description='Bipedal Walker NEAT')
+    parser.add_argument('--serial', action='store_true', help='Use serial evaluation instead of parallel')
+    args = parser.parse_args()
+    
+    # Training environment is now created per worker process
     
     # Create rendering environment (only for demo purposes)
     env_render = gym.make('BipedalWalker-v3', render_mode='human')
     
+    # Create a temporary environment for serial evaluation and rendering
+    temp_env = gym.make('BipedalWalker-v3')
+    
     # Create and customize MultiNEAT parameters
     params = pnt.Parameters()
-    params.PopulationSize = 300
+    params.PopulationSize = 1000
     params.DynamicCompatibility = True
     params.NormalizeGenomeSize = False
     params.WeightDiffCoeff = 0.1
-    params.CompatTreshold = 3.0  # Increased for more complex problem
+    params.CompatTreshold = 3.0  
     params.YoungAgeTreshold = 15
     params.SpeciesMaxStagnation = 20
     params.OldAgeTreshold = 35
     params.MinSpecies = 3
-    params.MaxSpecies = 15
+    params.MaxSpecies = 25
     params.RouletteWheelSelection = False
-    params.RecurrentProb = 0.3  # Enable recurrence
+    params.RecurrentProb = 0.3  
     params.OverallMutationRate = 0.4
     params.ArchiveEnforcement = False
     params.MutateWeightsProb = 0.25
@@ -85,8 +103,8 @@ def main():
     params.WeightMutationRate = 0.85
     params.WeightReplacementRate = 0.2
     params.MaxWeight = 8
-    params.MutateAddNeuronProb = 0.02  # Increased for complex task
-    params.MutateAddLinkProb = 0.15     # Increased for complex task
+    params.MutateAddNeuronProb = 0.02  
+    params.MutateAddLinkProb = 0.15     
     params.MutateRemLinkProb = 0.02
     params.MinActivationA = 4.9
     params.MaxActivationA = 4.9
@@ -118,7 +136,7 @@ def main():
     # Create the initial population
     pop = pnt.Population(genome_prototype, params, True, 1.0, int(time.time()))
 
-    generations = 100
+    generations = 250
     best_fitness_history = []
     
     for gen in tqdm(range(generations), desc="Generations"):
@@ -126,15 +144,36 @@ def main():
         best_genome = None
         
         # Evaluate all genomes
-        for species in pop.m_Species:
-            for individual in species.m_Individuals:
-                fitness = evaluate_genome(individual, env_train)
-                individual.SetFitness(fitness)
-                
-                # Track best genome
-                if fitness > best_fitness:
-                    best_fitness = fitness
-                    best_genome = individual
+        if args.serial:
+            # Serial evaluation
+            for species in pop.m_Species:
+                for individual in species.m_Individuals:
+                    fitness = evaluate_genome(individual, temp_env)
+                    individual.SetFitness(fitness)
+                    
+                    # Track best genome
+                    if fitness > best_fitness:
+                        best_fitness = fitness
+                        best_genome = individual
+        else:
+            # Parallel evaluation
+            genomes = [individual for species in pop.m_Species for individual in species.m_Individuals]
+            
+            # Create process pool with worker initialization
+            with multiprocessing.Pool(processes=16, initializer=init_worker) as pool:
+                # Evaluate genomes in parallel
+                fitnesses = pool.map(evaluate_genome, genomes)
+            
+            # Assign fitness scores back to genomes
+            idx = 0
+            for species in pop.m_Species:
+                for individual in species.m_Individuals:
+                    individual.SetFitness(fitnesses[idx])
+                    # Track best genome
+                    if fitnesses[idx] > best_fitness:
+                        best_fitness = fitnesses[idx]
+                        best_genome = individual
+                    idx += 1
         
         # Store best fitness for progress tracking
         best_fitness_history.append(best_fitness)
@@ -147,7 +186,7 @@ def main():
             print(f"\nRendering best individual from generation {gen}...")
             for i in range(3):
                 print(f"Episode {i+1}")
-                evaluate_genome(best_genome, env_render, render=True)
+                evaluate_genome(best_genome, env_render, render=True, max_steps=1000)
         
         # Advance to next generation
         pop.Epoch()

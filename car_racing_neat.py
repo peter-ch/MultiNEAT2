@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# bipedal_walker_neat.py
+# car_racing_neat.py
 
 import gym
 import pymultineat as pnt
@@ -7,11 +7,52 @@ import numpy as np
 import time
 import multiprocessing
 from tqdm import tqdm
+import torch
+import torchvision.models as models
+from torchvision import transforms
+from PIL import Image
+
+# Feature extractor class using ResNet
+class FeatureExtractor:
+    def __init__(self):
+        # Load pre-trained ResNet18
+        self.model = models.resnet18(pretrained=True)
+        # Remove the last fully connected layer
+        self.model = torch.nn.Sequential(*(list(self.model.children())[:-1]))
+        self.model.eval()  # Set to evaluation mode
+        
+        # Define image preprocessing
+        self.preprocess = transforms.Compose([
+            transforms.Resize(224),  # ResNet input size
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=[0.485, 0.456, 0.406], 
+                                 std=[0.229, 0.224, 0.225])
+        ])
+    
+    def extract_features(self, image):
+        """Extract features from a raw image array"""
+        # Convert to PIL Image
+        pil_image = Image.fromarray(image)
+        # Preprocess and add batch dimension
+        input_tensor = self.preprocess(pil_image).unsqueeze(0)
+        
+        with torch.no_grad():
+            features = self.model(input_tensor)
+        
+        # Flatten and reduce to 128 features
+        features = features.squeeze().numpy()
+        # If features are > 128, use PCA-like reduction
+        if len(features) > 128:
+            # Simple dimensionality reduction (in practice, use PCA or train a reducer)
+            features = features[:128]
+        return features
 
 # Worker initialization function for multiprocessing
 def init_worker():
-    global worker_env
-    worker_env = gym.make('BipedalWalker-v3')
+    global worker_env, feature_extractor
+    worker_env = gym.make('CarRacing-v2')
+    feature_extractor = FeatureExtractor()
 
 # Define the evaluation function for a genome
 def evaluate_genome(genome, env=None, render=False, max_steps=1000):
@@ -20,6 +61,7 @@ def evaluate_genome(genome, env=None, render=False, max_steps=1000):
         env = worker_env
     nn = pnt.NeuralNetwork()
     genome.BuildPhenotype(nn)
+    
     # Get initial observation
     observation_data = env.reset()
     # Handle different return types from env.reset()
@@ -33,16 +75,19 @@ def evaluate_genome(genome, env=None, render=False, max_steps=1000):
     step_count = 0
     
     while True:
-        # Prepare inputs: convert observation to list and add bias
-        inputs = observation.tolist() if hasattr(observation, 'tolist') else list(observation)
+        # Extract features from image
+        features = feature_extractor.extract_features(observation)
+        
+        # Prepare inputs: features + bias
+        inputs = features.tolist()
         inputs.append(1.0)  # Add bias
         
         nn.Input(inputs)
         nn.Activate()  # Activate only once per timestep
         outputs = nn.Output()
         
-        # Scale outputs to [-1, 1] range (tanh already does this)
-        action = outputs
+        # Continuous action space: use all outputs
+        action = outputs[:3]  # Steering, gas, brake
         
         # Handle both old (4 return values) and new (5 return values) Gym API
         step_result = env.step(action)
@@ -68,21 +113,21 @@ import argparse
 
 def main():
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(description='Bipedal Walker NEAT')
+    parser = argparse.ArgumentParser(description='Car Racing NEAT')
     parser.add_argument('--serial', action='store_true', help='Use serial evaluation instead of parallel')
     args = parser.parse_args()
     
     # Training environment is now created per worker process
     
     # Create rendering environment (only for demo purposes)
-    env_render = gym.make('BipedalWalker-v3', render_mode='human')
+    env_render = gym.make('CarRacing-v2', render_mode='human')
     
     # Create a temporary environment for serial evaluation and rendering
-    temp_env = gym.make('BipedalWalker-v3')
+    temp_env = gym.make('CarRacing-v2')
     
     # Create and customize MultiNEAT parameters
     params = pnt.Parameters()
-    params.PopulationSize = 240
+    params.PopulationSize = 120  # Reduced population size due to computational cost
     params.DynamicCompatibility = True
     params.NormalizeGenomeSize = False
     params.WeightDiffCoeff = 0.1
@@ -91,9 +136,9 @@ def main():
     params.SpeciesMaxStagnation = 20
     params.OldAgeTreshold = 35
     params.MinSpecies = 3
-    params.MaxSpecies = 12
+    params.MaxSpecies = 8
     params.RouletteWheelSelection = False
-    params.RecurrentProb = 0.3  
+    params.RecurrentProb = 0.5  # Higher recurrent probability for temporal dependencies
     params.OverallMutationRate = 0.4
     params.ArchiveEnforcement = False
     params.MutateWeightsProb = 0.25
@@ -121,10 +166,10 @@ def main():
     params.AllowClones = False
 
     # Create a GenomeInitStruct
-    # 24 inputs (observations) + 1 bias = 25 inputs, 4 outputs
+    # 128 features + 1 bias = 129 inputs, 3 outputs
     init_struct = pnt.GenomeInitStruct()
-    init_struct.NumInputs = 25
-    init_struct.NumOutputs = 4
+    init_struct.NumInputs = 129
+    init_struct.NumOutputs = 3
     init_struct.NumHidden = 0
     init_struct.SeedType = pnt.GenomeSeedType.PERCEPTRON
     init_struct.HiddenActType = pnt.TANH
@@ -136,7 +181,7 @@ def main():
     # Create the initial population
     pop = pnt.Population(genome_prototype, params, True, 1.0, int(time.time()))
 
-    generations = 250
+    generations = 100  # Fewer generations due to computational cost
     best_fitness_history = []
     
     for gen in tqdm(range(generations), desc="Generations"):
@@ -160,7 +205,7 @@ def main():
             genomes = [individual for species in pop.m_Species for individual in species.m_Individuals]
             
             # Create process pool with worker initialization
-            with multiprocessing.Pool(processes=16, initializer=init_worker) as pool:
+            with multiprocessing.Pool(processes=8, initializer=init_worker) as pool:  # Fewer processes
                 # Evaluate genomes in parallel
                 fitnesses = pool.map(evaluate_genome, genomes)
             
@@ -184,7 +229,7 @@ def main():
         # Render best individual every 5 generations
         if best_genome and gen % 5 == 0:
             print(f"\nRendering best individual from generation {gen}...")
-            for i in range(3):
+            for i in range(1):  # Fewer episodes due to rendering cost
                 print(f"Episode {i+1}")
                 evaluate_genome(best_genome, env_render, render=True, max_steps=1000)
         

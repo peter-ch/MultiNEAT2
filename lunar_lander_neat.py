@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# bipedal_walker_neat.py
+# lunar_lander_neat.py
 
 import gym
 import pymultineat as pnt
@@ -11,7 +11,7 @@ from tqdm import tqdm
 # Worker initialization function for multiprocessing
 def init_worker():
     global worker_env
-    worker_env = gym.make('BipedalWalker-v3')
+    worker_env = gym.make('LunarLander-v2')
 
 # Define the evaluation function for a genome
 def evaluate_genome(genome, env=None, render=False, max_steps=1000):
@@ -41,8 +41,8 @@ def evaluate_genome(genome, env=None, render=False, max_steps=1000):
         nn.Activate()  # Activate only once per timestep
         outputs = nn.Output()
         
-        # Scale outputs to [-1, 1] range (tanh already does this)
-        action = outputs
+        # Discrete action selection: choose action with highest output
+        action = np.argmax(outputs)
         
         # Handle both old (4 return values) and new (5 return values) Gym API
         step_result = env.step(action)
@@ -68,17 +68,17 @@ import argparse
 
 def main():
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(description='Bipedal Walker NEAT')
+    parser = argparse.ArgumentParser(description='Lunar Lander NEAT')
     parser.add_argument('--serial', action='store_true', help='Use serial evaluation instead of parallel')
     args = parser.parse_args()
     
     # Training environment is now created per worker process
     
     # Create rendering environment (only for demo purposes)
-    env_render = gym.make('BipedalWalker-v3', render_mode='human')
+    env_render = gym.make('LunarLander-v2', render_mode='human')
     
     # Create a temporary environment for serial evaluation and rendering
-    temp_env = gym.make('BipedalWalker-v3')
+    temp_env = gym.make('LunarLander-v2')
     
     # Create and customize MultiNEAT parameters
     params = pnt.Parameters()
@@ -110,7 +110,7 @@ def main():
     params.MaxActivationA = 4.9
     params.ActivationFunction_SignedSigmoid_Prob = 0.0
     params.ActivationFunction_UnsignedSigmoid_Prob = 0.0
-    params.ActivationFunction_Tanh_Prob = 1.0  # Use Tanh for symmetric outputs
+    params.ActivationFunction_Tanh_Prob = 1.0
     params.ActivationFunction_SignedStep_Prob = 0.0
     params.CrossoverRate = 0.0
     params.MultipointCrossoverRate = 0.0
@@ -121,9 +121,9 @@ def main():
     params.AllowClones = False
 
     # Create a GenomeInitStruct
-    # 24 inputs (observations) + 1 bias = 25 inputs, 4 outputs
+    # 8 inputs (observations) + 1 bias = 9 inputs, 4 outputs
     init_struct = pnt.GenomeInitStruct()
-    init_struct.NumInputs = 25
+    init_struct.NumInputs = 9
     init_struct.NumOutputs = 4
     init_struct.NumHidden = 0
     init_struct.SeedType = pnt.GenomeSeedType.PERCEPTRON

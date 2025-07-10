@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# bipedal_walker_neat.py
+# bipedal_walker_hardcore_neat.py
 
 import gym
 import pymultineat as pnt
@@ -11,10 +11,10 @@ from tqdm import tqdm
 # Worker initialization function for multiprocessing
 def init_worker():
     global worker_env
-    worker_env = gym.make('BipedalWalker-v3')
+    worker_env = gym.make('BipedalWalker-v3', hardcore=True)
 
 # Define the evaluation function for a genome
-def evaluate_genome(genome, env=None, render=False, max_steps=1000):
+def evaluate_genome(genome, env=None, render=False, max_steps=2000):  # Increased max_steps to 2000
     # Use worker environment if none provided
     if env is None:
         env = worker_env
@@ -41,7 +41,7 @@ def evaluate_genome(genome, env=None, render=False, max_steps=1000):
         nn.Activate()  # Activate only once per timestep
         outputs = nn.Output()
         
-        # Scale outputs to [-1, 1] range (tanh already does this)
+        # Use all outputs directly
         action = outputs
         
         # Handle both old (4 return values) and new (5 return values) Gym API
@@ -68,17 +68,17 @@ import argparse
 
 def main():
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(description='Bipedal Walker NEAT')
+    parser = argparse.ArgumentParser(description='Bipedal Walker Hardcore NEAT')
     parser.add_argument('--serial', action='store_true', help='Use serial evaluation instead of parallel')
     args = parser.parse_args()
     
     # Training environment is now created per worker process
     
     # Create rendering environment (only for demo purposes)
-    env_render = gym.make('BipedalWalker-v3', render_mode='human')
+    env_render = gym.make('BipedalWalker-v3', hardcore=True, render_mode='human')
     
     # Create a temporary environment for serial evaluation and rendering
-    temp_env = gym.make('BipedalWalker-v3')
+    temp_env = gym.make('BipedalWalker-v3', hardcore=True)
     
     # Create and customize MultiNEAT parameters
     params = pnt.Parameters()
@@ -186,7 +186,7 @@ def main():
             print(f"\nRendering best individual from generation {gen}...")
             for i in range(3):
                 print(f"Episode {i+1}")
-                evaluate_genome(best_genome, env_render, render=True, max_steps=1000)
+                evaluate_genome(best_genome, env_render, render=True, max_steps=2000)
         
         # Advance to next generation
         pop.Epoch()

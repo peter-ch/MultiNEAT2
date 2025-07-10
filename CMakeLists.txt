@@ -18,13 +18,10 @@ add_executable(multineat_exe ${EXE_SOURCES})
 target_include_directories(multineat_exe PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 add_definitions(-UNDEBUG)
-find_package(Python3 3.12 REQUIRED COMPONENTS Interpreter Development Development.Module)
+find_package(Python3 REQUIRED COMPONENTS Interpreter Development Development.Module)
 include_directories(
     ${Python3_INCLUDE_DIRS}
     ${pybind11_INCLUDE_DIRS}
-    /usr/include/python3.12
-    /usr/local/include/python3.12
-    /usr/include/python3.12
 )
 
 # Force use of newer pybind11 version
@@ -48,7 +45,6 @@ target_include_directories(pymultineat PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${Python3_INCLUDE_DIRS}
     ${pybind11_INCLUDE_DIRS}
-    /usr/include/python3.12
 )
 target_link_libraries(pymultineat PRIVATE ${Python3_LIBRARIES})
 set_target_properties(pymultineat PROPERTIES

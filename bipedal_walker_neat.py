@@ -181,10 +181,10 @@ def main():
         # Print generation stats
         print(f"\nGeneration {gen}: Best Fitness = {best_fitness:.2f}")
         
-        # Render best individual every 5 generations
-        if best_genome and gen % 5 == 0:
+        # Render best individual every 50 generations
+        if best_genome and gen % 50 == 0:
             print(f"\nRendering best individual from generation {gen}...")
-            for i in range(3):
+            for i in range(10):
                 print(f"Episode {i+1}")
                 evaluate_genome(best_genome, env_render, render=True, max_steps=1000)
         

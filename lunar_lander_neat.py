@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # lunar_lander_neat.py
 
-import gym
+import gymnasium as gym
 import pymultineat as pnt
 import numpy as np
 import time

@@ -77,6 +77,8 @@ def evaluate_genome(genome, env=None, render=False, max_steps=1000):
         if render:
             try:
                 env.render()
+                env.unwrapped.mujoco_renderer.viewer._hide_overlay = True
+                env.unwrapped.mujoco_renderer.viewer._hide_menu = True
             except pygame.error:
                 # Display was closed, skip rendering
                 pass
@@ -114,16 +116,16 @@ def main():
     
     # Create and customize MultiNEAT parameters
     params = pnt.Parameters()
-    params.PopulationSize = 240
+    params.PopulationSize = 100
     params.DynamicCompatibility = True
     params.NormalizeGenomeSize = False
     params.WeightDiffCoeff = 0.1
     params.CompatTreshold = 3.0  
-    params.YoungAgeTreshold = 15
-    params.SpeciesMaxStagnation = 20
-    params.OldAgeTreshold = 35
-    params.MinSpecies = 3
-    params.MaxSpecies = 12
+    params.YoungAgeTreshold = 10
+    params.SpeciesMaxStagnation = 50
+    params.OldAgeTreshold = 50
+    params.MinSpecies = 2
+    params.MaxSpecies = 10
     params.RouletteWheelSelection = False
     params.RecurrentProb = 0.3  
     params.OverallMutationRate = 0.4
@@ -144,13 +146,13 @@ def main():
     params.ActivationFunction_UnsignedSigmoid_Prob = 0.0
     params.ActivationFunction_Tanh_Prob = 1.0  # Use Tanh for symmetric outputs
     params.ActivationFunction_SignedStep_Prob = 0.0
-    params.CrossoverRate = 0.0
-    params.MultipointCrossoverRate = 0.0
-    params.SurvivalRate = 0.25
+    params.CrossoverRate = 0.7
+    params.MultipointCrossoverRate = 0.6
+    params.SurvivalRate = 0.2
     params.MutateNeuronTraitsProb = 0
     params.MutateLinkTraitsProb = 0
     params.AllowLoops = True
-    params.AllowClones = False
+    params.AllowClones = True
 
     # Create a GenomeInitStruct
     # 8 inputs (observations) + 1 bias = 9 inputs, 2 outputs (actions)

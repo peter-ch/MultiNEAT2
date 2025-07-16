@@ -77,6 +77,8 @@ def evaluate_genome(genome, env=None, render=False, max_steps=500):
         if render:
             try:
                 env.render()
+                env.unwrapped.mujoco_renderer.viewer._hide_overlay = True
+                env.unwrapped.mujoco_renderer.viewer._hide_menu = True
             except pygame.error:
                 # Display was closed, skip rendering
                 pass
@@ -114,43 +116,46 @@ def main():
     
     # Create and customize MultiNEAT parameters
     params = pnt.Parameters()
-    params.PopulationSize = 240
+    params.PopulationSize = 150
     params.DynamicCompatibility = True
     params.NormalizeGenomeSize = False
-    params.WeightDiffCoeff = 0.1
-    params.CompatTreshold = 3.0  
-    params.YoungAgeTreshold = 15
-    params.SpeciesMaxStagnation = 20
-    params.OldAgeTreshold = 35
-    params.MinSpecies = 3
-    params.MaxSpecies = 12
+    params.WeightDiffCoeff = 0.02
+    params.CompatTreshold = 1.0  
+    params.YoungAgeTreshold = 10
+    params.SpeciesMaxStagnation = 12
+    params.OldAgeTreshold = 30
+    params.MinSpecies = 2
+    params.MaxSpecies = 6
     params.RouletteWheelSelection = False
-    params.RecurrentProb = 0.3  
-    params.OverallMutationRate = 0.4
+    params.TournamentSelection = True
+    params.TournamentSize = 4
+    params.RecurrentProb = 0.2 
+    params.OverallMutationRate = 0.8
     params.ArchiveEnforcement = False
-    params.MutateWeightsProb = 0.25
-    params.WeightMutationMaxPower = 0.5
-    params.WeightReplacementMaxPower = 8.0
-    params.MutateWeightsSevereProb = 0.0
-    params.WeightMutationRate = 0.85
-    params.WeightReplacementRate = 0.2
-    params.MaxWeight = 8
-    params.MutateAddNeuronProb = 0.02  
-    params.MutateAddLinkProb = 0.15     
-    params.MutateRemLinkProb = 0.02
-    params.MinActivationA = 4.9
-    params.MaxActivationA = 4.9
+    params.MutateWeightsProb = 0.5
+    params.WeightMutationMaxPower = 1.0
+    params.WeightReplacementMaxPower = 4.0
+    params.MutateWeightsSevereProb = 0.2
+    params.WeightMutationRate = 0.25
+    params.WeightReplacementRate = 0.1
+    params.MaxWeight = 16
+    params.MutateAddNeuronProb = 0.01
+    params.MutateAddLinkProb = 0.05     
+    params.MutateRemLinkProb = 0.05
+    params.MinActivationA = 1.0
+    params.MaxActivationA = 1.0
     params.ActivationFunction_SignedSigmoid_Prob = 0.0
     params.ActivationFunction_UnsignedSigmoid_Prob = 0.0
     params.ActivationFunction_Tanh_Prob = 1.0  # Use Tanh for symmetric outputs
     params.ActivationFunction_SignedStep_Prob = 0.0
-    params.CrossoverRate = 0.0
-    params.MultipointCrossoverRate = 0.0
-    params.SurvivalRate = 0.25
+    params.CrossoverRate = 0.7
+    params.MultipointCrossoverRate = 0.6
+    params.SurvivalRate = 0.2
     params.MutateNeuronTraitsProb = 0
     params.MutateLinkTraitsProb = 0
     params.AllowLoops = True
     params.AllowClones = False
+    params.EliteFraction = 0.02
 
     # Create a GenomeInitStruct
     # 17 inputs (observations) + 1 bias = 18 inputs, 6 outputs (actions)
@@ -161,6 +166,8 @@ def main():
     init_struct.SeedType = pnt.GenomeSeedType.PERCEPTRON
     init_struct.HiddenActType = pnt.TANH
     init_struct.OutputActType = pnt.TANH
+    init_struct.FS_NEAT = True # start with only a few links
+    init_struct.FS_NEAT_links = 5    
 
     # Create a prototype genome
     genome_prototype = pnt.Genome(params, init_struct)

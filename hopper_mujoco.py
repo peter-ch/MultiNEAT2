@@ -9,6 +9,7 @@ import multiprocessing
 from tqdm import tqdm
 import pygame  # For key press detection
 import matplotlib.pyplot as plt
+import argparse
 
 # Constant to ensure all fitness values are positive
 FITNESS_SHIFT = 1000.0
@@ -18,8 +19,48 @@ def init_worker():
     global worker_env
     worker_env = gym.make('Hopper-v5')
 
+# Function to measure min/max values for each observation feature
+def measure_observation_bounds(env, num_episodes=10, max_steps=100):
+    min_vals = None
+    max_vals = None
+    
+    for _ in range(num_episodes):
+        observation_data = env.reset()
+        if isinstance(observation_data, tuple):
+            observation = observation_data[0]  # (observation, info) format
+        else:
+            observation = observation_data
+        
+        if min_vals is None:
+            min_vals = np.array(observation)
+            max_vals = np.array(observation)
+        else:
+            min_vals = np.minimum(min_vals, observation)
+            max_vals = np.maximum(max_vals, observation)
+        
+        for _ in range(max_steps):
+            action = env.action_space.sample()  # Random action
+            step_result = env.step(action)
+            if len(step_result) == 4:
+                observation, _, done, _ = step_result
+            else:
+                observation, _, done, _, _ = step_result
+            
+            min_vals = np.minimum(min_vals, observation)
+            max_vals = np.maximum(max_vals, observation)
+            
+            if done:
+                break
+    
+    # Avoid division by zero in case min == max for any feature
+    for i in range(len(min_vals)):
+        if min_vals[i] == max_vals[i]:
+            max_vals[i] += 1e-6  # Small offset
+    
+    return min_vals, max_vals
+
 # Define the evaluation function for a genome
-def evaluate_genome(genome, env=None, render=False, max_steps=300):
+def evaluate_genome(genome, env=None, render=False, max_steps=300, obs_min=None, obs_max=None):
     # Use worker environment if none provided
     if env is None:
         env = worker_env
@@ -56,9 +97,18 @@ def evaluate_genome(genome, env=None, render=False, max_steps=300):
                     env.close()
                     return max(0, total_reward + FITNESS_SHIFT)  # Ensure fitness is non-negative
         
-        # Prepare inputs: convert observation to list and add bias
-        inputs = observation.tolist() if hasattr(observation, 'tolist') else list(observation)
-        inputs.append(1.0)  # Add bias
+        # Normalize observation (excluding the bias term)
+        observation_list = observation.tolist() if hasattr(observation, 'tolist') else list(observation)
+        normalized_obs = []
+        for i, val in enumerate(observation_list):
+            # Clip to avoid extreme values (optional, but safer)
+            clipped_val = np.clip(val, obs_min[i], obs_max[i])
+            # Scale to [-1, 1]
+            normalized_val = (clipped_val - obs_min[i]) / (obs_max[i] - obs_min[i]) * 2 - 1
+            normalized_obs.append(normalized_val)
+        
+        # Add bias (1.0) without normalization
+        inputs = normalized_obs + [1.0]
         
         nn.Input(inputs)
         nn.Activate()  # Activate only once per timestep
@@ -80,6 +130,8 @@ def evaluate_genome(genome, env=None, render=False, max_steps=300):
         if render:
             try:
                 env.render()
+                env.unwrapped.mujoco_renderer.viewer._hide_overlay = True
+                env.unwrapped.mujoco_renderer.viewer._hide_menu = True
             except pygame.error:
                 # Display was closed, skip rendering
                 pass
@@ -90,8 +142,6 @@ def evaluate_genome(genome, env=None, render=False, max_steps=300):
     # Ensure fitness is non-negative by adding the shift constant
     fitness = max(0, total_reward + FITNESS_SHIFT)
     return fitness
-
-import argparse
 
 def main():
     # Parse command-line arguments
@@ -112,48 +162,59 @@ def main():
     line, = ax.plot([], [], 'b-')  # Create an empty line
     best_fitness_history = []
     
+    # Create a temporary environment for measuring observation bounds
+    temp_env = gym.make('Hopper-v5')
+    obs_min, obs_max = measure_observation_bounds(temp_env)
+    temp_env.close()
+    
+    print(f"Measured observation bounds (min): {obs_min}")
+    print(f"Measured observation bounds (max): {obs_max}")
+    
     # Create a temporary environment for serial evaluation and rendering
     temp_env = gym.make('Hopper-v5')
     
     # Create and customize MultiNEAT parameters
     params = pnt.Parameters()
-    params.PopulationSize = 240
+    params.PopulationSize = 150
     params.DynamicCompatibility = True
     params.NormalizeGenomeSize = False
-    params.WeightDiffCoeff = 0.1
-    params.CompatTreshold = 3.0  
-    params.YoungAgeTreshold = 15
-    params.SpeciesMaxStagnation = 20
-    params.OldAgeTreshold = 35
-    params.MinSpecies = 3
-    params.MaxSpecies = 12
+    params.WeightDiffCoeff = 0.02
+    params.CompatTreshold = 1.0  
+    params.YoungAgeTreshold = 10
+    params.SpeciesMaxStagnation = 12
+    params.OldAgeTreshold = 30
+    params.MinSpecies = 2
+    params.MaxSpecies = 6
     params.RouletteWheelSelection = False
-    params.RecurrentProb = 0.3  
-    params.OverallMutationRate = 0.4
+    params.TournamentSelection = False
+    params.TournamentSize = 4
+    params.RecurrentProb = 0.2 
+    params.OverallMutationRate = 0.8
     params.ArchiveEnforcement = False
-    params.MutateWeightsProb = 0.25
-    params.WeightMutationMaxPower = 0.5
-    params.WeightReplacementMaxPower = 8.0
-    params.MutateWeightsSevereProb = 0.0
-    params.WeightMutationRate = 0.85
-    params.WeightReplacementRate = 0.2
-    params.MaxWeight = 8
-    params.MutateAddNeuronProb = 0.02  
-    params.MutateAddLinkProb = 0.15     
-    params.MutateRemLinkProb = 0.02
-    params.MinActivationA = 4.9
-    params.MaxActivationA = 4.9
+    params.MutateWeightsProb = 0.5
+    params.WeightMutationMaxPower = 1.0
+    params.WeightReplacementMaxPower = 4.0
+    params.MutateWeightsSevereProb = 0.2
+    params.WeightMutationRate = 0.25
+    params.WeightReplacementRate = 0.1
+    params.MaxWeight = 16
+    params.MutateAddNeuronProb = 0.01
+    params.MutateAddLinkProb = 0.05     
+    params.MutateRemLinkProb = 0.05
+    params.MinActivationA = 1.0
+    params.MaxActivationA = 1.0
     params.ActivationFunction_SignedSigmoid_Prob = 0.0
     params.ActivationFunction_UnsignedSigmoid_Prob = 0.0
     params.ActivationFunction_Tanh_Prob = 1.0  # Use Tanh for symmetric outputs
     params.ActivationFunction_SignedStep_Prob = 0.0
-    params.CrossoverRate = 0.0
-    params.MultipointCrossoverRate = 0.0
-    params.SurvivalRate = 0.25
+    params.CrossoverRate = 0.7
+    params.MultipointCrossoverRate = 0.6
+    params.SurvivalRate = 0.2
     params.MutateNeuronTraitsProb = 0
     params.MutateLinkTraitsProb = 0
     params.AllowLoops = True
     params.AllowClones = False
+    params.EliteFraction = 0.02
 
     # Create a GenomeInitStruct
     # 11 inputs (observations) + 1 bias = 12 inputs, 3 outputs (actions)
@@ -182,7 +243,7 @@ def main():
             # Serial evaluation
             for species in pop.m_Species:
                 for individual in species.m_Individuals:
-                    fitness = evaluate_genome(individual, temp_env)
+                    fitness = evaluate_genome(individual, temp_env, obs_min=obs_min, obs_max=obs_max)
                     individual.SetFitness(fitness)
                     
                     # Track best genome
@@ -196,7 +257,7 @@ def main():
             # Create process pool with worker initialization
             with multiprocessing.Pool(processes=16, initializer=init_worker) as pool:
                 # Evaluate genomes in parallel
-                fitnesses = pool.map(evaluate_genome, genomes)
+                fitnesses = pool.starmap(evaluate_genome, [(g, None, False, 300, obs_min, obs_max) for g in genomes])
             
             # Assign fitness scores back to genomes
             idx = 0
@@ -231,7 +292,7 @@ def main():
                 # Create a fresh render environment for each episode
                 env_render = gym.make('Hopper-v5', render_mode='human')
                 try:
-                    evaluate_genome(best_genome, env_render, render=True, max_steps=300)
+                    evaluate_genome(best_genome, env_render, render=True, max_steps=300, obs_min=obs_min, obs_max=obs_max)
                 finally:
                     env_render.close()
         

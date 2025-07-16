@@ -9,6 +9,11 @@ import multiprocessing
 from tqdm import tqdm
 import pygame  # For key press detection
 import matplotlib.pyplot as plt
+from matplotlib import cm
+from matplotlib.colors import rgb2hex
+
+# Constant to ensure fitness is always positive
+FITNESS_SHIFT = 1000.0
 
 # Worker initialization function for multiprocessing
 def init_worker():
@@ -16,7 +21,7 @@ def init_worker():
     worker_env = gym.make('Walker2d-v5')
 
 # Define the evaluation function for a genome
-def evaluate_genome(genome, env=None, render=False, max_steps=1000):
+def evaluate_genome(genome, env=None, render=False, max_steps=500, num_trials=3):
     # Use worker environment if none provided
     if env is None:
         env = worker_env
@@ -24,68 +29,76 @@ def evaluate_genome(genome, env=None, render=False, max_steps=1000):
     nn = pnt.NeuralNetwork()
     genome.BuildPhenotype(nn)
     
-    # Get initial observation
-    try:
-        observation_data = env.reset()
-    except pygame.error:
-        # Environment was closed, create a new one
-        if render:
-            env = gym.make('Walker2d-v5', render_mode='human')
-        else:
-            env = gym.make('Walker2d-v5')
-        observation_data = env.reset()
+    total_reward = 0.0
     
-    # Handle different return types from env.reset()
-    if isinstance(observation_data, tuple):
-        observation = observation_data[0]  # (observation, info) format
-    else:
-        observation = observation_data
+    for _ in range(num_trials):
+        # Get initial observation
+        try:
+            observation_data = env.reset()
+        except pygame.error:
+            # Environment was closed, create a new one
+            if render:
+                env = gym.make('Walker2d-v5', render_mode='human')
+            else:
+                env = gym.make('Walker2d-v5')
+            observation_data = env.reset()
+
         
-    total_reward = 0
-    min_reward = 0
-    step_count = 0
-    
-    while True:
-        # Check for ESC key press if rendering
-        if render:
-            for event in pygame.event.get():
-                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                    env.close()
-                    return total_reward + abs(min_reward) + 1  # Return current fitness
-        
-        # Prepare inputs: convert observation to list and add bias
-        inputs = observation.tolist() if hasattr(observation, 'tolist') else list(observation)
-        inputs.append(1.0)  # Add bias
-        
-        nn.Input(inputs)
-        nn.Activate()  # Activate only once per timestep
-        outputs = nn.Output()
-        
-        # Scale outputs to [-1, 1] range (tanh already does this)
-        action = outputs
-        
-        # Handle both old (4 return values) and new (5 return values) Gym API
-        step_result = env.step(action)
-        if len(step_result) == 4:
-            observation, reward, done, _ = step_result
+        # Handle different return types from env.reset()
+        if isinstance(observation_data, tuple):
+            observation = observation_data[0]  # (observation, info) format
         else:
-            observation, reward, done, _, _ = step_result
-        total_reward += reward
-        min_reward = min(min_reward, reward)
-        step_count += 1
+            observation = observation_data
+            
+        trial_reward = 0
+        min_reward = 0
+        step_count = 0
         
-        if render:
-            try:
-                env.render()
-            except pygame.error:
-                # Display was closed, skip rendering
-                pass
+        while True:
+            # Check for ESC key press if rendering
+            if render:
+                for event in pygame.event.get():
+                    if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                        env.close()
+                        return (total_reward + trial_reward) / num_trials + FITNESS_SHIFT  # Return shifted fitness
             
-        if done or step_count >= max_steps:
-            break
+            # Prepare inputs: convert observation to list and add bias
+            inputs = observation.tolist() if hasattr(observation, 'tolist') else list(observation)
+            inputs.append(1.0)  # Add bias
             
-    # Adjust for negative rewards (NEAT requires non-negative fitness)
-    fitness = total_reward + abs(min_reward) + 1
+            nn.Input(inputs)
+            nn.Activate()  # Activate only once per timestep
+            outputs = nn.Output()
+            
+            # Scale outputs to [-1, 1] range (tanh already does this)
+            action = outputs
+            
+            # Handle both old (4 return values) and new (5 return values) Gym API
+            step_result = env.step(action)
+            if len(step_result) == 4:
+                observation, reward, done, _ = step_result
+            else:
+                observation, reward, done, _, _ = step_result
+            trial_reward += reward
+            min_reward = min(min_reward, reward)
+            step_count += 1
+            
+            if render:
+                try:
+                    env.render()
+                    env.unwrapped.mujoco_renderer.viewer._hide_overlay = True
+                    env.unwrapped.mujoco_renderer.viewer._hide_menu = True
+                except pygame.error:
+                    # Display was closed, skip rendering
+                    pass
+                
+            if done or step_count >= max_steps:
+                break
+        
+        total_reward += trial_reward
+    
+    # Shift fitness to ensure it's always positive while preserving ranks
+    fitness = (total_reward / num_trials) + FITNESS_SHIFT
     return fitness
 
 import argparse
@@ -100,60 +113,73 @@ def main():
     pygame.init()
     pygame.display.set_mode((1, 1))  # Create a tiny window for event handling
     
-    # Set up matplotlib figure for fitness tracking
+    # Set up matplotlib figures
     plt.ion()  # Turn on interactive mode
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.set_title('Best Fitness per Generation')
-    ax.set_xlabel('Generation')
-    ax.set_ylabel('Fitness')
-    line, = ax.plot([], [], 'b-')  # Create an empty line
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+    
+    # Figure 1: Best Fitness per Generation
+    ax1.set_title('Best Fitness per Generation')
+    ax1.set_xlabel('Generation')
+    ax1.set_ylabel('Fitness')
+    line, = ax1.plot([], [], 'b-')  # Create an empty line
     best_fitness_history = []
+    
+    # Figure 2: Population Visualization
+    ax2.set_title('Population Fitness by Species')
+    ax2.set_xlabel('Individual')
+    ax2.set_ylabel('Fitness')
+    ax2.set_ylim(0, 2000)  # Adjust based on expected fitness range
+    population_bars = None
+    
+    # Statistics text box
+    stats_text = ax2.text(0.02, 0.95, '', transform=ax2.transAxes, verticalalignment='top')
     
     # Create a temporary environment for serial evaluation and rendering
     temp_env = gym.make('Walker2d-v5')
     
-    # Create and customize MultiNEAT parameters
     params = pnt.Parameters()
-    params.PopulationSize = 240
+    params.PopulationSize = 150
     params.DynamicCompatibility = True
     params.NormalizeGenomeSize = False
-    params.WeightDiffCoeff = 0.1
-    params.CompatTreshold = 3.0  
-    params.YoungAgeTreshold = 15
-    params.SpeciesMaxStagnation = 20
-    params.OldAgeTreshold = 35
-    params.MinSpecies = 3
-    params.MaxSpecies = 12
+    params.WeightDiffCoeff = 0.02
+    params.CompatTreshold = 1.0  
+    params.YoungAgeTreshold = 10
+    params.SpeciesMaxStagnation = 12
+    params.OldAgeTreshold = 30
+    params.MinSpecies = 2
+    params.MaxSpecies = 6
     params.RouletteWheelSelection = False
-    params.RecurrentProb = 0.3  
-    params.OverallMutationRate = 0.4
+    params.TournamentSelection = True
+    params.TournamentSize = 4
+    params.RecurrentProb = 0.2 
+    params.OverallMutationRate = 0.8
     params.ArchiveEnforcement = False
-    params.MutateWeightsProb = 0.25
-    params.WeightMutationMaxPower = 0.5
-    params.WeightReplacementMaxPower = 8.0
-    params.MutateWeightsSevereProb = 0.0
-    params.WeightMutationRate = 0.85
-    params.WeightReplacementRate = 0.2
-    params.MaxWeight = 8
-    params.MutateAddNeuronProb = 0.02  
-    params.MutateAddLinkProb = 0.15     
-    params.MutateRemLinkProb = 0.02
-    params.MinActivationA = 4.9
-    params.MaxActivationA = 4.9
+    params.MutateWeightsProb = 0.5
+    params.WeightMutationMaxPower = 1.0
+    params.WeightReplacementMaxPower = 4.0
+    params.MutateWeightsSevereProb = 0.2
+    params.WeightMutationRate = 0.25
+    params.WeightReplacementRate = 0.1
+    params.MaxWeight = 16
+    params.MutateAddNeuronProb = 0.01
+    params.MutateAddLinkProb = 0.05     
+    params.MutateRemLinkProb = 0.05
+    params.MinActivationA = 1.0
+    params.MaxActivationA = 1.0
     params.ActivationFunction_SignedSigmoid_Prob = 0.0
     params.ActivationFunction_UnsignedSigmoid_Prob = 0.0
     params.ActivationFunction_Tanh_Prob = 1.0  # Use Tanh for symmetric outputs
     params.ActivationFunction_SignedStep_Prob = 0.0
-    params.CrossoverRate = 0.0
-    params.MultipointCrossoverRate = 0.0
-    params.SurvivalRate = 0.25
+    params.CrossoverRate = 0.7
+    params.MultipointCrossoverRate = 0.6
+    params.SurvivalRate = 0.2
     params.MutateNeuronTraitsProb = 0
     params.MutateLinkTraitsProb = 0
     params.AllowLoops = True
     params.AllowClones = False
+    params.EliteFraction = 0.02
 
     # Create a GenomeInitStruct
-    # 17 inputs (observations) + 1 bias = 18 inputs, 6 outputs (actions)
     init_struct = pnt.GenomeInitStruct()
     init_struct.NumInputs = 18
     init_struct.NumOutputs = 6
@@ -179,7 +205,7 @@ def main():
             # Serial evaluation
             for species in pop.m_Species:
                 for individual in species.m_Individuals:
-                    fitness = evaluate_genome(individual, temp_env)
+                    fitness = evaluate_genome(individual, temp_env, num_trials=3)
                     individual.SetFitness(fitness)
                     
                     # Track best genome
@@ -193,7 +219,7 @@ def main():
             # Create process pool with worker initialization
             with multiprocessing.Pool(processes=16, initializer=init_worker) as pool:
                 # Evaluate genomes in parallel
-                fitnesses = pool.map(evaluate_genome, genomes)
+                fitnesses = pool.starmap(evaluate_genome, [(genome, None, False, 500, 3) for genome in genomes])
             
             # Assign fitness scores back to genomes
             idx = 0
@@ -209,26 +235,66 @@ def main():
         # Store best fitness for progress tracking
         best_fitness_history.append(best_fitness)
         
-        # Update the plot
+        # Update the fitness plot
         line.set_xdata(range(len(best_fitness_history)))
         line.set_ydata(best_fitness_history)
-        ax.relim()
-        ax.autoscale_view()
+        ax1.relim()
+        ax1.autoscale_view()
+        
+        # Update the population visualization
+        if population_bars is not None:
+            for bar in population_bars:
+                bar.remove()
+        
+        # Collect fitness and species data
+        fitness_data = []
+        species_data = []
+        neurons_data = []
+        links_data = []
+        for species in pop.m_Species:
+            for individual in species.m_Individuals:
+                fitness_data.append(individual.GetFitness())
+                species_data.append(species.ID())
+                nn = pnt.NeuralNetwork()
+                individual.BuildPhenotype(nn)
+                neurons_data.append(len(nn.m_neurons))  # Number of neurons
+                links_data.append(len(nn.m_connections))  # Number of links
+        
+        # Assign colors to species
+        unique_species = list(set(species_data))
+        cmap = cm.get_cmap('tab20', len(unique_species))
+        species_colors = {s: rgb2hex(cmap(i)[:3]) for i, s in enumerate(unique_species)}
+        colors = [species_colors[s] for s in species_data]
+        
+        # Plot population bars
+        population_bars = ax2.bar(range(len(fitness_data)), fitness_data, color=colors)
+        
+        # Update statistics
+        stats = f"Population Stats:\n"
+        stats += f"Max Neurons: {max(neurons_data)}\n"
+        stats += f"Min Neurons: {min(neurons_data)}\n"
+        stats += f"Max Links: {max(links_data)}\n"
+        stats += f"Min Links: {min(links_data)}\n"
+        stats += f"Species Count: {len(unique_species)}"
+        stats_text.set_text(stats)
+        
+        # Redraw figures
         fig.canvas.draw()
         fig.canvas.flush_events()
         
         # Print generation stats
         print(f"\nGeneration {gen}: Best Fitness = {best_fitness:.2f}")
         
-        # Render best individual every 50 generations
-        if best_genome and gen % 50 == 0:
+        # Render best individual every 25 generations
+        if best_genome and gen % 25 == 0:
             print(f"\nRendering best individual from generation {gen}...")
-            for i in range(10):
+            for i in range(5):
                 print(f"Episode {i+1} (Press ESC to skip remaining episodes)")
                 # Create a fresh render environment for each episode
                 env_render = gym.make('Walker2d-v5', render_mode='human')
+                env_render.unwrapped._hide_overlay = True
                 try:
-                    evaluate_genome(best_genome, env_render, render=True, max_steps=1000)
+                    evaluate_genome(best_genome, env_render, render=True, max_steps=500, num_trials=1)
                 finally:
                     env_render.close()
         
@@ -245,3 +311,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

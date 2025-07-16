@@ -80,6 +80,8 @@ def evaluate_genome(genome, env=None, render=False, max_steps=500):
         if render:
             try:
                 env.render()
+                env.unwrapped.mujoco_renderer.viewer._hide_overlay = True
+                env.unwrapped.mujoco_renderer.viewer._hide_menu = True
             except pygame.error:
                 # Display was closed, skip rendering
                 pass
@@ -117,43 +119,43 @@ def main():
     
     # Create and customize MultiNEAT parameters
     params = pnt.Parameters()
-    params.PopulationSize = 200  # Slightly smaller for efficiency
-    params.DynamicCompatibility = True  
-    params.NormalizeGenomeSize = False  
-    params.WeightDiffCoeff = 0.2  # Increased to encourage more diversity
-    params.CompatTreshold = 2.5  # Lowered to form fewer, larger species
-    params.YoungAgeTreshold = 10  # Shorter protection for young species
-    params.SpeciesMaxStagnation = 15  # Less tolerance for stagnation
-    params.OldAgeTreshold = 25  # Shorter lifespan for old species
-    params.MinSpecies = 2  # Fewer minimum species
-    params.MaxSpecies = 10  # Fewer maximum species
-    params.RouletteWheelSelection = False  
-    params.RecurrentProb = 0.2  # Reduced recurrent connections
-    params.OverallMutationRate = 0.5  # Higher mutation rate for exploration
-    params.ArchiveEnforcement = False  
-    params.MutateWeightsProb = 0.3  # More frequent weight mutations
-    params.WeightMutationMaxPower = 0.7  # Larger weight changes
-    params.WeightReplacementMaxPower = 10.0  # Allow larger replacements
-    params.MutateWeightsSevereProb = 0.0  
-    params.WeightMutationRate = 0.9  # Higher rate for fine-tuning
-    params.WeightReplacementRate = 0.1  # Less frequent replacements
-    params.MaxWeight = 10  # Higher limit for weights
-    params.MutateAddNeuronProb = 0.03  # Slightly higher neuron addition
-    params.MutateAddLinkProb = 0.2  # More link additions
-    params.MutateRemLinkProb = 0.01  # Rare link removal
-    params.MinActivationA = 4.9  
-    params.MaxActivationA = 4.9  
-    params.ActivationFunction_SignedSigmoid_Prob = 0.0  
-    params.ActivationFunction_UnsignedSigmoid_Prob = 0.0  
-    params.ActivationFunction_Tanh_Prob = 1.0  
-    params.ActivationFunction_SignedStep_Prob = 0.0  
-    params.CrossoverRate = 0.0  
-    params.MultipointCrossoverRate = 0.0  
-    params.SurvivalRate = 0.2  # Stricter survival (top 20%)
-    params.MutateNeuronTraitsProb = 0  
-    params.MutateLinkTraitsProb = 0  
-    params.AllowLoops = True  
-    params.AllowClones = False  
+    params.PopulationSize = 100
+    params.DynamicCompatibility = True
+    params.NormalizeGenomeSize = False
+    params.WeightDiffCoeff = 0.1
+    params.CompatTreshold = 3.0  
+    params.YoungAgeTreshold = 10
+    params.SpeciesMaxStagnation = 50
+    params.OldAgeTreshold = 50
+    params.MinSpecies = 2
+    params.MaxSpecies = 10
+    params.RouletteWheelSelection = False
+    params.RecurrentProb = 0.3  
+    params.OverallMutationRate = 0.4
+    params.ArchiveEnforcement = False
+    params.MutateWeightsProb = 0.25
+    params.WeightMutationMaxPower = 0.5
+    params.WeightReplacementMaxPower = 8.0
+    params.MutateWeightsSevereProb = 0.0
+    params.WeightMutationRate = 0.85
+    params.WeightReplacementRate = 0.2
+    params.MaxWeight = 8
+    params.MutateAddNeuronProb = 0.02  
+    params.MutateAddLinkProb = 0.15     
+    params.MutateRemLinkProb = 0.02
+    params.MinActivationA = 4.9
+    params.MaxActivationA = 4.9
+    params.ActivationFunction_SignedSigmoid_Prob = 0.0
+    params.ActivationFunction_UnsignedSigmoid_Prob = 0.0
+    params.ActivationFunction_Tanh_Prob = 1.0  # Use Tanh for symmetric outputs
+    params.ActivationFunction_SignedStep_Prob = 0.0
+    params.CrossoverRate = 0.7
+    params.MultipointCrossoverRate = 0.6
+    params.SurvivalRate = 0.2
+    params.MutateNeuronTraitsProb = 0
+    params.MutateLinkTraitsProb = 0
+    params.AllowLoops = True
+    params.AllowClones = True
 
     # Create a GenomeInitStruct
     # 105 inputs (observations) + 1 bias = 106 inputs, 8 outputs (actions)
@@ -164,6 +166,8 @@ def main():
     init_struct.SeedType = pnt.GenomeSeedType.PERCEPTRON
     init_struct.HiddenActType = pnt.TANH
     init_struct.OutputActType = pnt.TANH
+    init_struct.FS_NEAT = True # start with only a few links
+    init_struct.FS_NEAT_links = 5
 
     # Create a prototype genome
     genome_prototype = pnt.Genome(params, init_struct)

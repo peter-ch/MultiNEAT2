@@ -1,3 +1,6 @@
+// fix an assert error on Windows build
+#define assert(x) (x)
+
 // Must include Python.h first on Linux
 #include <Python.h>
 

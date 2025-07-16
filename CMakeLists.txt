@@ -5,13 +5,13 @@ project(MultiNEAT)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Include the project “src” directory for headers
+# Include the project "src" directory for headers
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 # --- Build the executable target using main.cpp ---
 # Get all .cpp files in src directory
 file(GLOB EXE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/*.cpp")
-# Exclude any file containing “bindings” (so main.cpp and the rest are included)
+# Exclude any file containing "bindings" (so main.cpp and the rest are included)
 list(FILTER EXE_SOURCES EXCLUDE REGEX "src/.*Bindings.*\\.cpp")
 # Add executable target
 add_executable(multineat_exe ${EXE_SOURCES})
@@ -24,8 +24,12 @@ include_directories(
     ${pybind11_INCLUDE_DIRS}
 )
 
-# Force use of newer pybind11 version
-set(pybind11_DIR "/usr/local/lib/python3.12/dist-packages/pybind11/share/cmake/pybind11")
+# Find pybind11 through Python's site-packages
+execute_process(
+    COMMAND ${Python3_EXECUTABLE} -c "import pybind11; print(pybind11.get_cmake_dir())"
+    OUTPUT_VARIABLE pybind11_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
 find_package(pybind11 REQUIRED CONFIG)
 message(STATUS "Found pybind11 v${pybind11_VERSION}")
 include_directories(${pybind11_INCLUDE_DIRS})
@@ -39,7 +43,7 @@ list(FILTER PY_ALL EXCLUDE REGEX "src/.*Main\\.cpp")
 list(FILTER PY_ALL EXCLUDE REGEX "src/.*Bindings.*\\.cpp")
 # Now specify the bindings file (assumed to be src/bindings.cpp) and combine with the rest.
 set(PY_MODULE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/Bindings.cpp" ${PY_ALL})
-# Use pybind11 to create a MODULE target called pymultineat. (Python will load a shared-library named ‘pymultineat’)
+# Use pybind11 to create a MODULE target called pymultineat. (Python will load a shared-library named 'pymultineat')
 pybind11_add_module(pymultineat MODULE ${PY_MODULE_SOURCES})
 target_include_directories(pymultineat PRIVATE 
     ${CMAKE_CURRENT_SOURCE_DIR}/src

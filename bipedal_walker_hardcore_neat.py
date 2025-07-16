@@ -7,6 +7,7 @@ import numpy as np
 import time
 import multiprocessing
 from tqdm import tqdm
+import pygame  # Added for key press detection
 
 # Worker initialization function for multiprocessing
 def init_worker():
@@ -14,7 +15,7 @@ def init_worker():
     worker_env = gym.make('BipedalWalker-v3', hardcore=True)
 
 # Define the evaluation function for a genome
-def evaluate_genome(genome, env=None, render=False, max_steps=2000):  # Increased max_steps to 2000
+def evaluate_genome(genome, env=None, render=False, max_steps=2000):
     # Use worker environment if none provided
     if env is None:
         env = worker_env
@@ -31,8 +32,20 @@ def evaluate_genome(genome, env=None, render=False, max_steps=2000):  # Increase
     total_reward = 0
     min_reward = 0
     step_count = 0
+    skip_rendering = False  # Flag to track if ESC was pressed
     
     while True:
+        # Check for ESC key press if rendering
+        if render:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    skip_rendering = True
+                elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    skip_rendering = True
+            
+            if skip_rendering:
+                break
+        
         # Prepare inputs: convert observation to list and add bias
         inputs = observation.tolist() if hasattr(observation, 'tolist') else list(observation)
         inputs.append(1.0)  # Add bias
@@ -54,8 +67,12 @@ def evaluate_genome(genome, env=None, render=False, max_steps=2000):  # Increase
         min_reward = min(min_reward, reward)
         step_count += 1
         
-        if render:
-            env.render()
+        if render and not skip_rendering:
+            try:
+                env.render()
+            except pygame.error:
+                skip_rendering = True
+                break
             
         if done or step_count >= max_steps:
             break
@@ -184,9 +201,14 @@ def main():
         # Render best individual every 50 generations
         if best_genome and gen % 50 == 0:
             print(f"\nRendering best individual from generation {gen}...")
+            print("Press ESC to skip remaining episodes")
             for i in range(15):
                 print(f"Episode {i+1}")
-                evaluate_genome(best_genome, env_render, render=True, max_steps=2000)
+                try:
+                    evaluate_genome(best_genome, env_render, render=True, max_steps=2000)
+                except pygame.error:
+                    print("Display window closed, skipping remaining episodes")
+                    break
         
         # Advance to next generation
         pop.Epoch()

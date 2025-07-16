@@ -7,6 +7,7 @@ import numpy as np
 import time
 import multiprocessing
 from tqdm import tqdm
+import pygame  # For key press detection
 
 # Worker initialization function for multiprocessing
 def init_worker():
@@ -18,10 +19,21 @@ def evaluate_genome(genome, env=None, render=False, max_steps=1000):
     # Use worker environment if none provided
     if env is None:
         env = worker_env
+        
     nn = pnt.NeuralNetwork()
     genome.BuildPhenotype(nn)
+    
     # Get initial observation
-    observation_data = env.reset()
+    try:
+        observation_data = env.reset()
+    except pygame.error:
+        # Environment was closed, create a new one
+        if render:
+            env = gym.make('BipedalWalker-v3', render_mode='human')
+        else:
+            env = gym.make('BipedalWalker-v3')
+        observation_data = env.reset()
+    
     # Handle different return types from env.reset()
     if isinstance(observation_data, tuple):
         observation = observation_data[0]  # (observation, info) format
@@ -33,6 +45,13 @@ def evaluate_genome(genome, env=None, render=False, max_steps=1000):
     step_count = 0
     
     while True:
+        # Check for ESC key press if rendering
+        if render:
+            for event in pygame.event.get():
+                if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                    env.close()
+                    return total_reward + abs(min_reward) + 1  # Return current fitness
+        
         # Prepare inputs: convert observation to list and add bias
         inputs = observation.tolist() if hasattr(observation, 'tolist') else list(observation)
         inputs.append(1.0)  # Add bias
@@ -55,7 +74,11 @@ def evaluate_genome(genome, env=None, render=False, max_steps=1000):
         step_count += 1
         
         if render:
-            env.render()
+            try:
+                env.render()
+            except pygame.error:
+                # Display was closed, skip rendering
+                pass
             
         if done or step_count >= max_steps:
             break
@@ -72,10 +95,11 @@ def main():
     parser.add_argument('--serial', action='store_true', help='Use serial evaluation instead of parallel')
     args = parser.parse_args()
     
-    # Training environment is now created per worker process
+    # Initialize pygame for key detection
+    pygame.init()
+    pygame.display.set_mode((1, 1))  # Create a tiny window for event handling
     
-    # Create rendering environment (only for demo purposes)
-    env_render = gym.make('BipedalWalker-v3', render_mode='human')
+    # Training environment is now created per worker process
     
     # Create a temporary environment for serial evaluation and rendering
     temp_env = gym.make('BipedalWalker-v3')
@@ -185,8 +209,13 @@ def main():
         if best_genome and gen % 50 == 0:
             print(f"\nRendering best individual from generation {gen}...")
             for i in range(10):
-                print(f"Episode {i+1}")
-                evaluate_genome(best_genome, env_render, render=True, max_steps=1000)
+                print(f"Episode {i+1} (Press ESC to skip remaining episodes)")
+                # Create a fresh render environment for each episode
+                env_render = gym.make('BipedalWalker-v3', render_mode='human')
+                try:
+                    evaluate_genome(best_genome, env_render, render=True, max_steps=1000)
+                finally:
+                    env_render.close()
         
         # Advance to next generation
         pop.Epoch()

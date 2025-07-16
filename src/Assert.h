@@ -2,7 +2,7 @@
 #define ASSERT_H
 
 #include <iostream>
-#include <assert.h>
+#include <cassert>
 #include <exception>
 
 // kill any existing declarations

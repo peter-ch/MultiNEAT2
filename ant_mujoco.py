@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# bipedal_walker_neat.py
+# ant_neat.py
 
 import gymnasium as gym
 import pymultineat as pnt
@@ -10,13 +10,16 @@ from tqdm import tqdm
 import pygame  # For key press detection
 import matplotlib.pyplot as plt
 
+# Fitness shift constant to ensure all fitness values are positive
+FITNESS_SHIFT = 1000.0
+
 # Worker initialization function for multiprocessing
 def init_worker():
     global worker_env
-    worker_env = gym.make('BipedalWalker-v3')
+    worker_env = gym.make('Ant-v5')
 
 # Define the evaluation function for a genome
-def evaluate_genome(genome, env=None, render=False, max_steps=1000):
+def evaluate_genome(genome, env=None, render=False, max_steps=500):
     # Use worker environment if none provided
     if env is None:
         env = worker_env
@@ -30,9 +33,9 @@ def evaluate_genome(genome, env=None, render=False, max_steps=1000):
     except pygame.error:
         # Environment was closed, create a new one
         if render:
-            env = gym.make('BipedalWalker-v3', render_mode='human')
+            env = gym.make('Ant-v5', render_mode='human')
         else:
-            env = gym.make('BipedalWalker-v3')
+            env = gym.make('Ant-v5')
         observation_data = env.reset()
     
     # Handle different return types from env.reset()
@@ -51,7 +54,7 @@ def evaluate_genome(genome, env=None, render=False, max_steps=1000):
             for event in pygame.event.get():
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                     env.close()
-                    return total_reward + abs(min_reward) + 1  # Return current fitness
+                    return total_reward + abs(min_reward) + 1 + FITNESS_SHIFT  # Return shifted fitness
         
         # Prepare inputs: convert observation to list and add bias
         inputs = observation.tolist() if hasattr(observation, 'tolist') else list(observation)
@@ -84,15 +87,15 @@ def evaluate_genome(genome, env=None, render=False, max_steps=1000):
         if done or step_count >= max_steps:
             break
             
-    # Adjust for negative rewards (NEAT requires non-negative fitness)
-    fitness = total_reward + abs(min_reward) + 1
+    # Adjust for negative rewards and add fitness shift
+    fitness = total_reward + abs(min_reward) + 1 + FITNESS_SHIFT
     return fitness
 
 import argparse
 
 def main():
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(description='Bipedal Walker NEAT')
+    parser = argparse.ArgumentParser(description='Ant NEAT')
     parser.add_argument('--serial', action='store_true', help='Use serial evaluation instead of parallel')
     args = parser.parse_args()
     
@@ -100,65 +103,63 @@ def main():
     pygame.init()
     pygame.display.set_mode((1, 1))  # Create a tiny window for event handling
     
-    # Initialize matplotlib figure for fitness tracking
+    # Set up matplotlib figure for fitness tracking
     plt.ion()  # Turn on interactive mode
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.set_title('Best Fitness per Generation')
     ax.set_xlabel('Generation')
     ax.set_ylabel('Fitness')
-    line, = ax.plot([], [])  # Create an empty line
-    plt.show(block=False)
-    
-    # Training environment is now created per worker process
+    line, = ax.plot([], [], 'b-')  # Create an empty line
+    best_fitness_history = []
     
     # Create a temporary environment for serial evaluation and rendering
-    temp_env = gym.make('BipedalWalker-v3')
+    temp_env = gym.make('Ant-v5')
     
     # Create and customize MultiNEAT parameters
     params = pnt.Parameters()
-    params.PopulationSize = 240
-    params.DynamicCompatibility = True
-    params.NormalizeGenomeSize = False
-    params.WeightDiffCoeff = 0.1
-    params.CompatTreshold = 3.0  
-    params.YoungAgeTreshold = 15
-    params.SpeciesMaxStagnation = 20
-    params.OldAgeTreshold = 35
-    params.MinSpecies = 3
-    params.MaxSpecies = 12
-    params.RouletteWheelSelection = False
-    params.RecurrentProb = 0.3  
-    params.OverallMutationRate = 0.4
-    params.ArchiveEnforcement = False
-    params.MutateWeightsProb = 0.25
-    params.WeightMutationMaxPower = 0.5
-    params.WeightReplacementMaxPower = 8.0
-    params.MutateWeightsSevereProb = 0.0
-    params.WeightMutationRate = 0.85
-    params.WeightReplacementRate = 0.2
-    params.MaxWeight = 8
-    params.MutateAddNeuronProb = 0.02  
-    params.MutateAddLinkProb = 0.15     
-    params.MutateRemLinkProb = 0.02
-    params.MinActivationA = 4.9
-    params.MaxActivationA = 4.9
-    params.ActivationFunction_SignedSigmoid_Prob = 0.0
-    params.ActivationFunction_UnsignedSigmoid_Prob = 0.0
-    params.ActivationFunction_Tanh_Prob = 1.0  # Use Tanh for symmetric outputs
-    params.ActivationFunction_SignedStep_Prob = 0.0
-    params.CrossoverRate = 0.0
-    params.MultipointCrossoverRate = 0.0
-    params.SurvivalRate = 0.25
-    params.MutateNeuronTraitsProb = 0
-    params.MutateLinkTraitsProb = 0
-    params.AllowLoops = True
-    params.AllowClones = False
+    params.PopulationSize = 200  # Slightly smaller for efficiency
+    params.DynamicCompatibility = True  
+    params.NormalizeGenomeSize = False  
+    params.WeightDiffCoeff = 0.2  # Increased to encourage more diversity
+    params.CompatTreshold = 2.5  # Lowered to form fewer, larger species
+    params.YoungAgeTreshold = 10  # Shorter protection for young species
+    params.SpeciesMaxStagnation = 15  # Less tolerance for stagnation
+    params.OldAgeTreshold = 25  # Shorter lifespan for old species
+    params.MinSpecies = 2  # Fewer minimum species
+    params.MaxSpecies = 10  # Fewer maximum species
+    params.RouletteWheelSelection = False  
+    params.RecurrentProb = 0.2  # Reduced recurrent connections
+    params.OverallMutationRate = 0.5  # Higher mutation rate for exploration
+    params.ArchiveEnforcement = False  
+    params.MutateWeightsProb = 0.3  # More frequent weight mutations
+    params.WeightMutationMaxPower = 0.7  # Larger weight changes
+    params.WeightReplacementMaxPower = 10.0  # Allow larger replacements
+    params.MutateWeightsSevereProb = 0.0  
+    params.WeightMutationRate = 0.9  # Higher rate for fine-tuning
+    params.WeightReplacementRate = 0.1  # Less frequent replacements
+    params.MaxWeight = 10  # Higher limit for weights
+    params.MutateAddNeuronProb = 0.03  # Slightly higher neuron addition
+    params.MutateAddLinkProb = 0.2  # More link additions
+    params.MutateRemLinkProb = 0.01  # Rare link removal
+    params.MinActivationA = 4.9  
+    params.MaxActivationA = 4.9  
+    params.ActivationFunction_SignedSigmoid_Prob = 0.0  
+    params.ActivationFunction_UnsignedSigmoid_Prob = 0.0  
+    params.ActivationFunction_Tanh_Prob = 1.0  
+    params.ActivationFunction_SignedStep_Prob = 0.0  
+    params.CrossoverRate = 0.0  
+    params.MultipointCrossoverRate = 0.0  
+    params.SurvivalRate = 0.2  # Stricter survival (top 20%)
+    params.MutateNeuronTraitsProb = 0  
+    params.MutateLinkTraitsProb = 0  
+    params.AllowLoops = True  
+    params.AllowClones = False  
 
     # Create a GenomeInitStruct
-    # 24 inputs (observations) + 1 bias = 25 inputs, 4 outputs
+    # 105 inputs (observations) + 1 bias = 106 inputs, 8 outputs (actions)
     init_struct = pnt.GenomeInitStruct()
-    init_struct.NumInputs = 25
-    init_struct.NumOutputs = 4
+    init_struct.NumInputs = 106
+    init_struct.NumOutputs = 8
     init_struct.NumHidden = 0
     init_struct.SeedType = pnt.GenomeSeedType.PERCEPTRON
     init_struct.HiddenActType = pnt.TANH
@@ -171,7 +172,6 @@ def main():
     pop = pnt.Population(genome_prototype, params, True, 1.0, int(time.time()))
 
     generations = 250
-    best_fitness_history = []
     
     for gen in tqdm(range(generations), desc="Generations"):
         best_fitness = -float('inf')
@@ -229,9 +229,9 @@ def main():
             for i in range(10):
                 print(f"Episode {i+1} (Press ESC to skip remaining episodes)")
                 # Create a fresh render environment for each episode
-                env_render = gym.make('BipedalWalker-v3', render_mode='human')
+                env_render = gym.make('Ant-v5', render_mode='human')
                 try:
-                    evaluate_genome(best_genome, env_render, render=True, max_steps=1000)
+                    evaluate_genome(best_genome, env_render, render=True, max_steps=500)
                 finally:
                     env_render.close()
         

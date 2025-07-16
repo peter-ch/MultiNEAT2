@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# bipedal_walker_neat.py
+# hopper_neat.py
 
 import gymnasium as gym
 import pymultineat as pnt
@@ -10,13 +10,16 @@ from tqdm import tqdm
 import pygame  # For key press detection
 import matplotlib.pyplot as plt
 
+# Constant to ensure all fitness values are positive
+FITNESS_SHIFT = 1000.0
+
 # Worker initialization function for multiprocessing
 def init_worker():
     global worker_env
-    worker_env = gym.make('BipedalWalker-v3')
+    worker_env = gym.make('Hopper-v5')
 
 # Define the evaluation function for a genome
-def evaluate_genome(genome, env=None, render=False, max_steps=1000):
+def evaluate_genome(genome, env=None, render=False, max_steps=300):
     # Use worker environment if none provided
     if env is None:
         env = worker_env
@@ -30,9 +33,9 @@ def evaluate_genome(genome, env=None, render=False, max_steps=1000):
     except pygame.error:
         # Environment was closed, create a new one
         if render:
-            env = gym.make('BipedalWalker-v3', render_mode='human')
+            env = gym.make('Hopper-v5', render_mode='human')
         else:
-            env = gym.make('BipedalWalker-v3')
+            env = gym.make('Hopper-v5')
         observation_data = env.reset()
     
     # Handle different return types from env.reset()
@@ -51,7 +54,7 @@ def evaluate_genome(genome, env=None, render=False, max_steps=1000):
             for event in pygame.event.get():
                 if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                     env.close()
-                    return total_reward + abs(min_reward) + 1  # Return current fitness
+                    return max(0, total_reward + FITNESS_SHIFT)  # Ensure fitness is non-negative
         
         # Prepare inputs: convert observation to list and add bias
         inputs = observation.tolist() if hasattr(observation, 'tolist') else list(observation)
@@ -84,15 +87,15 @@ def evaluate_genome(genome, env=None, render=False, max_steps=1000):
         if done or step_count >= max_steps:
             break
             
-    # Adjust for negative rewards (NEAT requires non-negative fitness)
-    fitness = total_reward + abs(min_reward) + 1
+    # Ensure fitness is non-negative by adding the shift constant
+    fitness = max(0, total_reward + FITNESS_SHIFT)
     return fitness
 
 import argparse
 
 def main():
     # Parse command-line arguments
-    parser = argparse.ArgumentParser(description='Bipedal Walker NEAT')
+    parser = argparse.ArgumentParser(description='Hopper NEAT')
     parser.add_argument('--serial', action='store_true', help='Use serial evaluation instead of parallel')
     args = parser.parse_args()
     
@@ -100,19 +103,17 @@ def main():
     pygame.init()
     pygame.display.set_mode((1, 1))  # Create a tiny window for event handling
     
-    # Initialize matplotlib figure for fitness tracking
+    # Set up matplotlib figure for fitness tracking
     plt.ion()  # Turn on interactive mode
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.set_title('Best Fitness per Generation')
     ax.set_xlabel('Generation')
     ax.set_ylabel('Fitness')
-    line, = ax.plot([], [])  # Create an empty line
-    plt.show(block=False)
-    
-    # Training environment is now created per worker process
+    line, = ax.plot([], [], 'b-')  # Create an empty line
+    best_fitness_history = []
     
     # Create a temporary environment for serial evaluation and rendering
-    temp_env = gym.make('BipedalWalker-v3')
+    temp_env = gym.make('Hopper-v5')
     
     # Create and customize MultiNEAT parameters
     params = pnt.Parameters()
@@ -155,10 +156,10 @@ def main():
     params.AllowClones = False
 
     # Create a GenomeInitStruct
-    # 24 inputs (observations) + 1 bias = 25 inputs, 4 outputs
+    # 11 inputs (observations) + 1 bias = 12 inputs, 3 outputs (actions)
     init_struct = pnt.GenomeInitStruct()
-    init_struct.NumInputs = 25
-    init_struct.NumOutputs = 4
+    init_struct.NumInputs = 12
+    init_struct.NumOutputs = 3
     init_struct.NumHidden = 0
     init_struct.SeedType = pnt.GenomeSeedType.PERCEPTRON
     init_struct.HiddenActType = pnt.TANH
@@ -171,7 +172,6 @@ def main():
     pop = pnt.Population(genome_prototype, params, True, 1.0, int(time.time()))
 
     generations = 250
-    best_fitness_history = []
     
     for gen in tqdm(range(generations), desc="Generations"):
         best_fitness = -float('inf')
@@ -229,9 +229,9 @@ def main():
             for i in range(10):
                 print(f"Episode {i+1} (Press ESC to skip remaining episodes)")
                 # Create a fresh render environment for each episode
-                env_render = gym.make('BipedalWalker-v3', render_mode='human')
+                env_render = gym.make('Hopper-v5', render_mode='human')
                 try:
-                    evaluate_genome(best_genome, env_render, render=True, max_steps=1000)
+                    evaluate_genome(best_genome, env_render, render=True, max_steps=300)
                 finally:
                     env_render.close()
         

@@ -175,72 +175,83 @@ def main():
     # Create the initial population
     pop = pnt.Population(genome_prototype, params, True, 1.0, int(time.time()))
 
-    generations = 250
+    generations = 2500
     
-    for gen in tqdm(range(generations), desc="Generations"):
-        best_fitness = -float('inf')
-        best_genome = None
-        
-        # Evaluate all genomes
-        if args.serial:
-            # Serial evaluation
-            for species in pop.m_Species:
-                for individual in species.m_Individuals:
-                    fitness = evaluate_genome(individual, temp_env)
-                    individual.SetFitness(fitness)
-                    
-                    # Track best genome
-                    if fitness > best_fitness:
-                        best_fitness = fitness
-                        best_genome = individual
-        else:
-            # Parallel evaluation
-            genomes = [individual for species in pop.m_Species for individual in species.m_Individuals]
+    # Create process pool once at the beginning if using parallel mode
+    pool = None
+    if not args.serial:
+        pool = multiprocessing.Pool(processes=16, initializer=init_worker)
+    
+    try:
+        for gen in tqdm(range(1,generations), desc="Generations"):
+            best_fitness = -float('inf')
+            best_genome = None
             
-            # Create process pool with worker initialization
-            with multiprocessing.Pool(processes=16, initializer=init_worker) as pool:
-                # Evaluate genomes in parallel
+            # Evaluate all genomes
+            if args.serial:
+                # Serial evaluation
+                for species in pop.m_Species:
+                    for individual in species.m_Individuals:
+                        fitness = evaluate_genome(individual, temp_env)
+                        individual.SetFitness(fitness)
+                        
+                        # Track best genome
+                        if fitness > best_fitness:
+                            best_fitness = fitness
+                            best_genome = individual
+            else:
+                # Parallel evaluation with persistent pool
+                genomes = [individual for species in pop.m_Species for individual in species.m_Individuals]
+                
+                # Evaluate genomes in parallel using the existing pool
                 fitnesses = pool.map(evaluate_genome, genomes)
+                
+                # Assign fitness scores back to genomes
+                idx = 0
+                for species in pop.m_Species:
+                    for individual in species.m_Individuals:
+                        individual.SetFitness(fitnesses[idx])
+                        # Track best genome
+                        if fitnesses[idx] > best_fitness:
+                            best_fitness = fitnesses[idx]
+                            best_genome = individual
+                        idx += 1
             
-            # Assign fitness scores back to genomes
-            idx = 0
-            for species in pop.m_Species:
-                for individual in species.m_Individuals:
-                    individual.SetFitness(fitnesses[idx])
-                    # Track best genome
-                    if fitnesses[idx] > best_fitness:
-                        best_fitness = fitnesses[idx]
-                        best_genome = individual
-                    idx += 1
-        
-        # Store best fitness for progress tracking
-        best_fitness_history.append(best_fitness)
-        
-        # Update the plot
-        line.set_xdata(range(len(best_fitness_history)))
-        line.set_ydata(best_fitness_history)
-        ax.relim()
-        ax.autoscale_view()
-        fig.canvas.draw()
-        fig.canvas.flush_events()
-        
-        # Print generation stats
-        print(f"\nGeneration {gen}: Best Fitness = {best_fitness:.2f}")
-        
-        # Render best individual every 50 generations
-        if best_genome and gen % 50 == 0:
-            print(f"\nRendering best individual from generation {gen}...")
-            for i in range(10):
-                print(f"Episode {i+1} (Press ESC to skip remaining episodes)")
-                # Create a fresh render environment for each episode
-                env_render = gym.make('HalfCheetah-v5', render_mode='human')
-                try:
-                    evaluate_genome(best_genome, env_render, render=True, max_steps=500)
-                finally:
-                    env_render.close()
-        
-        # Advance to next generation
-        pop.Epoch()
+            # Store best fitness for progress tracking
+            best_fitness_history.append(best_fitness)
+            
+            # Update the plot
+            line.set_xdata(range(len(best_fitness_history)))
+            line.set_ydata(best_fitness_history)
+            ax.relim()
+            ax.autoscale_view()
+            fig.canvas.draw()
+            fig.canvas.flush_events()
+            
+            # Print generation stats
+            print(f"\nGeneration {gen}: Best Fitness = {best_fitness:.2f}")
+            
+            # Render best individual every N generations
+            if best_genome and gen % 100 == 0:
+                print(f"\nRendering best individual from generation {gen}...")
+                for i in range(10):
+                    print(f"Episode {i+1} (Press ESC to skip remaining episodes)")
+                    # Create a fresh render environment for each episode
+                    env_render = gym.make('HalfCheetah-v5', render_mode='human')
+                    try:
+                        evaluate_genome(best_genome, env_render, render=True, max_steps=500)
+                    finally:
+                        env_render.close()
+            
+            # Advance to next generation
+            pop.Epoch()
+    except KeyboardInterrupt:
+        print("Training interrupted by user.")
+    finally:
+        # Clean up pool resources
+        if pool is not None:
+            pool.close()
+            pool.join()
     
     # Keep the plot window open after training completes
     plt.ioff()

@@ -11,6 +11,7 @@ import pygame  # For key press detection
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.colors import rgb2hex
+from neattools import DrawGenome  # Import the DrawGenome function
 
 FITNESS_SHIFT = 1000.0
 
@@ -20,7 +21,7 @@ def init_worker():
     worker_env = gym.make('BipedalWalker-v3', hardcore=True)
 
 # Define the evaluation function for a genome
-def evaluate_genome(genome, env=None, render=False, max_steps=1500):
+def evaluate_genome(genome, env=None, render=False, max_steps=800):
     # Use worker environment if none provided
     if env is None:
         env = worker_env
@@ -105,7 +106,11 @@ def main():
     
     # Set up matplotlib figures
     plt.ion()  # Turn on interactive mode
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+    fig = plt.figure(figsize=(15, 10))
+    gs = fig.add_gridspec(2, 2)
+    ax1 = fig.add_subplot(gs[0, 0])  # Best Fitness per Generation
+    ax2 = fig.add_subplot(gs[1, 0])  # Population Visualization
+    ax3 = fig.add_subplot(gs[:, 1])  # Best Genome Visualization
     
     # Figure 1: Best Fitness per Generation
     ax1.set_title('Best Fitness per Generation')
@@ -123,6 +128,10 @@ def main():
     
     # Statistics text box
     stats_text = ax2.text(0.02, 0.95, '', transform=ax2.transAxes, verticalalignment='top')
+    
+    # Figure 3: Best Genome Visualization
+    ax3.set_title('Best Genome Structure')
+    ax3.axis('off')  # Turn off axis for the genome plot
     
     # Create a temporary environment for serial evaluation and rendering
     temp_env = gym.make('BipedalWalker-v3', hardcore=True)
@@ -281,6 +290,12 @@ def main():
             stats += f"Species Count: {len(unique_species)}"
             stats_text.set_text(stats)
             
+            # Update the best genome visualization
+            if best_genome:
+                ax3.clear()
+                DrawGenome(best_genome, ax=ax3, node_size=100, with_edge_labels=False)
+                ax3.set_title(f"Best Genome (Gen {gen})")
+            
             # Redraw figures
             plt.tight_layout()
             fig.canvas.draw()
@@ -297,7 +312,7 @@ def main():
                     # Create a fresh render environment for each episode
                     env_render = gym.make('BipedalWalker-v3', hardcore=True, render_mode='human')
                     try:
-                        evaluate_genome(best_genome, env_render, render=True, max_steps=1500)
+                        evaluate_genome(best_genome, env_render, render=True, max_steps=800)
                     finally:
                         env_render.close()
             
@@ -319,3 +334,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+    

@@ -285,6 +285,7 @@ def main():
             stats_text.set_text(stats)
             
             # Redraw figures
+            plt.tight_layout()
             fig.canvas.draw()
             fig.canvas.flush_events()
             

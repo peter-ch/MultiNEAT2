@@ -223,6 +223,7 @@ def main():
             line.set_ydata(best_fitness_history)
             ax.relim()
             ax.autoscale_view()
+            plt.tight_layout()
             fig.canvas.draw()
             fig.canvas.flush_events()
             

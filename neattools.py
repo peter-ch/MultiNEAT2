@@ -255,7 +255,7 @@ def DrawGenome(genome, ax=None, node_size=100, with_edge_labels=False):
             color = "red"
         else:
             color = "gray"
-        www = np.clip(abs(weight), 0.0, 3.0)
+        www = np.clip(abs(weight), 0.0, 5.0)
         width = max(1, www)
         
         if edata.get("is_recurrent", False):

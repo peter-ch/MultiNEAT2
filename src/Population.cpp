@@ -331,8 +331,9 @@ void Population::CountOffspring()
 // This little tool function helps ordering the genomes by fitness
 bool species_greater(Species& ls, Species& rs)
 {
-    return ((ls.GetBestFitness()) > (rs.GetBestFitness()));
+    return ((ls.GetActualBestFitness()) > (rs.GetActualBestFitness()));
 }
+
 void Population::Sort()
 {
     ASSERT(m_Species.size() > 0);
@@ -419,6 +420,9 @@ void Population::Epoch()
             m_Species[i].m_Individuals[j].SetEvaluated();
         }
     }
+
+    // Sort the population first
+    Sort(); 
         
     // Update species stagnation info & stuff
     UpdateSpecies();

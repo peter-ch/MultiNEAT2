@@ -251,6 +251,8 @@ namespace NEAT
     {
         ASSERT(m_Individuals.size() > 0);
 
+        double total_fitness=0;
+
         // iterate through the members
         for (unsigned int i = 0; i < m_Individuals.size(); i++)
         {
@@ -260,11 +262,11 @@ namespace NEAT
             ASSERT(t_fitness >= 0.0);
 
             // this prevents the fitness to be below zero
-            if (t_fitness <= 0.0) t_fitness = 0.0000000001;
+            if (t_fitness <= 0.0) t_fitness = 0.0000001;
 
             // this prevents nan or infinity to be fitness
-            if (std::isnan(t_fitness)) t_fitness = 0.0000000001;
-            if (std::isinf(t_fitness)) t_fitness = 0.0000000001;
+            if (std::isnan(t_fitness)) t_fitness = 0.0000001;
+            if (std::isinf(t_fitness)) t_fitness = 0.0000001;
 
             // update the best fitness and stagnation counter
             if (t_fitness > m_BestFitness)
@@ -307,7 +309,13 @@ namespace NEAT
 
             // Compute the adjusted fitness for this member
             m_Individuals[i].SetAdjFitness(t_fitness / (double)(ms));
+
+            total_fitness += t_fitness;
         }
+
+        // The average fitness of the species
+        // used in interspecies crossover and real-time reproduction
+        m_AverageFitness = total_fitness / m_Individuals.size();
     }
 
 
@@ -331,9 +339,6 @@ namespace NEAT
     // Also calls Birth() for every new baby
     void Species::Reproduce(Population& a_Pop, Parameters& a_Parameters, RNG& a_RNG)
     {
-        // Sorts the individuals by fitness - they must be sorted for selection to work properly
-        SortIndividuals();
-
         Genome t_baby; // temp genome for reproduction
 
         unsigned int t_offspring_count = Rounded(GetOffspringRqd());
@@ -365,7 +370,7 @@ namespace NEAT
 
             if (elite_count < elite_offspring)
             {
-                t_baby = GetLeader();
+                t_baby = m_Individuals[0];
                 elite_count++;
             }
             else
@@ -559,7 +564,7 @@ namespace NEAT
             else
             {
                 // try to find a compatible species
-                Genome t_to_compare = t_cur_species->GetRepresentative(); // was GetRepresentative()
+                Genome t_to_compare = t_cur_species->GetRepresentative(); 
 
                 t_found = false;
                 while ((t_cur_species != a_Pop.m_TempSpecies.end()) && (!t_found))

@@ -32,14 +32,15 @@ namespace NEAT
         m_BestGenome = a_Genome;
 
         // add the first and only one individual
-        m_Individuals.emplace_back(a_Genome);
+        m_Individuals.push_back(a_Genome);
 
         m_AgeGenerations = 0;
+        m_AgeEvaluations = 0;
         m_GensNoImprovement = 0;
         m_EvalsNoImprovement = 0;
         m_OffspringRqd = 0;
         m_BestFitness = a_Genome.GetFitness();
-        m_BestSpecies = true;
+        m_BestSpecies = false;
         m_WorstSpecies = false;
         m_AverageFitness = 0;
 
@@ -79,7 +80,7 @@ namespace NEAT
     // adds a new member to the species and updates variables
     void Species::AddIndividual(Genome& a_Genome)
     {
-        m_Individuals.emplace_back(a_Genome);
+        m_Individuals.push_back(a_Genome);
     }
 
 
@@ -99,7 +100,7 @@ namespace NEAT
         {
             if (m_Individuals[i].IsEvaluated())
             {
-                t_Evaluated.push_back(std::make_pair(i, m_Individuals[i].GetFitness()));
+                t_Evaluated.push_back(std::make_pair(i, m_Individuals[i].GetAdjFitness()));
             }
         }
 
@@ -135,7 +136,7 @@ namespace NEAT
         else
         {
                 // sort them here just to make sure
-                std::sort(t_Evaluated.begin(), t_Evaluated.end(), idxfitnesspair_greater);
+                //std::sort(t_Evaluated.begin(), t_Evaluated.end(), idxfitnesspair_greater);
 
                 if (!a_Parameters.RouletteWheelSelection)
                 {
@@ -160,7 +161,7 @@ namespace NEAT
                     std::vector<double> t_probs;
                     for (unsigned int i = 0; i < t_num_parents; i++)
                     {
-                        t_probs.push_back(m_Individuals[t_Evaluated[i].first].GetFitness());
+                        t_probs.push_back(m_Individuals[t_Evaluated[i].first].GetAdjFitness());
                     }
                     t_chosen_one = t_Evaluated[a_RNG.Roulette(t_probs)].first;
                 }
@@ -171,7 +172,7 @@ namespace NEAT
 
 
     // returns a completely random individual
-    Genome& Species::GetRandomIndividual(RNG& a_RNG) //const
+    Genome& Species::GetRandomIndividual(RNG& a_RNG) 
     {
         if (m_Individuals.size() == 0) // no members yet, return representative
         {
@@ -257,27 +258,22 @@ namespace NEAT
         for (unsigned int i = 0; i < m_Individuals.size(); i++)
         {
             double t_fitness = m_Individuals[i].GetFitness();
-
+            // this prevents nan or infinity to be fitness
+            if (std::isnan(t_fitness)) t_fitness = 0.0000001;
+            if (std::isinf(t_fitness)) t_fitness = 0.0000001;
 
             // update the best fitness and stagnation counter
-            // it's safe to use negative values for these
-            total_fitness += t_fitness;
             if (t_fitness > m_BestFitness)
             {
                 m_BestFitness = t_fitness;
                 m_GensNoImprovement = 0;
             }
 
-
             // the fitness must be positive
             ASSERT(t_fitness >= 0.0);
 
             // this prevents the fitness to be below zero
             if (t_fitness <= 0.0) t_fitness = 0.0000001;
-
-            // this prevents nan or infinity to be fitness
-            if (std::isnan(t_fitness)) t_fitness = 0.0000001;
-            if (std::isinf(t_fitness)) t_fitness = 0.0000001;
 
 
             // boost the fitness up to some young age
@@ -315,10 +311,6 @@ namespace NEAT
             // Compute the adjusted fitness for this member
             m_Individuals[i].SetAdjFitness(t_fitness / (double)(ms));
         }
-
-        // The average fitness of the species
-        // used in interspecies crossover and real-time reproduction
-        m_AverageFitness = total_fitness / m_Individuals.size();
     }
 
 
@@ -422,7 +414,7 @@ namespace NEAT
                                     }
                                     else
                                     {
-                                        probs.push_back(a_Pop.m_Species[i].m_AverageFitness);
+                                        probs.push_back(a_Pop.m_Species[i].GetLeader().GetAdjFitness()); // use the best's adj fitness to ensure positive
                                     }
                                     allp += probs[probs.size() - 1];
                                 }
@@ -494,7 +486,7 @@ namespace NEAT
                         {
                             for (unsigned int j = 0; j < a_Pop.m_TempSpecies[i].m_Individuals.size(); j++)
                             {
-                        if (t_baby.IsIdenticalTo(a_Pop.m_TempSpecies[i].m_Individuals[j]))
+                                if (t_baby.IsIdenticalTo(a_Pop.m_TempSpecies[i].m_Individuals[j]))
                                 {
                                     t_baby_exists_in_pop = true;
                                     break;
@@ -508,7 +500,7 @@ namespace NEAT
                     {
                         for (unsigned int i = 0; i < a_Pop.m_GenomeArchive.size(); i++)
                         {
-                        if (t_baby.IsIdenticalTo(a_Pop.m_GenomeArchive[i]))
+                            if (t_baby.IsIdenticalTo(a_Pop.m_GenomeArchive[i]))
                             {
                                 t_baby_exists_in_pop = true;
                                 break;
@@ -536,7 +528,7 @@ namespace NEAT
             // Archive the baby if needed
             if (a_Parameters.ArchiveEnforcement)
             {
-                a_Pop.m_GenomeArchive.emplace_back(t_baby);
+                a_Pop.m_GenomeArchive.push_back(t_baby);
             }
 
             //////////////////////////////////
@@ -555,7 +547,7 @@ namespace NEAT
             if (t_cur_species == a_Pop.m_TempSpecies.end())
             {
                 // create the first species and place the baby there
-                a_Pop.m_TempSpecies.emplace_back(Species(t_baby, a_Parameters, a_Pop.GetNextSpeciesID()));
+                a_Pop.m_TempSpecies.push_back(Species(t_baby, a_Parameters, a_Pop.GetNextSpeciesID()));
                 a_Pop.IncrementNextSpeciesID();
             }
             else

@@ -53,7 +53,8 @@ int main() {
     params.OldAgeTreshold = 35;
     params.MinSpecies = 2;
     params.MaxSpecies = 10;
-    params.RouletteWheelSelection = false;
+    params.RouletteWheelSelection = true;
+    params.TournamentSelection = false;
     params.RecurrentProb = 0.0;
     params.OverallMutationRate = 0.3;
     params.ArchiveEnforcement = false;

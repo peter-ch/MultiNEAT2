@@ -10,6 +10,7 @@ from tqdm import tqdm
 import pygame  # For key press detection
 import matplotlib.pyplot as plt
 import argparse
+from neattools import DrawGenome  # Import the DrawGenome function
 
 # Constant to ensure all fitness values are positive
 FITNESS_SHIFT = 1000.0
@@ -153,13 +154,13 @@ def main():
     pygame.init()
     pygame.display.set_mode((1, 1))  # Create a tiny window for event handling
     
-    # Set up matplotlib figure for fitness tracking
+    # Set up matplotlib figure for fitness tracking and genome visualization
     plt.ion()  # Turn on interactive mode
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.set_title('Best Fitness per Generation')
-    ax.set_xlabel('Generation')
-    ax.set_ylabel('Fitness')
-    line, = ax.plot([], [], 'b-')  # Create an empty line
+    fig, (ax_fitness, ax_genome) = plt.subplots(1, 2, figsize=(15, 5))
+    ax_fitness.set_title('Best Fitness per Generation')
+    ax_fitness.set_xlabel('Generation')
+    ax_fitness.set_ylabel('Fitness')
+    line, = ax_fitness.plot([], [], 'b-')  # Create an empty line
     best_fitness_history = []
     
     # Create a temporary environment for measuring observation bounds
@@ -289,11 +290,17 @@ def main():
             # Store best fitness for progress tracking
             best_fitness_history.append(best_fitness)
             
-            # Update the plot
+            # Update the fitness plot
             line.set_xdata(range(len(best_fitness_history)))
             line.set_ydata(best_fitness_history)
-            ax.relim()
-            ax.autoscale_view()
+            ax_fitness.relim()
+            ax_fitness.autoscale_view()
+            
+            # Visualize the best genome
+            if best_genome:
+                ax_genome.clear()
+                DrawGenome(best_genome, ax=ax_genome)
+            
             plt.tight_layout()
             fig.canvas.draw()
             fig.canvas.flush_events()

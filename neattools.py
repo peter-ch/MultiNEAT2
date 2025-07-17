@@ -70,6 +70,7 @@ import pymultineat as pnt
 import networkx as nx
 import matplotlib.pyplot as plt
 import math
+import numpy as np
 
 # Import common neuron type names from pnt.
 INPUT  = pnt.INPUT
@@ -127,18 +128,21 @@ def compute_node_positions(genome):
       - Output nodes are placed at y = 0.0 (bottom)
       - Hidden nodes are placed based on their m_SplitY (if available) so that
         computed y = 1 - m_SplitY; if not available, default to y = 0.5.
+      - Bias nodes are placed at the far right of the input row (y = 1.0, x = 1.0).
     Within each group, nodes are spaced evenly in x.
     Returns a dictionary mapping node ID to (x, y).
     """
     pos = {}
-    # Partition genes into input, output and hidden.
+    # Partition genes into input, output, bias, and hidden.
     input_nodes = [n for n in genome.m_NeuronGenes if n.m_Type == INPUT]
     output_nodes = [n for n in genome.m_NeuronGenes if n.m_Type == OUTPUT]
-    hidden_nodes = [n for n in genome.m_NeuronGenes if n.m_Type not in (INPUT, OUTPUT)]
+    bias_nodes = [n for n in genome.m_NeuronGenes if n.m_Type == BIAS]
+    hidden_nodes = [n for n in genome.m_NeuronGenes if n.m_Type not in (INPUT, OUTPUT, BIAS)]
     
     # Sort by m_ID for consistency
     input_nodes.sort(key=lambda n: n.m_ID)
     output_nodes.sort(key=lambda n: n.m_ID)
+    bias_nodes.sort(key=lambda n: n.m_ID)
     # For hidden nodes, sort by m_SplitY if available.
     hidden_nodes.sort(key=lambda n: getattr(n, "m_SplitY", 0.5))
     
@@ -146,9 +150,13 @@ def compute_node_positions(genome):
     n_out = len(output_nodes)
     n_hidden = len(hidden_nodes)
     
-    # Position input nodes evenly along top.
+    # Position input nodes evenly along top, leaving space for the bias node.
     for i, n in enumerate(input_nodes):
-        pos[n.m_ID] = ((i + 1) / (n_in + 1), 1.0)
+        pos[n.m_ID] = ((i + 1) / (n_in + 1), 1.0)  # +2 to account for bias node
+    
+    # Position bias node at the far right of the input row.
+    if bias_nodes:
+        pos[bias_nodes[0].m_ID] = (1.0, 1.0)
         
     # Position output nodes evenly along bottom.
     for i, n in enumerate(output_nodes):
@@ -216,11 +224,14 @@ def DrawGenome(genome, ax=None, node_size=100, with_edge_labels=False):
     
     # Partition nodes by type.
     input_nodes  = [n for n, d in G.nodes(data=True) if d.get("type") == INPUT]
+    bias_nodes   = [n for n, d in G.nodes(data=True) if d.get("type") == BIAS]
     output_nodes = [n for n, d in G.nodes(data=True) if d.get("type") == OUTPUT]
-    hidden_nodes = [n for n, d in G.nodes(data=True) if d.get("type") not in (INPUT, OUTPUT)]
+    hidden_nodes = [n for n, d in G.nodes(data=True) if d.get("type") not in (INPUT, OUTPUT, BIAS)]
     
     # Draw nodes with different shapes and colors.
     nx.draw_networkx_nodes(G, pos, nodelist=input_nodes, node_color='lightgreen', node_shape='s',
+                           node_size=node_size, ax=ax)
+    nx.draw_networkx_nodes(G, pos, nodelist=bias_nodes, node_color='yellow', node_shape='s',
                            node_size=node_size, ax=ax)
     nx.draw_networkx_nodes(G, pos, nodelist=hidden_nodes, node_color='lightblue', node_shape='o',
                            node_size=node_size, ax=ax)
@@ -244,7 +255,8 @@ def DrawGenome(genome, ax=None, node_size=100, with_edge_labels=False):
             color = "red"
         else:
             color = "gray"
-        width = max(1, abs(weight))
+        www = np.clip(abs(weight), 0.0, 3.0)
+        width = max(1, www)
         
         if edata.get("is_recurrent", False):
             recurrent_edges.append((u, v))

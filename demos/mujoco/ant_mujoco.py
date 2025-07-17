@@ -11,6 +11,7 @@ import pygame  # For key press detection
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.colors import rgb2hex
+from neattools import DrawGenome  # Import the DrawGenome function
 
 # Fitness shift constant to ensure all fitness values are positive
 FITNESS_SHIFT = 1000.0
@@ -109,9 +110,11 @@ def main():
     
     # Set up matplotlib figures
     plt.ion()  # Turn on interactive mode
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+    fig = plt.figure(figsize=(15, 10))
+    gs = fig.add_gridspec(2, 2, width_ratios=[1, 1])
     
     # Figure 1: Best Fitness per Generation
+    ax1 = fig.add_subplot(gs[0, 0])
     ax1.set_title('Best Fitness per Generation')
     ax1.set_xlabel('Generation')
     ax1.set_ylabel('Fitness')
@@ -119,6 +122,7 @@ def main():
     best_fitness_history = []
     
     # Figure 2: Population Visualization
+    ax2 = fig.add_subplot(gs[1, 0])
     ax2.set_title('Population Fitness by Species')
     ax2.set_xlabel('Individual')
     ax2.set_ylabel('Fitness')
@@ -127,6 +131,11 @@ def main():
     
     # Statistics text box
     stats_text = ax2.text(0.02, 0.95, '', transform=ax2.transAxes, verticalalignment='top')
+    
+    # Figure 3: Best Genome Visualization
+    ax3 = fig.add_subplot(gs[:, 1])
+    ax3.set_title('Best Genome Structure')
+    ax3.axis('off')
     
     # Create a temporary environment for serial evaluation and rendering
     temp_env = gym.make('Ant-v5')
@@ -204,7 +213,7 @@ def main():
     generations = 2500
     
     try:
-        for gen in tqdm(range(1,generations), desc="Generations"):
+        for gen in tqdm(range(1, generations), desc="Generations"):
             best_fitness = -float('inf')
             best_genome = None
             
@@ -283,6 +292,13 @@ def main():
             stats += f"Min Links: {min(links_data)}\n"
             stats += f"Species Count: {len(unique_species)}"
             stats_text.set_text(stats)
+            
+            # Draw the best genome
+            if best_genome:
+                ax3.clear()
+                DrawGenome(best_genome, ax=ax3)
+                ax3.set_title(f'Best Genome (Fitness: {best_fitness:.2f})')
+                ax3.axis('off')
             
             # Redraw figures
             plt.tight_layout()

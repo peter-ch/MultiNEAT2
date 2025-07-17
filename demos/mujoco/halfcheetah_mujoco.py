@@ -9,6 +9,7 @@ import multiprocessing
 from tqdm import tqdm
 import pygame  # For key press detection
 import matplotlib.pyplot as plt
+from neattools import DrawGenome  # Import the DrawGenome function
 
 # Worker initialization function for multiprocessing
 def init_worker():
@@ -102,13 +103,13 @@ def main():
     pygame.init()
     pygame.display.set_mode((1, 1))  # Create a tiny window for event handling
     
-    # Set up matplotlib figure for fitness tracking
+    # Set up matplotlib figure for fitness tracking and genome visualization
     plt.ion()  # Turn on interactive mode
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.set_title('Best Fitness per Generation')
-    ax.set_xlabel('Generation')
-    ax.set_ylabel('Fitness')
-    line, = ax.plot([], [], 'b-')  # Create an empty line
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))  # Two subplots: fitness and genome
+    ax1.set_title('Best Fitness per Generation')
+    ax1.set_xlabel('Generation')
+    ax1.set_ylabel('Fitness')
+    line, = ax1.plot([], [], 'b-')  # Create an empty line for fitness
     best_fitness_history = []
     
     # Create a temporary environment for serial evaluation and rendering
@@ -183,7 +184,7 @@ def main():
         pool = multiprocessing.Pool(processes=16, initializer=init_worker)
     
     try:
-        for gen in tqdm(range(1,generations), desc="Generations"):
+        for gen in tqdm(range(1, generations), desc="Generations"):
             best_fitness = -float('inf')
             best_genome = None
             
@@ -220,11 +221,17 @@ def main():
             # Store best fitness for progress tracking
             best_fitness_history.append(best_fitness)
             
-            # Update the plot
+            # Update the fitness plot
             line.set_xdata(range(len(best_fitness_history)))
             line.set_ydata(best_fitness_history)
-            ax.relim()
-            ax.autoscale_view()
+            ax1.relim()
+            ax1.autoscale_view()
+            
+            # Visualize the best genome in the second subplot
+            if best_genome:
+                ax2.clear()
+                DrawGenome(best_genome, ax=ax2)
+            
             plt.tight_layout()
             fig.canvas.draw()
             fig.canvas.flush_events()

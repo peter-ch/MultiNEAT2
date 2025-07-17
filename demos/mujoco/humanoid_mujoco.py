@@ -11,6 +11,7 @@ import pygame  # For key press detection
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.colors import rgb2hex
+from neattools import DrawGenome  # Import the genome drawing function
 
 # Worker initialization function for multiprocessing
 def init_worker():
@@ -111,7 +112,11 @@ def main():
     
     # Set up matplotlib figures
     plt.ion()  # Turn on interactive mode
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+    fig = plt.figure(figsize=(15, 10))
+    gs = fig.add_gridspec(2, 2)
+    ax1 = fig.add_subplot(gs[0, 0])  # Best Fitness per Generation
+    ax2 = fig.add_subplot(gs[1, 0])  # Population Visualization
+    ax3 = fig.add_subplot(gs[:, 1])  # Best Genome Visualization
     
     # Figure 1: Best Fitness per Generation
     ax1.set_title('Best Fitness per Generation')
@@ -204,7 +209,7 @@ def main():
         pool = multiprocessing.Pool(processes=16, initializer=init_worker)
     
     try:
-        for gen in tqdm(range(1,generations), desc="Generations"):
+        for gen in tqdm(range(1, generations), desc="Generations"):
             best_fitness = -float('inf')
             best_genome = None
             
@@ -283,6 +288,12 @@ def main():
             stats += f"Min Links: {min(links_data)}\n"
             stats += f"Species Count: {len(unique_species)}"
             stats_text.set_text(stats)
+            
+            # Update the best genome visualization
+            ax3.clear()
+            if best_genome:
+                DrawGenome(best_genome, ax=ax3, node_size=100, with_edge_labels=False)
+                ax3.set_title(f"Best Genome (Gen {gen})")
             
             # Redraw figures
             plt.tight_layout()

@@ -11,9 +11,12 @@ import pygame  # For key press detection
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.colors import rgb2hex
+from neattools import DrawGenome  # Import the DrawGenome function
 
 # Constant to ensure fitness is always positive
 FITNESS_SHIFT = 1000.0
+
+MAX_TIMESTEPS = 600
 
 # Worker initialization function for multiprocessing
 def init_worker():
@@ -61,7 +64,6 @@ def evaluate_genome(args):
             observation = observation_data
             
         trial_reward = 0
-        min_reward = 0
         step_count = 0
         
         while True:
@@ -73,7 +75,7 @@ def evaluate_genome(args):
                         return (total_reward + trial_reward) / num_trials + FITNESS_SHIFT  # Return shifted fitness
             
             # Prepare inputs: convert observation to list and add bias
-            observation = np.clip(observation, -50.0, 50.0) # to prevent blowups
+            # observation = np.clip(observation, -50.0, 50.0) # to prevent blowups
             inputs = observation.tolist() if hasattr(observation, 'tolist') else list(observation)
             inputs.append(1.0)  # Add bias
             
@@ -90,8 +92,7 @@ def evaluate_genome(args):
                 observation, reward, done, _ = step_result
             else:
                 observation, reward, done, _, _ = step_result
-            trial_reward += reward
-            min_reward = min(min_reward, reward)
+            trial_reward += reward 
             step_count += 1
             
             if render:
@@ -106,12 +107,12 @@ def evaluate_genome(args):
             if done or step_count >= max_steps:
                 break
         
-        total_reward += trial_reward
+        total_reward += (trial_reward /num_trials)
 
     env.close()
     
     # Shift fitness to ensure it's always positive while preserving ranks
-    fitness = (total_reward / num_trials) + FITNESS_SHIFT
+    fitness = (total_reward / num_trials) 
     return fitness
 
 import argparse
@@ -128,7 +129,11 @@ def main():
     
     # Set up matplotlib figures
     plt.ion()  # Turn on interactive mode
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+    fig = plt.figure(figsize=(15, 10))
+    gs = fig.add_gridspec(2, 2, width_ratios=[1, 1], height_ratios=[1, 1])
+    ax1 = fig.add_subplot(gs[0, 0])  # Best Fitness per Generation
+    ax2 = fig.add_subplot(gs[1, 0])  # Population Visualization
+    ax3 = fig.add_subplot(gs[:, 1])  # Best Genome Visualization
     
     # Figure 1: Best Fitness per Generation
     ax1.set_title('Best Fitness per Generation')
@@ -151,46 +156,47 @@ def main():
     temp_env = gym.make('Walker2d-v5')
     
     params = pnt.Parameters()
-    params.PopulationSize = 250
+    params.PopulationSize = 100
     params.DynamicCompatibility = True
     params.NormalizeGenomeSize = False
     params.WeightDiffCoeff = 0.05
     params.CompatTreshold = 1.5  
-    params.YoungAgeTreshold = 10
-    params.SpeciesMaxStagnation = 12
-    params.OldAgeTreshold = 30
+    params.YoungAgeTreshold = 15
+    params.SpeciesMaxStagnation = 50
+    params.OldAgeTreshold = 80
+    params.OldAgePenalty = 0.9
     params.MinSpecies = 2
-    params.MaxSpecies = 6
+    params.MaxSpecies = 5
     params.RouletteWheelSelection = False
     params.TournamentSelection = True
-    params.TournamentSize = 6
+    params.TournamentSize = 4
     params.RecurrentProb = 0.2 
     params.OverallMutationRate = 0.8
     params.MutateWeightsProb = 0.75
-    params.WeightMutationMaxPower = 2.5
-    params.WeightReplacementMaxPower = 8.0
+    params.WeightMutationMaxPower = 1.5
+    params.WeightReplacementMaxPower = 4.0
     params.MutateWeightsSevereProb = 0.2
-    params.WeightMutationRate = 0.25
-    params.WeightReplacementRate = 0.1
+    params.WeightMutationRate = 0.8
+    params.WeightReplacementRate = 0.2
     params.MaxWeight = 16.0
-    params.MutateAddNeuronProb = 0.05
-    params.MutateAddLinkProb = 0.1    
-    params.MutateRemLinkProb = 0.1
+    params.MutateAddNeuronProb = 0.01
+    params.MutateAddLinkProb = 0.05    
+    params.MutateRemLinkProb = 0.02
     params.SplitRecurrent = True 
     params.SplitLoopedRecurrent = True
-    params.MinActivationA = 1.0
-    params.MaxActivationA = 8.0
-    params.MutateActivationAProb = 0.2
-    params.ActivationAMutationMaxPower = 2.0
+    params.MinActivationA = 4.0
+    params.MaxActivationA = 4.0
+    params.MutateActivationAProb = 0.0
+    params.ActivationAMutationMaxPower = 0.0
     params.ActivationFunction_UnsignedSigmoid_Prob = 1.0
     params.ActivationFunction_Tanh_Prob = 0.0  
-    params.ActivationFunction_Relu_Prob = 1.0
+    params.ActivationFunction_Relu_Prob = 0.0
     params.ActivationFunction_Softplus_Prob = 0.0
     params.ActivationFunction_Linear_Prob = 0.0
     params.MutateNeuronActivationTypeProb = 0
     params.CrossoverRate = 0.4
-    params.MultipointCrossoverRate = 0.4
-    params.SurvivalRate = 0.5
+    params.MultipointCrossoverRate = 0.5
+    params.SurvivalRate = 0.2
     params.MutateNeuronTraitsProb = 0
     params.MutateLinkTraitsProb = 0
     params.AllowLoops = True
@@ -206,6 +212,8 @@ def main():
     init_struct.SeedType = pnt.GenomeSeedType.PERCEPTRON
     init_struct.HiddenActType = pnt.UNSIGNED_SIGMOID # regular sigmoids internally
     init_struct.OutputActType = pnt.TANH # outputs are always tanh for [-1 .. 1] output range
+    init_struct.FS_NEAT = True 
+    init_struct.FS_NEAT_links = 8
 
     # Create a prototype genome
     genome_prototype = pnt.Genome(params, init_struct)
@@ -229,7 +237,7 @@ def main():
             # Serial evaluation
             for species in pop.m_Species:
                 for individual in species.m_Individuals:
-                    fitness = evaluate_genome((individual, False, 500, 3))
+                    fitness = evaluate_genome((individual, False, MAX_TIMESTEPS, 5))
                     individual.SetFitness(fitness)
                     
                     # Track best genome
@@ -240,7 +248,7 @@ def main():
             # Parallel evaluation with persistent pool
             genomes = [individual for species in pop.m_Species for individual in species.m_Individuals]
             # Prepare arguments for evaluation
-            args_list = [(genome, False, 500, 3) for genome in genomes]
+            args_list = [(genome, False, MAX_TIMESTEPS, 5) for genome in genomes]
             
             # Evaluate genomes in parallel using persistent pool
             fitnesses = pool.map(evaluate_genome, args_list)
@@ -302,6 +310,12 @@ def main():
         stats += f"Species Count: {len(unique_species)}"
         stats_text.set_text(stats)
         
+        # Draw the best genome in the third subplot
+        if best_genome:
+            ax3.clear()
+            DrawGenome(best_genome, ax=ax3)
+            ax3.set_title(f"Best Genome (Gen {gen})")
+        
         # Redraw figures
         plt.tight_layout()
         fig.canvas.draw()
@@ -316,7 +330,7 @@ def main():
             for i in range(5):
                 print(f"Episode {i+1} (Press ESC to skip remaining episodes)")
                 # Evaluate with rendering in the main process
-                evaluate_genome((best_genome, True, 500, 1))
+                evaluate_genome((best_genome, True, MAX_TIMESTEPS, 1))
         
         # Advance to next generation
         pop.Epoch()

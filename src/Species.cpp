@@ -83,12 +83,12 @@ namespace NEAT
 
 
     // Individual selection routine
-    Genome& Species::GetIndividual(Parameters& a_Parameters, RNG& a_RNG) //const
+    Genome& Species::GetIndividual(Parameters& a_Parameters, RNG& a_RNG)
     {
         if (m_Individuals.size() == 0)
         {
             char s[256];
-            sprintf(s, "Attempted GetIndividual() but no individuals in species ID %d\n", m_ID);
+            sprintf(s, "Species::GetIndividual (ID:%d) - No individuals in species", m_ID);
             throw std::runtime_error(s);
         }
 
@@ -98,24 +98,20 @@ namespace NEAT
         {
             if (m_Individuals[i].IsEvaluated())
             {
-                t_Evaluated.push_back(std::make_pair(i, m_Individuals[i].GetFitness()));
+                t_Evaluated.push_back(std::make_pair(i, m_Individuals[i].GetAdjFitness()));
             }
         }
 
-        // None are evaluated - fall back to random individual
+        // None are evaluated - cannot perform selection
         if (t_Evaluated.size() == 0)
         {
             char s[256];
-            sprintf(s, "Attempted GetIndividual() but no evaluated individuals in species ID %d\n", m_ID);
+            sprintf(s, "Species::GetIndividual (ID:%d) - No evaluated individuals", m_ID);
             throw std::runtime_error(s);
         }
         if (t_Evaluated.size() == 1)
         {
             return (m_Individuals[t_Evaluated[0].first]);
-        }
-        else if (t_Evaluated.size() == 2)
-        {
-            return (m_Individuals[t_Evaluated[Rounded(a_RNG.RandFloat())].first]);
         }
 
         // Warning!!!! The individuals must be sorted by best fitness for this to work
@@ -131,46 +127,42 @@ namespace NEAT
                 t_picked.push_back(t_Evaluated[c]);
             }
 
+            // Proper tournament selection: select the best individual in the pool
             std::sort(t_picked.begin(), t_picked.end(), idxfitnesspair_greater);
-            std::vector<double> t_probs;
-            for (int i = 0; i < t_picked.size(); i++)
-            {
-                t_probs.push_back(t_picked.size() - i);//t_picked[i].second);
-            }
-            t_chosen_one = t_picked[a_RNG.Roulette(t_probs)].first;
+            t_chosen_one = t_picked[0].first;
         }
-        else
-        {
-            // sort them here just to make sure
-            std::sort(t_Evaluated.begin(), t_Evaluated.end(), idxfitnesspair_greater);
-
-            // Here might be introduced better selection scheme, but this works OK for now
-            if (!a_Parameters.RouletteWheelSelection)
-            {
-                int t_num_parents = (int)(a_Parameters.SurvivalRate * (double)(m_Individuals.size()));
-
-                if (t_num_parents >= t_Evaluated.size())
-                {
-                    t_num_parents = t_Evaluated.size() - 1;
-                }
-                if (t_num_parents < 1)
-                {
-                    t_num_parents = 1;
-                }
-
-                t_chosen_one = t_Evaluated[a_RNG.RandInt(0, t_num_parents)].first;
-            }
             else
             {
-                // roulette wheel selection
-                int t_num_parents = t_Evaluated.size();
-                std::vector<double> t_probs;
-                for (unsigned int i = 0; i < t_num_parents; i++)
+                // sort them here just to make sure
+                std::sort(t_Evaluated.begin(), t_Evaluated.end(), idxfitnesspair_greater);
+
+                if (!a_Parameters.RouletteWheelSelection)
                 {
-                    t_probs.push_back(t_Evaluated[i].second);
+                    // Truncation selection based on evaluated individuals
+                    int t_num_parents = (int)(a_Parameters.SurvivalRate * (double)(t_Evaluated.size()));
+
+                    if (t_num_parents >= t_Evaluated.size())
+                    {
+                        t_num_parents = t_Evaluated.size() - 1;
+                    }
+                    if (t_num_parents < 1)
+                    {
+                        t_num_parents = 1;
+                    }
+
+                    t_chosen_one = t_Evaluated[a_RNG.RandInt(0, t_num_parents)].first;
                 }
-                t_chosen_one = t_Evaluated[a_RNG.Roulette(t_probs)].first;
-            }
+                else
+                {
+                    // Roulette wheel selection using ADJUSTED fitness
+                    int t_num_parents = t_Evaluated.size();
+                    std::vector<double> t_probs;
+                    for (unsigned int i = 0; i < t_num_parents; i++)
+                    {
+                        t_probs.push_back(m_Individuals[t_Evaluated[i].first].GetAdjFitness());
+                    }
+                    t_chosen_one = t_Evaluated[a_RNG.Roulette(t_probs)].first;
+                }
         }
 
         return (m_Individuals[t_chosen_one]);
@@ -1068,4 +1060,3 @@ Species Species::Deserialize(const std::string &data) {
 
 
 } // namespace NEAT
-

@@ -99,7 +99,7 @@ namespace NEAT
         {
             if (m_Individuals[i].IsEvaluated())
             {
-                t_Evaluated.push_back(std::make_pair(i, m_Individuals[i].GetAdjFitness()));
+                t_Evaluated.push_back(std::make_pair(i, m_Individuals[i].GetFitness()));
             }
         }
 
@@ -155,12 +155,12 @@ namespace NEAT
                 }
                 else
                 {
-                    // Roulette wheel selection using ADJUSTED fitness
+                    // Roulette wheel selection 
                     int t_num_parents = t_Evaluated.size();
                     std::vector<double> t_probs;
                     for (unsigned int i = 0; i < t_num_parents; i++)
                     {
-                        t_probs.push_back(m_Individuals[t_Evaluated[i].first].GetAdjFitness());
+                        t_probs.push_back(m_Individuals[t_Evaluated[i].first].GetFitness());
                     }
                     t_chosen_one = t_Evaluated[a_RNG.Roulette(t_probs)].first;
                 }
@@ -208,7 +208,7 @@ namespace NEAT
         for (unsigned int i = 0; i < m_Individuals.size(); i++)
         {
             double t_f = m_Individuals[i].GetFitness();
-            if (t_max_fitness < t_f)
+            if (t_f > t_max_fitness)
             {
                 t_max_fitness = t_f;
                 t_leader_idx = i;
@@ -258,6 +258,17 @@ namespace NEAT
         {
             double t_fitness = m_Individuals[i].GetFitness();
 
+
+            // update the best fitness and stagnation counter
+            // it's safe to use negative values for these
+            total_fitness += t_fitness;
+            if (t_fitness > m_BestFitness)
+            {
+                m_BestFitness = t_fitness;
+                m_GensNoImprovement = 0;
+            }
+
+
             // the fitness must be positive
             ASSERT(t_fitness >= 0.0);
 
@@ -268,12 +279,6 @@ namespace NEAT
             if (std::isnan(t_fitness)) t_fitness = 0.0000001;
             if (std::isinf(t_fitness)) t_fitness = 0.0000001;
 
-            // update the best fitness and stagnation counter
-            if (t_fitness > m_BestFitness)
-            {
-                m_BestFitness = t_fitness;
-                m_GensNoImprovement = 0;
-            }
 
             // boost the fitness up to some young age
             if (m_AgeGenerations < a_Parameters.YoungAgeTreshold)
@@ -309,8 +314,6 @@ namespace NEAT
 
             // Compute the adjusted fitness for this member
             m_Individuals[i].SetAdjFitness(t_fitness / (double)(ms));
-
-            total_fitness += t_fitness;
         }
 
         // The average fitness of the species
@@ -370,7 +373,7 @@ namespace NEAT
 
             if (elite_count < elite_offspring)
             {
-                t_baby = m_Individuals[0];
+                t_baby = GetLeader();
                 elite_count++;
             }
             else

@@ -447,9 +447,6 @@ void Population::Epoch()
 
         for(unsigned int j=0; j<m_Species[i].m_Individuals.size(); j++)
         {
-            // Make sure all are evaluated as we don't run in realtime
-            m_Species[i].m_Individuals[j].SetEvaluated();
-
             const double t_Fitness = m_Species[i].m_Individuals[j].GetFitness();
             if (t_Fitness > m_BestFitnessEver)
             {

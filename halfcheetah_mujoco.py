@@ -127,7 +127,7 @@ def main():
     params.MinSpecies = 2
     params.MaxSpecies = 6
     params.RouletteWheelSelection = False
-    params.TournamentSelection = True
+    params.TournamentSelection = False
     params.TournamentSize = 4
     params.RecurrentProb = 0.2 
     params.OverallMutationRate = 0.8
@@ -142,11 +142,11 @@ def main():
     params.MutateAddNeuronProb = 0.01
     params.MutateAddLinkProb = 0.05     
     params.MutateRemLinkProb = 0.05
-    params.MinActivationA = 1.0
-    params.MaxActivationA = 1.0
+    params.MinActivationA = 5.0
+    params.MaxActivationA = 5.0
     params.ActivationFunction_SignedSigmoid_Prob = 0.0
-    params.ActivationFunction_UnsignedSigmoid_Prob = 0.0
-    params.ActivationFunction_Tanh_Prob = 1.0  # Use Tanh for symmetric outputs
+    params.ActivationFunction_UnsignedSigmoid_Prob = 1.0
+    params.ActivationFunction_Tanh_Prob = 0.0  
     params.ActivationFunction_SignedStep_Prob = 0.0
     params.CrossoverRate = 0.7
     params.MultipointCrossoverRate = 0.6

@@ -63,6 +63,7 @@ def evaluate_genome(genome, env=None, render=False, max_steps=500, num_trials=3)
                         return (total_reward + trial_reward) / num_trials + FITNESS_SHIFT  # Return shifted fitness
             
             # Prepare inputs: convert observation to list and add bias
+            observation = np.clip(observation, -50.0, 50.0) # to prevent blowups
             inputs = observation.tolist() if hasattr(observation, 'tolist') else list(observation)
             inputs.append(1.0)  # Add bias
             
@@ -149,7 +150,7 @@ def main():
     params.MinSpecies = 2
     params.MaxSpecies = 6
     params.RouletteWheelSelection = False
-    params.TournamentSelection = True
+    params.TournamentSelection = False
     params.TournamentSize = 4
     params.RecurrentProb = 0.2 
     params.OverallMutationRate = 0.8
@@ -164,11 +165,11 @@ def main():
     params.MutateAddNeuronProb = 0.01
     params.MutateAddLinkProb = 0.05     
     params.MutateRemLinkProb = 0.05
-    params.MinActivationA = 1.0
-    params.MaxActivationA = 1.0
+    params.MinActivationA = 5.0
+    params.MaxActivationA = 5.0
     params.ActivationFunction_SignedSigmoid_Prob = 0.0
-    params.ActivationFunction_UnsignedSigmoid_Prob = 0.0
-    params.ActivationFunction_Tanh_Prob = 1.0  # Use Tanh for symmetric outputs
+    params.ActivationFunction_UnsignedSigmoid_Prob = 1.0
+    params.ActivationFunction_Tanh_Prob = 0.0  
     params.ActivationFunction_SignedStep_Prob = 0.0
     params.CrossoverRate = 0.7
     params.MultipointCrossoverRate = 0.6
@@ -185,8 +186,8 @@ def main():
     init_struct.NumOutputs = 6
     init_struct.NumHidden = 0
     init_struct.SeedType = pnt.GenomeSeedType.PERCEPTRON
-    init_struct.HiddenActType = pnt.TANH
-    init_struct.OutputActType = pnt.TANH
+    init_struct.HiddenActType = pnt.UNSIGNED_SIGMOID # regular sigmoids internally
+    init_struct.OutputActType = pnt.TANH # outputs are always tanh for [-1 .. 1] output range
 
     # Create a prototype genome
     genome_prototype = pnt.Genome(params, init_struct)

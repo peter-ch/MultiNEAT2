@@ -64,6 +64,7 @@ namespace NEAT
             m_EvalsNoImprovement = a_S.m_EvalsNoImprovement;
             m_AverageFitness = a_S.m_AverageFitness;
             m_AgeGenerations = a_S.m_AgeGenerations;
+            m_AgeEvaluations = a_S.m_AgeEvaluations;
             m_OffspringRqd = a_S.m_OffspringRqd;
             m_R = a_S.m_R;
             m_G = a_S.m_G;
@@ -131,8 +132,8 @@ namespace NEAT
             std::sort(t_picked.begin(), t_picked.end(), idxfitnesspair_greater);
             t_chosen_one = t_picked[0].first;
         }
-            else
-            {
+        else
+        {
                 // sort them here just to make sure
                 std::sort(t_Evaluated.begin(), t_Evaluated.end(), idxfitnesspair_greater);
 
@@ -330,10 +331,13 @@ namespace NEAT
     // Also calls Birth() for every new baby
     void Species::Reproduce(Population& a_Pop, Parameters& a_Parameters, RNG& a_RNG)
     {
+        // Sorts the individuals by fitness - they must be sorted for selection to work properly
+        SortIndividuals();
+
         Genome t_baby; // temp genome for reproduction
 
         unsigned int t_offspring_count = Rounded(GetOffspringRqd());
-        unsigned int elite_offspring = 1;//Rounded(a_Parameters.EliteFraction * m_Individuals.size());
+        unsigned int elite_offspring = Rounded(a_Parameters.EliteFraction * m_Individuals.size());
         if (elite_offspring < 1) // can't be 0
         {
             elite_offspring = 1;

@@ -9,6 +9,8 @@ import multiprocessing
 from tqdm import tqdm
 import pygame  # Added for key press detection
 
+FITNESS_SHIFT = 1000.0
+
 # Worker initialization function for multiprocessing
 def init_worker():
     global worker_env
@@ -78,8 +80,8 @@ def evaluate_genome(genome, env=None, render=False, max_steps=2000):
             break
             
     # Adjust for negative rewards (NEAT requires non-negative fitness)
-    fitness = total_reward + abs(min_reward) + 1
-    return fitness
+    fitness = total_reward + 1
+    return fitness + FITNESS_SHIFT
 
 import argparse
 

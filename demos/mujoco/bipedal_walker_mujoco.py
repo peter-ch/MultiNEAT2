@@ -21,11 +21,21 @@ def init_worker():
     worker_env = gym.make('Walker2d-v5')
 
 # Define the evaluation function for a genome
-def evaluate_genome(genome, env=None, render=False, max_steps=500, num_trials=3):
-    # Use worker environment if none provided
-    if env is None:
-        env = worker_env
-        
+def evaluate_genome(args):
+    genome, render, max_steps, num_trials = args
+    
+    # Handle environment creation based on context
+    if render:
+        # Create a new rendering environment in the main process
+        env = gym.make('Walker2d-v5', render_mode='human')
+    else:
+        try:
+            # Use worker environment if available
+            env = worker_env
+        except NameError:
+            # Create a new environment in the main process for serial evaluation
+            env = gym.make('Walker2d-v5')
+    
     nn = pnt.NeuralNetwork()
     genome.BuildPhenotype(nn)
     
@@ -97,6 +107,8 @@ def evaluate_genome(genome, env=None, render=False, max_steps=500, num_trials=3)
                 break
         
         total_reward += trial_reward
+
+    env.close()
     
     # Shift fitness to ensure it's always positive while preserving ranks
     fitness = (total_reward / num_trials) + FITNESS_SHIFT
@@ -139,46 +151,52 @@ def main():
     temp_env = gym.make('Walker2d-v5')
     
     params = pnt.Parameters()
-    params.PopulationSize = 150
+    params.PopulationSize = 250
     params.DynamicCompatibility = True
     params.NormalizeGenomeSize = False
-    params.WeightDiffCoeff = 0.02
-    params.CompatTreshold = 1.0  
+    params.WeightDiffCoeff = 0.05
+    params.CompatTreshold = 1.5  
     params.YoungAgeTreshold = 10
     params.SpeciesMaxStagnation = 12
     params.OldAgeTreshold = 30
     params.MinSpecies = 2
     params.MaxSpecies = 6
     params.RouletteWheelSelection = False
-    params.TournamentSelection = False
-    params.TournamentSize = 4
+    params.TournamentSelection = True
+    params.TournamentSize = 6
     params.RecurrentProb = 0.2 
     params.OverallMutationRate = 0.8
-    params.ArchiveEnforcement = False
-    params.MutateWeightsProb = 0.5
-    params.WeightMutationMaxPower = 1.0
-    params.WeightReplacementMaxPower = 4.0
+    params.MutateWeightsProb = 0.75
+    params.WeightMutationMaxPower = 2.5
+    params.WeightReplacementMaxPower = 8.0
     params.MutateWeightsSevereProb = 0.2
     params.WeightMutationRate = 0.25
     params.WeightReplacementRate = 0.1
-    params.MaxWeight = 16
-    params.MutateAddNeuronProb = 0.01
-    params.MutateAddLinkProb = 0.05     
-    params.MutateRemLinkProb = 0.05
-    params.MinActivationA = 5.0
-    params.MaxActivationA = 5.0
-    params.ActivationFunction_SignedSigmoid_Prob = 0.0
+    params.MaxWeight = 16.0
+    params.MutateAddNeuronProb = 0.05
+    params.MutateAddLinkProb = 0.1    
+    params.MutateRemLinkProb = 0.1
+    params.SplitRecurrent = True 
+    params.SplitLoopedRecurrent = True
+    params.MinActivationA = 1.0
+    params.MaxActivationA = 8.0
+    params.MutateActivationAProb = 0.2
+    params.ActivationAMutationMaxPower = 2.0
     params.ActivationFunction_UnsignedSigmoid_Prob = 1.0
     params.ActivationFunction_Tanh_Prob = 0.0  
-    params.ActivationFunction_SignedStep_Prob = 0.0
-    params.CrossoverRate = 0.7
-    params.MultipointCrossoverRate = 0.6
-    params.SurvivalRate = 0.2
+    params.ActivationFunction_Relu_Prob = 1.0
+    params.ActivationFunction_Softplus_Prob = 0.0
+    params.ActivationFunction_Linear_Prob = 0.0
+    params.MutateNeuronActivationTypeProb = 0
+    params.CrossoverRate = 0.4
+    params.MultipointCrossoverRate = 0.4
+    params.SurvivalRate = 0.5
     params.MutateNeuronTraitsProb = 0
     params.MutateLinkTraitsProb = 0
     params.AllowLoops = True
-    params.AllowClones = False
+    params.AllowClones = True
     params.EliteFraction = 0.02
+    params.ArchiveEnforcement = False
 
     # Create a GenomeInitStruct
     init_struct = pnt.GenomeInitStruct()
@@ -195,9 +213,14 @@ def main():
     # Create the initial population
     pop = pnt.Population(genome_prototype, params, True, 1.0, int(time.time()))
 
-    generations = 250
+    generations = 2500
     
-    for gen in tqdm(range(generations), desc="Generations"):
+    # Create persistent process pool if using parallel evaluation
+    pool = None
+    if not args.serial:
+        pool = multiprocessing.Pool(processes=16, initializer=init_worker)
+    
+    for gen in tqdm(range(1, generations), desc="Generations"):
         best_fitness = -float('inf')
         best_genome = None
         
@@ -206,7 +229,7 @@ def main():
             # Serial evaluation
             for species in pop.m_Species:
                 for individual in species.m_Individuals:
-                    fitness = evaluate_genome(individual, temp_env, num_trials=3)
+                    fitness = evaluate_genome((individual, False, 500, 3))
                     individual.SetFitness(fitness)
                     
                     # Track best genome
@@ -214,13 +237,13 @@ def main():
                         best_fitness = fitness
                         best_genome = individual
         else:
-            # Parallel evaluation
+            # Parallel evaluation with persistent pool
             genomes = [individual for species in pop.m_Species for individual in species.m_Individuals]
+            # Prepare arguments for evaluation
+            args_list = [(genome, False, 500, 3) for genome in genomes]
             
-            # Create process pool with worker initialization
-            with multiprocessing.Pool(processes=16, initializer=init_worker) as pool:
-                # Evaluate genomes in parallel
-                fitnesses = pool.starmap(evaluate_genome, [(genome, None, False, 500, 3) for genome in genomes])
+            # Evaluate genomes in parallel using persistent pool
+            fitnesses = pool.map(evaluate_genome, args_list)
             
             # Assign fitness scores back to genomes
             idx = 0
@@ -286,21 +309,21 @@ def main():
         # Print generation stats
         print(f"\nGeneration {gen}: Best Fitness = {best_fitness:.2f}")
         
-        # Render best individual every 25 generations
-        if best_genome and gen % 25 == 0:
+        # Render best individual every N generations
+        if best_genome and gen % 100 == 0:
             print(f"\nRendering best individual from generation {gen}...")
             for i in range(5):
                 print(f"Episode {i+1} (Press ESC to skip remaining episodes)")
-                # Create a fresh render environment for each episode
-                env_render = gym.make('Walker2d-v5', render_mode='human')
-                env_render.unwrapped._hide_overlay = True
-                try:
-                    evaluate_genome(best_genome, env_render, render=True, max_steps=500, num_trials=1)
-                finally:
-                    env_render.close()
+                # Evaluate with rendering in the main process
+                evaluate_genome((best_genome, True, 500, 1))
         
         # Advance to next generation
         pop.Epoch()
+    
+    # Clean up process pool
+    if pool is not None:
+        pool.close()
+        pool.join()
     
     # Keep the plot window open after training completes
     plt.ioff()
@@ -312,4 +335,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

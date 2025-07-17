@@ -9,6 +9,8 @@ import multiprocessing
 from tqdm import tqdm
 import pygame  # For key press detection
 import matplotlib.pyplot as plt
+from matplotlib import cm
+from matplotlib.colors import rgb2hex
 
 # Fitness shift constant to ensure all fitness values are positive
 FITNESS_SHIFT = 1000.0
@@ -105,14 +107,26 @@ def main():
     pygame.init()
     pygame.display.set_mode((1, 1))  # Create a tiny window for event handling
     
-    # Set up matplotlib figure for fitness tracking
+    # Set up matplotlib figures
     plt.ion()  # Turn on interactive mode
-    fig, ax = plt.subplots(figsize=(10, 5))
-    ax.set_title('Best Fitness per Generation')
-    ax.set_xlabel('Generation')
-    ax.set_ylabel('Fitness')
-    line, = ax.plot([], [], 'b-')  # Create an empty line
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 10))
+    
+    # Figure 1: Best Fitness per Generation
+    ax1.set_title('Best Fitness per Generation')
+    ax1.set_xlabel('Generation')
+    ax1.set_ylabel('Fitness')
+    line, = ax1.plot([], [], 'b-')  # Create an empty line
     best_fitness_history = []
+    
+    # Figure 2: Population Visualization
+    ax2.set_title('Population Fitness by Species')
+    ax2.set_xlabel('Individual')
+    ax2.set_ylabel('Fitness')
+    ax2.set_ylim(0, 2000)  # Adjust based on expected fitness range
+    population_bars = None
+    
+    # Statistics text box
+    stats_text = ax2.text(0.02, 0.95, '', transform=ax2.transAxes, verticalalignment='top')
     
     # Create a temporary environment for serial evaluation and rendering
     temp_env = gym.make('Ant-v5')
@@ -122,7 +136,7 @@ def main():
     params.PopulationSize = 150
     params.DynamicCompatibility = True
     params.NormalizeGenomeSize = False
-    params.WeightDiffCoeff = 0.02
+    params.WeightDiffCoeff = 0.05
     params.CompatTreshold = 1.0  
     params.YoungAgeTreshold = 10
     params.SpeciesMaxStagnation = 12
@@ -145,8 +159,12 @@ def main():
     params.MutateAddNeuronProb = 0.01
     params.MutateAddLinkProb = 0.05     
     params.MutateRemLinkProb = 0.05
-    params.MinActivationA = 5.0
-    params.MaxActivationA = 5.0
+    params.SplitRecurrent = True 
+    params.SplitLoopedRecurrent = True
+    params.MinActivationA = 1.0
+    params.MaxActivationA = 8.0
+    params.MutateActivationAProb = 0.25
+    params.ActivationAMutationMaxPower = 2.0
     params.ActivationFunction_SignedSigmoid_Prob = 0.0
     params.ActivationFunction_UnsignedSigmoid_Prob = 1.0
     params.ActivationFunction_Tanh_Prob = 0.0  
@@ -167,9 +185,9 @@ def main():
     init_struct.NumOutputs = 8
     init_struct.NumHidden = 0
     init_struct.SeedType = pnt.GenomeSeedType.PERCEPTRON
-    init_struct.HiddenActType = pnt.TANH
+    init_struct.HiddenActType = pnt.UNSIGNED_SIGMOID
     init_struct.OutputActType = pnt.TANH
-    init_struct.FS_NEAT = True # start with only a few links
+    init_struct.FS_NEAT = False # start with only a few links
     init_struct.FS_NEAT_links = 5
 
     # Create a prototype genome
@@ -219,11 +237,50 @@ def main():
         # Store best fitness for progress tracking
         best_fitness_history.append(best_fitness)
         
-        # Update the plot
+        # Update the fitness plot
         line.set_xdata(range(len(best_fitness_history)))
         line.set_ydata(best_fitness_history)
-        ax.relim()
-        ax.autoscale_view()
+        ax1.relim()
+        ax1.autoscale_view()
+        
+        # Update the population visualization
+        if population_bars is not None:
+            for bar in population_bars:
+                bar.remove()
+        
+        # Collect fitness and species data
+        fitness_data = []
+        species_data = []
+        neurons_data = []
+        links_data = []
+        for species in pop.m_Species:
+            for individual in species.m_Individuals:
+                fitness_data.append(individual.GetFitness())
+                species_data.append(species.ID())
+                nn = pnt.NeuralNetwork()
+                individual.BuildPhenotype(nn)
+                neurons_data.append(len(nn.m_neurons))  # Number of neurons
+                links_data.append(len(nn.m_connections))  # Number of links
+        
+        # Assign colors to species
+        unique_species = list(set(species_data))
+        cmap = cm.get_cmap('tab20', len(unique_species))
+        species_colors = {s: rgb2hex(cmap(i)[:3]) for i, s in enumerate(unique_species)}
+        colors = [species_colors[s] for s in species_data]
+        
+        # Plot population bars
+        population_bars = ax2.bar(range(len(fitness_data)), fitness_data, color=colors)
+        
+        # Update statistics
+        stats = f"Population Stats:\n"
+        stats += f"Max Neurons: {max(neurons_data)}\n"
+        stats += f"Min Neurons: {min(neurons_data)}\n"
+        stats += f"Max Links: {max(links_data)}\n"
+        stats += f"Min Links: {min(links_data)}\n"
+        stats += f"Species Count: {len(unique_species)}"
+        stats_text.set_text(stats)
+        
+        # Redraw figures
         fig.canvas.draw()
         fig.canvas.flush_events()
         

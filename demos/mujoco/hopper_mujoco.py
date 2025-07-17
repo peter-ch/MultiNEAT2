@@ -115,7 +115,7 @@ def evaluate_genome(genome, env=None, render=False, max_steps=300, obs_min=None,
         outputs = nn.Output()
         
         # Scale outputs to [-1, 1] range (tanh already does this)
-        action = outputs
+        action = (np.array(outputs)-0.5)*2.0
         
         # Handle both old (4 return values) and new (5 return values) Gym API
         step_result = env.step(action)
@@ -175,46 +175,53 @@ def main():
     
     # Create and customize MultiNEAT parameters
     params = pnt.Parameters()
-    params.PopulationSize = 150
+    params.PopulationSize = 250
     params.DynamicCompatibility = True
     params.NormalizeGenomeSize = False
-    params.WeightDiffCoeff = 0.02
-    params.CompatTreshold = 1.0  
+    params.WeightDiffCoeff = 0.035
+    params.CompatTreshold = 1.5  
     params.YoungAgeTreshold = 10
     params.SpeciesMaxStagnation = 12
     params.OldAgeTreshold = 30
     params.MinSpecies = 2
-    params.MaxSpecies = 6
+    params.MaxSpecies = 10
     params.RouletteWheelSelection = False
-    params.TournamentSelection = False
-    params.TournamentSize = 4
+    params.TournamentSelection = True
+    params.TournamentSize = 5
     params.RecurrentProb = 0.2 
-    params.OverallMutationRate = 0.8
-    params.ArchiveEnforcement = False
-    params.MutateWeightsProb = 0.5
-    params.WeightMutationMaxPower = 1.0
+    params.OverallMutationRate = 0.333
+    params.MutateWeightsProb = 0.75
+    params.WeightMutationMaxPower = 1.5
     params.WeightReplacementMaxPower = 4.0
     params.MutateWeightsSevereProb = 0.2
-    params.WeightMutationRate = 0.25
-    params.WeightReplacementRate = 0.1
-    params.MaxWeight = 16
-    params.MutateAddNeuronProb = 0.01
-    params.MutateAddLinkProb = 0.05     
-    params.MutateRemLinkProb = 0.05
-    params.MinActivationA = 5.0
-    params.MaxActivationA = 5.0
-    params.ActivationFunction_SignedSigmoid_Prob = 0.0
+    params.WeightMutationRate = 0.75
+    params.WeightReplacementRate = 0.2
+    params.MaxWeight = 16.0
+    params.MutateAddNeuronProb = 0.005
+    params.MutateAddLinkProb = 0.05    
+    params.MutateRemLinkProb = 0.02
+    params.SplitRecurrent = True 
+    params.SplitLoopedRecurrent = True
+    params.MinActivationA = 4.0
+    params.MaxActivationA = 4.0
+    params.MutateActivationAProb = 0.0
+    params.ActivationAMutationMaxPower = 0.0
     params.ActivationFunction_UnsignedSigmoid_Prob = 1.0
     params.ActivationFunction_Tanh_Prob = 0.0  
-    params.ActivationFunction_SignedStep_Prob = 0.0
-    params.CrossoverRate = 0.7
-    params.MultipointCrossoverRate = 0.6
-    params.SurvivalRate = 0.2
+    params.ActivationFunction_Relu_Prob = 0.0
+    params.ActivationFunction_Softplus_Prob = 0.0
+    params.ActivationFunction_Linear_Prob = 0.0
+    params.MutateNeuronActivationTypeProb = 0
+    params.CrossoverRate = 0.4
+    params.MultipointCrossoverRate = 0.4
+    params.InterspeciesCrossoverRate = 0.05
+    params.SurvivalRate = 0.5
     params.MutateNeuronTraitsProb = 0
     params.MutateLinkTraitsProb = 0
     params.AllowLoops = True
-    params.AllowClones = False
+    params.AllowClones = True
     params.EliteFraction = 0.02
+    params.ArchiveEnforcement = False
 
     # Create a GenomeInitStruct
     # 11 inputs (observations) + 1 bias = 12 inputs, 3 outputs (actions)
@@ -223,8 +230,8 @@ def main():
     init_struct.NumOutputs = 3
     init_struct.NumHidden = 0
     init_struct.SeedType = pnt.GenomeSeedType.PERCEPTRON
-    init_struct.HiddenActType = pnt.TANH
-    init_struct.OutputActType = pnt.TANH
+    init_struct.HiddenActType = pnt.UNSIGNED_SIGMOID
+    init_struct.OutputActType = pnt.UNSIGNED_SIGMOID
 
     # Create a prototype genome
     genome_prototype = pnt.Genome(params, init_struct)
@@ -232,72 +239,88 @@ def main():
     # Create the initial population
     pop = pnt.Population(genome_prototype, params, True, 1.0, int(time.time()))
 
-    generations = 250
+    generations = 2500
     
-    for gen in tqdm(range(generations), desc="Generations"):
-        best_fitness = -float('inf')
-        best_genome = None
-        
-        # Evaluate all genomes
-        if args.serial:
-            # Serial evaluation
-            for species in pop.m_Species:
-                for individual in species.m_Individuals:
-                    fitness = evaluate_genome(individual, temp_env, obs_min=obs_min, obs_max=obs_max)
-                    individual.SetFitness(fitness)
-                    
-                    # Track best genome
-                    if fitness > best_fitness:
-                        best_fitness = fitness
-                        best_genome = individual
-        else:
-            # Parallel evaluation
-            genomes = [individual for species in pop.m_Species for individual in species.m_Individuals]
+    # Create persistent process pool for parallel evaluation
+    pool = None
+    if not args.serial:
+        print("Creating persistent process pool with 16 workers...")
+        pool = multiprocessing.Pool(processes=16, initializer=init_worker)
+    
+    try:
+        for gen in tqdm(range(1, generations), desc="Generations"):
+            best_fitness = -float('inf')
+            best_genome = None
             
-            # Create process pool with worker initialization
-            with multiprocessing.Pool(processes=16, initializer=init_worker) as pool:
-                # Evaluate genomes in parallel
-                fitnesses = pool.starmap(evaluate_genome, [(g, None, False, 300, obs_min, obs_max) for g in genomes])
+            # Evaluate all genomes
+            if args.serial:
+                # Serial evaluation
+                for species in pop.m_Species:
+                    for individual in species.m_Individuals:
+                        fitness = evaluate_genome(individual, temp_env, obs_min=obs_min, obs_max=obs_max)
+                        individual.SetFitness(fitness)
+                        
+                        # Track best genome
+                        if fitness > best_fitness:
+                            best_fitness = fitness
+                            best_genome = individual
+            else:
+                # Parallel evaluation using persistent pool
+                genomes = [individual for species in pop.m_Species for individual in species.m_Individuals]
+                
+                # Evaluate genomes in parallel using starmap_async for better performance
+                results = pool.starmap_async(
+                    evaluate_genome, 
+                    [(g, None, False, 300, obs_min, obs_max) for g in genomes]
+                )
+                fitnesses = results.get()
+                
+                # Assign fitness scores back to genomes
+                idx = 0
+                for species in pop.m_Species:
+                    for individual in species.m_Individuals:
+                        individual.SetFitness(fitnesses[idx])
+                        # Track best genome
+                        if fitnesses[idx] > best_fitness:
+                            best_fitness = fitnesses[idx]
+                            best_genome = individual
+                        idx += 1
             
-            # Assign fitness scores back to genomes
-            idx = 0
-            for species in pop.m_Species:
-                for individual in species.m_Individuals:
-                    individual.SetFitness(fitnesses[idx])
-                    # Track best genome
-                    if fitnesses[idx] > best_fitness:
-                        best_fitness = fitnesses[idx]
-                        best_genome = individual
-                    idx += 1
-        
-        # Store best fitness for progress tracking
-        best_fitness_history.append(best_fitness)
-        
-        # Update the plot
-        line.set_xdata(range(len(best_fitness_history)))
-        line.set_ydata(best_fitness_history)
-        ax.relim()
-        ax.autoscale_view()
-        fig.canvas.draw()
-        fig.canvas.flush_events()
-        
-        # Print generation stats
-        print(f"\nGeneration {gen}: Best Fitness = {best_fitness:.2f}")
-        
-        # Render best individual every 50 generations
-        if best_genome and gen % 50 == 0:
-            print(f"\nRendering best individual from generation {gen}...")
-            for i in range(10):
-                print(f"Episode {i+1} (Press ESC to skip remaining episodes)")
-                # Create a fresh render environment for each episode
-                env_render = gym.make('Hopper-v5', render_mode='human')
-                try:
-                    evaluate_genome(best_genome, env_render, render=True, max_steps=300, obs_min=obs_min, obs_max=obs_max)
-                finally:
-                    env_render.close()
-        
-        # Advance to next generation
-        pop.Epoch()
+            # Store best fitness for progress tracking
+            best_fitness_history.append(best_fitness)
+            
+            # Update the plot
+            line.set_xdata(range(len(best_fitness_history)))
+            line.set_ydata(best_fitness_history)
+            ax.relim()
+            ax.autoscale_view()
+            fig.canvas.draw()
+            fig.canvas.flush_events()
+            
+            # Print generation stats
+            print(f"\nGeneration {gen}: Best Fitness = {best_fitness:.2f}")
+            
+            # Render best individual every N generations
+            if best_genome and gen % 150 == 0:
+                print(f"\nRendering best individual from generation {gen}...")
+                for i in range(5):
+                    print(f"Episode {i+1} (Press ESC to skip remaining episodes)")
+                    # Create a fresh render environment for each episode
+                    env_render = gym.make('Hopper-v5', render_mode='human')
+                    try:
+                        evaluate_genome(best_genome, env_render, render=True, max_steps=300, obs_min=obs_min, obs_max=obs_max)
+                    finally:
+                        env_render.close()
+            
+            # Advance to next generation
+            pop.Epoch()
+    finally:
+        # Clean up resources
+        temp_env.close()
+        if pool:
+            print("Closing process pool...")
+            pool.close()
+            pool.join()
     
     # Keep the plot window open after training completes
     plt.ioff()

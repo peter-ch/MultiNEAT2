@@ -341,7 +341,8 @@ def main():
     params.MutateWeightsSevereProb = 0.2
     params.WeightMutationRate = 0.25
     params.WeightReplacementRate = 0.1
-    params.MaxWeight = 16
+    params.MinWeight = -4.0
+    params.MaxWeight = 4.0
     params.MutateAddNeuronProb = 0.01
     params.MutateAddLinkProb = 0.05     
     params.MutateRemLinkProb = 0.05

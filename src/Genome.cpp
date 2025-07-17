@@ -1374,7 +1374,8 @@ bool Genome::Mutate_AddLink(InnovationDatabase &a_Innovs, const Parameters &a_Pa
                 break;
             }
         }
-        while (HasLink(m_NeuronGenes[t_n1idx].ID(), m_NeuronGenes[t_n2idx].ID()));
+        while (HasLink(m_NeuronGenes[t_n1idx].ID(), m_NeuronGenes[t_n2idx].ID())); 
+
         if (t_found_bias && t_MakeBias)
             t_Found = true;
         else

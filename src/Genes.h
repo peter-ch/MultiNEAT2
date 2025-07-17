@@ -462,7 +462,10 @@ namespace NEAT
         }
         friend bool operator==(const LinkGene &lhs, const LinkGene &rhs)
         {
-            return (lhs.m_InnovationID == rhs.m_InnovationID);
+            return (lhs.m_FromNeuronID == rhs.m_FromNeuronID &&
+                    lhs.m_ToNeuronID == rhs.m_ToNeuronID &&
+                    lhs.m_Weight == rhs.m_Weight &&
+                    lhs.m_IsRecurrent == rhs.m_IsRecurrent);
         }
     };
 
@@ -511,7 +514,16 @@ namespace NEAT
 
         friend bool operator==(const NeuronGene &lhs, const NeuronGene &rhs)
         {
-            return (lhs.m_ID == rhs.m_ID && lhs.m_Type == rhs.m_Type);
+            return (lhs.m_ID == rhs.m_ID && 
+                    lhs.m_Type == rhs.m_Type &&
+                    lhs.x == rhs.x &&
+                    lhs.y == rhs.y &&
+                    lhs.m_SplitY == rhs.m_SplitY &&
+                    lhs.m_A == rhs.m_A &&
+                    lhs.m_B == rhs.m_B &&
+                    lhs.m_TimeConstant == rhs.m_TimeConstant &&
+                    lhs.m_Bias == rhs.m_Bias &&
+                    lhs.m_ActFunction == rhs.m_ActFunction);
         }
 
         NeuronGene &operator=(const NeuronGene &a_g)

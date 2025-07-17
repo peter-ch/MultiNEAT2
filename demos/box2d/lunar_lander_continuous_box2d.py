@@ -11,7 +11,7 @@ from tqdm import tqdm
 # Worker initialization function for multiprocessing
 def init_worker():
     global worker_env
-    worker_env = gym.make('LunarLanderContinuous-v2')
+    worker_env = gym.make('LunarLanderContinuous-v3')
 
 # Define the evaluation function for a genome
 def evaluate_genome(genome, env=None, render=False, max_steps=1000):
@@ -75,10 +75,10 @@ def main():
     # Training environment is now created per worker process
     
     # Create rendering environment (only for demo purposes)
-    env_render = gym.make('LunarLanderContinuous-v2', render_mode='human')
+    env_render = gym.make('LunarLanderContinuous-v3', render_mode='human')
     
     # Create a temporary environment for serial evaluation and rendering
-    temp_env = gym.make('LunarLanderContinuous-v2')
+    temp_env = gym.make('LunarLanderContinuous-v3')
     
     # Create and customize MultiNEAT parameters
     params = pnt.Parameters()

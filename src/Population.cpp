@@ -63,7 +63,7 @@ Population::Population(const Genome& a_Seed, const Parameters& a_Parameters,
                     {
                         if (i != j) // don't compare the same genome
                         {
-                            if (m_Genomes[i].CompatibilityDistance(m_Genomes[j], m_Parameters) < m_Parameters.MinDeltaCompatEqualGenomes) // equal genomes?
+                            if (m_Genomes[i].IsIdenticalTo(m_Genomes[j])) // equal genomes?
                             {
                                 is_invalid = true;
                                 break;

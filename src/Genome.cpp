@@ -2007,6 +2007,55 @@ void Genome::PrintAllTraits()
     std::cout << "====================================================================\n";
 }
 
+bool Genome::IsIdenticalTo(const Genome& other) const
+{
+    // First compare basic structural properties
+    if (m_NumInputs != other.m_NumInputs || 
+        m_NumOutputs != other.m_NumOutputs ||
+        m_NeuronGenes.size() != other.m_NeuronGenes.size() ||
+        m_LinkGenes.size() != other.m_LinkGenes.size())
+    {
+        return false;
+    }
+
+    // Compare neuron genes (ignore IDs, focus on topology and parameters)
+    for (size_t i = 0; i < m_NeuronGenes.size(); ++i)
+    {
+        const NeuronGene& n1 = m_NeuronGenes[i];
+        const NeuronGene& n2 = other.m_NeuronGenes[i];
+        
+        if (n1.m_Type != n2.m_Type ||
+            n1.x != n2.x ||
+            n1.y != n2.y ||
+            n1.m_SplitY != n2.m_SplitY ||
+            n1.m_A != n2.m_A ||
+            n1.m_B != n2.m_B ||
+            n1.m_TimeConstant != n2.m_TimeConstant ||
+            n1.m_Bias != n2.m_Bias ||
+            n1.m_ActFunction != n2.m_ActFunction)
+        {
+            return false;
+        }
+    }
+
+    // Compare link genes (ignore innovation IDs, focus on topology and weights)
+    for (size_t i = 0; i < m_LinkGenes.size(); ++i)
+    {
+        const LinkGene& l1 = m_LinkGenes[i];
+        const LinkGene& l2 = other.m_LinkGenes[i];
+        
+        if (l1.m_FromNeuronID != l2.m_FromNeuronID ||
+            l1.m_ToNeuronID != l2.m_ToNeuronID ||
+            l1.m_Weight != l2.m_Weight ||
+            l1.m_IsRecurrent != l2.m_IsRecurrent)
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 } // namespace NEAT
 
-#endif 
+#endif

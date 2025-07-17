@@ -157,6 +157,9 @@ namespace NEAT
             return m_ID == other.m_ID;
         }
 
+        // Checks if two genomes have identical structure and data (ignore IDs, focus on topology and parameters)
+        bool IsIdenticalTo(const Genome& other) const;
+
         // Builds this genome from a file
         Genome(const char *a_filename);
 

@@ -491,10 +491,7 @@ namespace NEAT
                         {
                             for (unsigned int j = 0; j < a_Pop.m_TempSpecies[i].m_Individuals.size(); j++)
                             {
-                                if (
-                                    (t_baby.CompatibilityDistance(a_Pop.m_TempSpecies[i].m_Individuals[j],
-                                        a_Parameters) < a_Parameters.MinDeltaCompatEqualGenomes) // identical genome?
-                                    )
+                        if (t_baby.IsIdenticalTo(a_Pop.m_TempSpecies[i].m_Individuals[j]))
                                 {
                                     t_baby_exists_in_pop = true;
                                     break;
@@ -508,10 +505,7 @@ namespace NEAT
                     {
                         for (unsigned int i = 0; i < a_Pop.m_GenomeArchive.size(); i++)
                         {
-                            if (
-                                (t_baby.CompatibilityDistance(a_Pop.m_GenomeArchive[i],
-                                    a_Parameters) < a_Parameters.MinDeltaCompatEqualGenomes) // identical genome?
-                                )
+                        if (t_baby.IsIdenticalTo(a_Pop.m_GenomeArchive[i]))
                             {
                                 t_baby_exists_in_pop = true;
                                 break;
@@ -772,10 +766,7 @@ namespace NEAT
                 {
                     for (unsigned int j = 0; j < a_Pop.m_Species[i].m_Individuals.size(); j++)
                     {
-                        if (
-                            (t_baby.CompatibilityDistance(a_Pop.m_Species[i].m_Individuals[j],
-                                a_Parameters) < a_Parameters.MinDeltaCompatEqualGenomes) // identical genome?
-                            )
+                        if (t_baby.IsIdenticalTo(a_Pop.m_Species[i].m_Individuals[j]))
                         {
                             t_baby_exists_in_pop = true;
                             break;
@@ -789,10 +780,7 @@ namespace NEAT
             {
                 for (unsigned int i = 0; i < a_Pop.m_GenomeArchive.size(); i++)
                 {
-                    if (
-                        (t_baby.CompatibilityDistance(a_Pop.m_GenomeArchive[i],
-                            a_Parameters) < a_Parameters.MinDeltaCompatEqualGenomes) // identical genome?
-                        )
+                        if (t_baby.IsIdenticalTo(a_Pop.m_GenomeArchive[i]))
                     {
                         t_baby_exists_in_pop = true;
                         break;

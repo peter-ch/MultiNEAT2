@@ -337,13 +337,18 @@ namespace NEAT
         Genome t_baby; // temp genome for reproduction
 
         unsigned int t_offspring_count = Rounded(GetOffspringRqd());
-        unsigned int elite_offspring = Rounded(a_Parameters.EliteFraction * m_Individuals.size());
-        if (elite_offspring < 1) // can't be 0
-        {
-            elite_offspring = 1;
-        }
-        // ensure we have a champ
+        // ensure we have a champ when enabled
+        unsigned int elite_offspring = 0;
         unsigned int elite_count = 0;
+        if (a_Parameters.EliteFraction > 0)
+        {
+            elite_offspring = Rounded(a_Parameters.EliteFraction * m_Individuals.size());
+            if (elite_offspring < 1) // can't be 0
+            {
+                elite_offspring = 1;
+            }
+        }
+
         // no offspring?! yikes.. dead species!
         if (t_offspring_count == 0)
         {

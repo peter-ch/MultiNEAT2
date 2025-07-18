@@ -58,21 +58,30 @@ namespace NEAT
         double total = 0.0;
         for (double p : a_probs)
             total += p;
-        if(total <= 0.0 || a_probs.empty())
+
+        if (total <= 0.0 || a_probs.empty())
         {
-            std::uniform_int_distribution<int> dist(0, a_probs.size() > 0 ? a_probs.size() - 1 : 0);
+            int maxIndex = a_probs.size() > 0 ? static_cast<int>(a_probs.size()) - 1 : 0;
+            std::uniform_int_distribution<int> dist(0, maxIndex);
             return dist(m_Engine);
         }
+
         std::uniform_real_distribution<double> dist(0.0, total);
         double r = dist(m_Engine);
         double run = 0.0;
+        size_t lastNonZero = 0;
         for (size_t idx = 0; idx < a_probs.size(); idx++)
         {
-            run += a_probs[idx];
-            if(run >= r)
-                return idx;
+            double w = a_probs[idx];
+            if (w > 0.0)
+            {
+                lastNonZero = idx;
+                if (r < run + w)
+                    return static_cast<int>(idx);
+            }
+            run += w;
         }
-        return a_probs.size() - 1;
+        return static_cast<int>(lastNonZero);
     }
 }
 

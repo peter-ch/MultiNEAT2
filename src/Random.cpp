@@ -57,7 +57,10 @@ namespace NEAT
     {
         double total = 0.0;
         for (double p : a_probs)
-            total += p;
+        {
+            if (p > 0.0)  // Only add positive probabilities to the total
+                total += p;
+        }
 
         if (total <= 0.0 || a_probs.empty())
         {
@@ -73,13 +76,13 @@ namespace NEAT
         for (size_t idx = 0; idx < a_probs.size(); idx++)
         {
             double w = a_probs[idx];
-            if (w > 0.0)
+            if (w > 0.0)  // Only consider positive probabilities for selection
             {
                 lastNonZero = idx;
                 if (r < run + w)
                     return static_cast<int>(idx);
+                run += w;
             }
-            run += w;
         }
         return static_cast<int>(lastNonZero);
     }

@@ -54,7 +54,7 @@ int main() {
     params.MinSpecies = 2;
     params.MaxSpecies = 10;
     params.RouletteWheelSelection = true;
-    params.TournamentSelection = false;
+    params.TournamentSelection = true;
     params.RecurrentProb = 0.0;
     params.OverallMutationRate = 0.3;
     params.ArchiveEnforcement = false;
@@ -109,5 +109,37 @@ int main() {
         pop.Epoch();
     }
     std::cout << "\nSimulation completed.\n";
+
+    // test the rng here
+    /*RNG rng;
+    std::vector<double> probs;
+    probs.push_back(10.0);
+    probs.push_back(3.0);
+    probs.push_back(0.0);
+    probs.push_back(11.0);
+    probs.push_back(1.0);
+    probs.push_back(100.0);
+    //for (int gen = 0; gen < 1000; ++gen)
+    //{
+    //    std::cout << rng.Roulette(probs) << "\n";
+    //}
+
+    // Map to track the frequency of each choice
+    std::map<int, int> stats;
+
+    for (int gen = 0; gen < 10000; ++gen) {
+        int choice = rng.Roulette(probs);
+        std::cout << choice << "\n";
+        stats[choice]++; // Increment the count for the chosen index
+    }
+
+    // Print statistics
+    std::cout << "\nStatistics:\n";
+    for (const auto& pair : stats) {
+        std::cout << "Choice " << pair.first << ": " << pair.second << " times ("
+            << (pair.second / 100.0) << "%)\n";
+    }*/
+
+
     return 0;
 }

@@ -403,6 +403,7 @@ PYBIND11_MODULE(pymultineat, m) {
             .def_readwrite("InterspeciesCrossoverRate", &NEAT::Parameters::InterspeciesCrossoverRate)
             .def_readwrite("MultipointCrossoverRate", &NEAT::Parameters::MultipointCrossoverRate)
             .def_readwrite("PreferFitterParentRate", &NEAT::Parameters::PreferFitterParentRate)
+            .def_readwrite("TruncationSelection", &NEAT::Parameters::TruncationSelection)
             .def_readwrite("RouletteWheelSelection", &NEAT::Parameters::RouletteWheelSelection)
             .def_readwrite("TournamentSelection", &NEAT::Parameters::TournamentSelection)
             .def_readwrite("TournamentSize", &NEAT::Parameters::TournamentSize)

@@ -14,9 +14,10 @@ from matplotlib.colors import rgb2hex
 from neattools import DrawGenome  # Import the DrawGenome function
 
 # Constant to ensure fitness is always positive
-FITNESS_SHIFT = 1000.0
+FITNESS_SHIFT = 250.0
 
-MAX_TIMESTEPS = 600
+MAX_TIMESTEPS = 800
+NUM_TRIALS = 1
 
 # Worker initialization function for multiprocessing
 def init_worker():
@@ -45,6 +46,8 @@ def evaluate_genome(args):
     total_reward = 0.0
     
     for _ in range(num_trials):
+        nn.Flush()
+
         # Get initial observation
         try:
             observation_data = env.reset()
@@ -72,10 +75,10 @@ def evaluate_genome(args):
                 for event in pygame.event.get():
                     if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
                         env.close()
-                        return (total_reward + trial_reward) / num_trials + FITNESS_SHIFT  # Return shifted fitness
+                        return (total_reward + trial_reward) / num_trials 
             
             # Prepare inputs: convert observation to list and add bias
-            # observation = np.clip(observation, -50.0, 50.0) # to prevent blowups
+            # observation = np.tanh(observation) # squash
             inputs = observation.tolist() if hasattr(observation, 'tolist') else list(observation)
             inputs.append(1.0)  # Add bias
             
@@ -83,8 +86,7 @@ def evaluate_genome(args):
             nn.Activate()  # Activate only once per timestep
             outputs = nn.Output()
             
-            # Scale outputs to [-1, 1] range (tanh already does this)
-            action = outputs
+            action = np.clip((np.array(outputs)-0.5)*2, -1, 1)
             
             # Handle both old (4 return values) and new (5 return values) Gym API
             step_result = env.step(action)
@@ -107,13 +109,13 @@ def evaluate_genome(args):
             if done or step_count >= max_steps:
                 break
         
-        total_reward += (trial_reward /num_trials)
+        total_reward += trial_reward 
 
     env.close()
     
     # Shift fitness to ensure it's always positive while preserving ranks
     fitness = (total_reward / num_trials) 
-    return fitness
+    return fitness + FITNESS_SHIFT
 
 import argparse
 
@@ -146,7 +148,7 @@ def main():
     ax2.set_title('Population Fitness by Species')
     ax2.set_xlabel('Individual')
     ax2.set_ylabel('Fitness')
-    ax2.set_ylim(0, 2000)  # Adjust based on expected fitness range
+    # ax2.set_ylim(0, 2000)  # Adjust based on expected fitness range
     population_bars = None
     
     # Statistics text box
@@ -156,65 +158,75 @@ def main():
     temp_env = gym.make('Walker2d-v5')
     
     params = pnt.Parameters()
-    params.PopulationSize = 100
+    params.PopulationSize = 300
     params.DynamicCompatibility = True
     params.NormalizeGenomeSize = False
-    params.WeightDiffCoeff = 0.05
-    params.CompatTreshold = 1.5  
-    params.YoungAgeTreshold = 15
-    params.SpeciesMaxStagnation = 50
-    params.OldAgeTreshold = 80
-    params.OldAgePenalty = 0.9
-    params.MinSpecies = 2
-    params.MaxSpecies = 5
-    params.RouletteWheelSelection = False
-    params.TournamentSelection = True
-    params.TournamentSize = 4
-    params.RecurrentProb = 0.2 
+    params.WeightDiffCoeff = 0.01
+    params.CompatTreshold = 2.5  
+    params.YoungAgeTreshold = 25
+    params.SpeciesMaxStagnation = 60
+    params.OldAgeTreshold = 90
+    params.MinSpecies = 4
+    params.MaxSpecies = 10
+    params.TruncationSelection = True
+    params.RouletteWheelSelection = True
+    params.TournamentSelection = False
+    params.TournamentSize = 5
+    params.RecurrentProb = 0.2
     params.OverallMutationRate = 0.8
+
     params.MutateWeightsProb = 0.75
-    params.WeightMutationMaxPower = 1.5
-    params.WeightReplacementMaxPower = 4.0
     params.MutateWeightsSevereProb = 0.2
-    params.WeightMutationRate = 0.8
-    params.WeightReplacementRate = 0.2
-    params.MinWeight = -4.0
-    params.MaxWeight = 4.0
+    params.WeightMutationMaxPower = 0.6
+    params.WeightReplacementMaxPower = 1.2
+    params.WeightMutationRate = 0.5
+    params.WeightReplacementRate = 0.1
+    params.MinWeight = -5
+    params.MaxWeight = 5
+
     params.MutateAddNeuronProb = 0.01
-    params.MutateAddLinkProb = 0.05    
+    params.MutateAddLinkProb = 0.06    
     params.MutateRemLinkProb = 0.02
     params.SplitRecurrent = True 
     params.SplitLoopedRecurrent = True
-    params.MinActivationA = 4.0
-    params.MaxActivationA = 4.0
+
+    params.MinActivationA = 4.9
+    params.MaxActivationA = 4.9
     params.MutateActivationAProb = 0.0
-    params.ActivationAMutationMaxPower = 0.0
+    params.ActivationAMutationMaxPower = 1.0
+
     params.ActivationFunction_UnsignedSigmoid_Prob = 1.0
     params.ActivationFunction_Tanh_Prob = 0.0  
     params.ActivationFunction_Relu_Prob = 0.0
     params.ActivationFunction_Softplus_Prob = 0.0
     params.ActivationFunction_Linear_Prob = 0.0
     params.MutateNeuronActivationTypeProb = 0
-    params.CrossoverRate = 0.4
-    params.MultipointCrossoverRate = 0.5
+
+    params.CrossoverRate = 0.6
+    params.MultipointCrossoverRate = 0.4
+    params.InterspeciesCrossoverRate = 0.001
     params.SurvivalRate = 0.2
+
     params.MutateNeuronTraitsProb = 0
     params.MutateLinkTraitsProb = 0
     params.AllowLoops = True
     params.AllowClones = True
-    params.EliteFraction = 0.02
+    params.EliteFraction = 0.01
     params.ArchiveEnforcement = False
+
 
     # Create a GenomeInitStruct
     init_struct = pnt.GenomeInitStruct()
     init_struct.NumInputs = 18
     init_struct.NumOutputs = 6
-    init_struct.NumHidden = 0
+    init_struct.NumHidden = 2
+    init_struct.NumLayers = 1
     init_struct.SeedType = pnt.GenomeSeedType.PERCEPTRON
     init_struct.HiddenActType = pnt.UNSIGNED_SIGMOID # regular sigmoids internally
-    init_struct.OutputActType = pnt.TANH # outputs are always tanh for [-1 .. 1] output range
-    init_struct.FS_NEAT = True 
-    init_struct.FS_NEAT_links = 8
+    init_struct.OutputActType = pnt.UNSIGNED_SIGMOID 
+    
+    init_struct.FS_NEAT = False 
+    init_struct.FS_NEAT_links = 6
 
     # Create a prototype genome
     genome_prototype = pnt.Genome(params, init_struct)
@@ -238,7 +250,7 @@ def main():
             # Serial evaluation
             for species in pop.m_Species:
                 for individual in species.m_Individuals:
-                    fitness = evaluate_genome((individual, False, MAX_TIMESTEPS, 5))
+                    fitness = evaluate_genome((individual, False, MAX_TIMESTEPS, NUM_TRIALS))
                     individual.SetFitness(fitness)
                     
                     # Track best genome
@@ -249,7 +261,7 @@ def main():
             # Parallel evaluation with persistent pool
             genomes = [individual for species in pop.m_Species for individual in species.m_Individuals]
             # Prepare arguments for evaluation
-            args_list = [(genome, False, MAX_TIMESTEPS, 5) for genome in genomes]
+            args_list = [(genome, False, MAX_TIMESTEPS, NUM_TRIALS) for genome in genomes]
             
             # Evaluate genomes in parallel using persistent pool
             fitnesses = pool.map(evaluate_genome, args_list)

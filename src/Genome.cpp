@@ -1042,8 +1042,8 @@ bool Genome::Mutate_LinkWeights(const Parameters &a_Parameters, RNG &a_RNG)
     bool severe = (a_RNG.RandFloat() < a_Parameters.MutateWeightsSevereProb);
     int tailstart = 0;
     if(NumLinks() > m_initial_num_links)
-        tailstart = static_cast<int>(NumLinks() * 0.8);
-    if(tailstart < m_initial_num_links)
+        tailstart = static_cast<int>(NumLinks() * 0.75);
+    if(tailstart <= m_initial_num_links)
         tailstart = m_initial_num_links;
     for (size_t i = 0, end = m_LinkGenes.size(); i < end; ++i)
     {

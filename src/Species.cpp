@@ -586,7 +586,7 @@ namespace NEAT
                 // if couldn't find a match, make a new species
                 if (!t_found)
                 {
-                    a_Pop.m_TempSpecies.emplace_back(Species(t_baby, a_Parameters, a_Pop.GetNextSpeciesID()));
+                    a_Pop.m_TempSpecies.push_back(Species(t_baby, a_Parameters, a_Pop.GetNextSpeciesID()));
                     a_Pop.IncrementNextSpeciesID();
                 }
             }
@@ -804,7 +804,7 @@ namespace NEAT
         // In case of archiving, add the new baby to the archive
         if (a_Parameters.ArchiveEnforcement)
         {
-            a_Pop.m_GenomeArchive.emplace_back(t_baby);
+            a_Pop.m_GenomeArchive.push_back(t_baby);
         }
 
 #ifdef VDEBUG
@@ -831,43 +831,43 @@ namespace NEAT
         std::vector<double> t_mut_probs;
 
         // ADD_NODE;
-        t_mut_probs.emplace_back(a_Parameters.MutateAddNeuronProb);
+        t_mut_probs.push_back(a_Parameters.MutateAddNeuronProb);
 
         // ADD_LINK;
-        t_mut_probs.emplace_back(a_Parameters.MutateAddLinkProb);
+        t_mut_probs.push_back(a_Parameters.MutateAddLinkProb);
 
         // REMOVE_NODE;
-        t_mut_probs.emplace_back(a_Parameters.MutateRemSimpleNeuronProb);
+        t_mut_probs.push_back(a_Parameters.MutateRemSimpleNeuronProb);
 
         // REMOVE_LINK;
-        t_mut_probs.emplace_back(a_Parameters.MutateRemLinkProb);
+        t_mut_probs.push_back(a_Parameters.MutateRemLinkProb);
 
         // CHANGE_ACTIVATION_FUNCTION;
-        t_mut_probs.emplace_back(a_Parameters.MutateNeuronActivationTypeProb);
+        t_mut_probs.push_back(a_Parameters.MutateNeuronActivationTypeProb);
 
         // MUTATE_WEIGHTS;
-        t_mut_probs.emplace_back(a_Parameters.MutateWeightsProb);
+        t_mut_probs.push_back(a_Parameters.MutateWeightsProb);
 
         // MUTATE_ACTIVATION_A;
-        t_mut_probs.emplace_back(a_Parameters.MutateActivationAProb);
+        t_mut_probs.push_back(a_Parameters.MutateActivationAProb);
 
         // MUTATE_ACTIVATION_B;
-        t_mut_probs.emplace_back(a_Parameters.MutateActivationBProb);
+        t_mut_probs.push_back(a_Parameters.MutateActivationBProb);
 
         // MUTATE_TIMECONSTS;
-        t_mut_probs.emplace_back(a_Parameters.MutateNeuronTimeConstantsProb);
+        t_mut_probs.push_back(a_Parameters.MutateNeuronTimeConstantsProb);
 
         // MUTATE_BIASES;
-        t_mut_probs.emplace_back(a_Parameters.MutateNeuronBiasesProb);
+        t_mut_probs.push_back(a_Parameters.MutateNeuronBiasesProb);
 
         // MUTATE_NEURON_TRAITS;
-        t_mut_probs.emplace_back(a_Parameters.MutateNeuronTraitsProb);
+        t_mut_probs.push_back(a_Parameters.MutateNeuronTraitsProb);
 
         // MUTATE_LINK_TRAITS;
-        t_mut_probs.emplace_back(a_Parameters.MutateLinkTraitsProb);
+        t_mut_probs.push_back(a_Parameters.MutateLinkTraitsProb);
 
         // MUTATE_GENOME_TRAITS;
-        t_mut_probs.emplace_back(a_Parameters.MutateGenomeTraitsProb);
+        t_mut_probs.push_back(a_Parameters.MutateGenomeTraitsProb);
 
         // Special consideration for phased searching - do not allow certain mutations depending on the search mode
         // also don't use additive mutations if we just want to get rid of the clones

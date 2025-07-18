@@ -118,6 +118,9 @@ public:
     // Probability that when doing multipoint crossover,
     // the gene of the fitter parent will be prefered, instead of choosing one at random
     double PreferFitterParentRate;
+
+    // Performing truncation selection or not? (goes first)
+    bool TruncationSelection;
     
     // Performing roulette wheel selection or not?
     bool RouletteWheelSelection;

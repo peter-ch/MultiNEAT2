@@ -119,6 +119,23 @@ namespace NEAT
         // Warning!!!! The individuals must be sorted by best fitness for this to work
         int t_chosen_one = 0;
 
+        // Truncation selection goes first if enabled
+        if (a_Parameters.TruncationSelection)
+        {
+            int t_num_parents = (int)(a_Parameters.SurvivalRate * (double)(t_Evaluated.size()));
+
+            if (t_num_parents >= t_Evaluated.size())
+            {
+                t_num_parents = t_Evaluated.size() - 1;
+            }
+            if (t_num_parents < 1)
+            {
+                t_num_parents = 1;
+            }
+            // do truncation here, and other extra selections can be applied below
+            t_Evaluated.resize(t_num_parents);
+        }
+
         if (a_Parameters.TournamentSelection && (!a_Parameters.RouletteWheelSelection)) // pure tournament without roulette
         {
             std::vector< std::pair<int, double> > t_picked;
@@ -151,7 +168,7 @@ namespace NEAT
             }
             t_chosen_one = t_picked[a_RNG.Roulette(probs)].first;
         }
-        else if ((!a_Parameters.RouletteWheelSelection) && (!a_Parameters.TournamentSelection)) // both off means pure truncation selection
+        /*else if ((!a_Parameters.RouletteWheelSelection) && (!a_Parameters.TournamentSelection)) // both off means pure truncation selection
         {
             // Truncation selection based on evaluated individuals
             int t_num_parents = (int)(a_Parameters.SurvivalRate * (double)(t_Evaluated.size()));
@@ -166,7 +183,7 @@ namespace NEAT
             }
 
             t_chosen_one = t_Evaluated[a_RNG.RandInt(0, t_num_parents)].first;
-        }
+        }*/
         else if ((a_Parameters.RouletteWheelSelection) && (!a_Parameters.TournamentSelection)) // only roulette
         {
             // Roulette wheel selection 
@@ -180,19 +197,9 @@ namespace NEAT
         }
         else
         {
-            // default is pure truncation
-            int t_num_parents = (int)(a_Parameters.SurvivalRate * (double)(t_Evaluated.size()));
-            if (t_num_parents >= t_Evaluated.size())
-            {
-                t_num_parents = t_Evaluated.size() - 1;
-            }
-            if (t_num_parents < 1)
-            {
-                t_num_parents = 1;
-            }
-            t_chosen_one = t_Evaluated[a_RNG.RandInt(0, t_num_parents)].first;
+            // default is pure truncation or just random search if truncation is off - the array has been resized already
+            t_chosen_one = t_Evaluated[a_RNG.RandInt(0, t_Evaluated.size()-1)].first;
         }
-        // TODO - more variants exist - do roulette on truncated individuals, or do tournament among the truncated only
 
         return (m_Individuals[t_chosen_one]);
     }

@@ -42,10 +42,11 @@ namespace NEAT {
         InterspeciesCrossoverRate = 0.0001;
         MultipointCrossoverRate = 0.75;
         PreferFitterParentRate = 0.5;
+        TruncationSelection = true; 
         RouletteWheelSelection = false;
         TournamentSelection = false;
         TournamentSize = 5;
-        EliteFraction = 0.000001;
+        EliteFraction = 0.0001;
 
         // Phased Search parameters
         PhasedSearching = false;
@@ -189,6 +190,7 @@ namespace NEAT {
             {"InterspeciesCrossoverRate", [&]() { a_DataFile >> InterspeciesCrossoverRate; }},
             {"MultipointCrossoverRate", [&]() { a_DataFile >> MultipointCrossoverRate; }},
             {"PreferFitterParentRate", [&]() { a_DataFile >> PreferFitterParentRate; }},
+            {"TruncationSelection", [&]() { a_DataFile >> tf; TruncationSelection = (tf == "true" || tf == "1"); }},
             {"RouletteWheelSelection", [&]() { a_DataFile >> tf; RouletteWheelSelection = (tf == "true" || tf == "1"); }},
             {"TournamentSelection", [&]() { a_DataFile >> tf; TournamentSelection = (tf == "true" || tf == "1"); }},
             {"TournamentSize", [&]() { a_DataFile >> TournamentSize; }},
@@ -284,6 +286,7 @@ namespace NEAT {
         fprintf(a_fstream, "InterspeciesCrossoverRate %3.20f\n", InterspeciesCrossoverRate);
         fprintf(a_fstream, "MultipointCrossoverRate %3.20f\n", MultipointCrossoverRate);
         fprintf(a_fstream, "PreferFitterParentRate %3.20f\n", PreferFitterParentRate);
+        fprintf(a_fstream, "TruncationSelection %s\n", TruncationSelection ? "true" : "false");
         fprintf(a_fstream, "RouletteWheelSelection %s\n", RouletteWheelSelection ? "true" : "false");
         fprintf(a_fstream, "TournamentSelection %s\n", TournamentSelection ? "true" : "false");
         fprintf(a_fstream, "TournamentSize %d\n", TournamentSize);

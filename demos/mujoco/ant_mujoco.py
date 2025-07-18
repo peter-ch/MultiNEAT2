@@ -22,7 +22,7 @@ def init_worker():
     worker_env = gym.make('Ant-v5')
 
 # Define the evaluation function for a genome
-def evaluate_genome(genome, env=None, render=False, max_steps=500):
+def evaluate_genome(genome, env=None, render=False, max_steps=1000):
     # Use worker environment if none provided
     if env is None:
         env = worker_env
@@ -60,6 +60,7 @@ def evaluate_genome(genome, env=None, render=False, max_steps=500):
                     return total_reward + abs(min_reward) + 1 + FITNESS_SHIFT  # Return shifted fitness
         
         # Prepare inputs: convert observation to list and add bias
+        observation = np.tanh(observation)
         inputs = observation.tolist() if hasattr(observation, 'tolist') else list(observation)
         inputs.append(1.0)  # Add bias
         
@@ -68,7 +69,7 @@ def evaluate_genome(genome, env=None, render=False, max_steps=500):
         outputs = nn.Output()
         
         # Scale outputs to [-1, 1] range (tanh already does this)
-        action = outputs
+        action = np.array(outputs)
         
         # Handle both old (4 return values) and new (5 return values) Gym API
         step_result = env.step(action)
@@ -126,7 +127,7 @@ def main():
     ax2.set_title('Population Fitness by Species')
     ax2.set_xlabel('Individual')
     ax2.set_ylabel('Fitness')
-    ax2.set_ylim(0, 2000)  # Adjust based on expected fitness range
+    # ax2.set_ylim(0, 2000)  # Adjust based on expected fitness range
     population_bars = None
     
     # Statistics text box
@@ -144,37 +145,37 @@ def main():
     params = pnt.Parameters()
     params.PopulationSize = 150
     params.DynamicCompatibility = True
-    params.NormalizeGenomeSize = False
-    params.WeightDiffCoeff = 0.05
+    params.NormalizeGenomeSize = True
+    params.WeightDiffCoeff = 0.0
     params.CompatTreshold = 1.0  
-    params.YoungAgeTreshold = 10
-    params.SpeciesMaxStagnation = 12
-    params.OldAgeTreshold = 30
+    params.YoungAgeTreshold = 20
+    params.SpeciesMaxStagnation = 60
+    params.OldAgeTreshold = 80
     params.MinSpecies = 2
     params.MaxSpecies = 6
     params.RouletteWheelSelection = False
     params.TournamentSelection = False
-    params.TournamentSize = 4
+    params.TournamentSize = 5
     params.RecurrentProb = 0.2 
-    params.OverallMutationRate = 0.8
+    params.OverallMutationRate = 0.2
     params.ArchiveEnforcement = False
     params.MutateWeightsProb = 0.5
-    params.WeightMutationMaxPower = 1.0
+    params.WeightMutationMaxPower = 2.0
     params.WeightReplacementMaxPower = 4.0
     params.MutateWeightsSevereProb = 0.2
     params.WeightMutationRate = 0.25
     params.WeightReplacementRate = 0.1
-    params.MinWeight = -4.0
-    params.MaxWeight = 4.0
+    params.MinWeight = -8.0
+    params.MaxWeight = 8.0
     params.MutateAddNeuronProb = 0.01
-    params.MutateAddLinkProb = 0.05     
-    params.MutateRemLinkProb = 0.05
+    params.MutateAddLinkProb = 0.07    
+    params.MutateRemLinkProb = 0.02
     params.SplitRecurrent = True 
     params.SplitLoopedRecurrent = True
-    params.MinActivationA = 1.0
-    params.MaxActivationA = 8.0
-    params.MutateActivationAProb = 0.25
-    params.ActivationAMutationMaxPower = 2.0
+    params.MinActivationA = 4.0
+    params.MaxActivationA = 4.0
+    params.MutateActivationAProb = 0.0
+    params.ActivationAMutationMaxPower = 0.0
     params.ActivationFunction_SignedSigmoid_Prob = 0.0
     params.ActivationFunction_UnsignedSigmoid_Prob = 1.0
     params.ActivationFunction_Tanh_Prob = 0.0  
@@ -185,7 +186,7 @@ def main():
     params.MutateNeuronTraitsProb = 0
     params.MutateLinkTraitsProb = 0
     params.AllowLoops = True
-    params.AllowClones = True
+    params.AllowClones = False
     params.EliteFraction = 0.02
 
     # Create a GenomeInitStruct
@@ -198,7 +199,7 @@ def main():
     init_struct.HiddenActType = pnt.UNSIGNED_SIGMOID
     init_struct.OutputActType = pnt.TANH
     init_struct.FS_NEAT = True # start with only a few links
-    init_struct.FS_NEAT_links = 32
+    init_struct.FS_NEAT_links = 16
 
     # Create a prototype genome
     genome_prototype = pnt.Genome(params, init_struct)
@@ -309,15 +310,15 @@ def main():
             # Print generation stats
             print(f"\nGeneration {gen}: Best Fitness = {best_fitness:.2f}")
             
-            # Render best individual every 50 generations
-            if best_genome and gen % 50 == 0:
+            # Render best individual every M generations
+            if best_genome and gen % 100 == 0:
                 print(f"\nRendering best individual from generation {gen}...")
-                for i in range(10):
+                for i in range(3):
                     print(f"Episode {i+1} (Press ESC to skip remaining episodes)")
                     # Create a fresh render environment for each episode
                     env_render = gym.make('Ant-v5', render_mode='human')
                     try:
-                        evaluate_genome(best_genome, env_render, render=True, max_steps=500)
+                        evaluate_genome(best_genome, env_render, render=True, max_steps=1000)
                     finally:
                         env_render.close()
             

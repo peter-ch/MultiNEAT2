@@ -34,7 +34,7 @@ Population::Population(const Genome& a_Seed, const Parameters& a_Parameters,
     {
         Genome t_clone = a_Seed;
         t_clone.SetID(i);
-        m_Genomes.emplace_back( t_clone );
+        m_Genomes.push_back( t_clone );
     }
         
     // Now now initialize each genome's weights
@@ -150,7 +150,7 @@ Population::Population(const std::string a_sFileName)
     for(unsigned int i=0; i<m_Parameters.PopulationSize; i++)
     {
         Genome t_genome(t_DataFile);
-        m_Genomes.emplace_back( t_genome );
+        m_Genomes.push_back( t_genome );
     }
     t_DataFile.close();
 
@@ -885,7 +885,7 @@ void Population::ReassignSpecies(int a_genome_idx)
     if (t_cur_species == m_Species.end())
     {
         // create the first species and place the baby there
-        m_Species.emplace_back( Species(t_genome, m_Parameters, GetNextSpeciesID()));
+        m_Species.push_back( Species(t_genome, m_Parameters, GetNextSpeciesID()));
         IncrementNextSpeciesID();
     }
     else
@@ -924,7 +924,7 @@ void Population::ReassignSpecies(int a_genome_idx)
         // if couldn't find a match, make a new species
         if (!t_found)
         {
-            m_Species.emplace_back( Species(t_genome, m_Parameters, GetNextSpeciesID()));
+            m_Species.push_back( Species(t_genome, m_Parameters, GetNextSpeciesID()));
             IncrementNextSpeciesID();
         }
     }
@@ -1219,7 +1219,7 @@ bool Population::NoveltySearchTick(Genome& a_SuccessfulGenome)
 
         if (!present)
         {
-            m_BehaviorArchive->emplace_back( *(t_new_baby->m_PhenotypeBehavior) );
+            m_BehaviorArchive->push_back( *(t_new_baby->m_PhenotypeBehavior) );
             m_GensSinceLastArchiving = 0;
             m_QuickAddCounter++;
         }
@@ -1267,14 +1267,14 @@ double Population::ComputeSparseness(Genome& genome)
     {
         for(unsigned int j=0; j<m_Species[i].m_Individuals.size(); j++)
         {
-            distances.emplace_back( genome.m_PhenotypeBehavior->Distance_To( m_Species[i].m_Individuals[j].m_PhenotypeBehavior ) );
+            distances.push_back( genome.m_PhenotypeBehavior->Distance_To( m_Species[i].m_Individuals[j].m_PhenotypeBehavior ) );
         }
     }
     if(m_BehaviorArchive)
     {
         for(unsigned int i=0; i<m_BehaviorArchive->size(); i++)
         {
-            distances.emplace_back( genome.m_PhenotypeBehavior->Distance_To( &((*m_BehaviorArchive)[i]) ) );
+            distances.push_back( genome.m_PhenotypeBehavior->Distance_To( &((*m_BehaviorArchive)[i]) ) );
         }
     }
     

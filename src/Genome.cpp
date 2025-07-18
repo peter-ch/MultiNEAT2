@@ -159,7 +159,9 @@ Genome::Genome(const Parameters &a_Parameters, const GenomeInitStruct &in)
 
     GenomeSeedType seed_type = in.SeedType;
     if ((seed_type == LAYERED) && (in.NumHidden == 0))
+    {
         seed_type = PERCEPTRON;
+    }
 
     if (!a_Parameters.DontUseBiasNeuron)
     {
@@ -992,15 +994,21 @@ double Genome::CompatibilityDistance(Genome &a_G, Parameters &a_Parameters)
                 total_TC_diff += std::abs(m_NeuronGenes[i].m_TimeConstant - oth.m_TimeConstant);
             if(a_Parameters.BiasDiffCoeff>0)
                 total_bias_diff += std::abs(m_NeuronGenes[i].m_Bias - oth.m_Bias);
-            if(a_Parameters.ActivationFunctionDiffCoeff>0)
-                if(m_NeuronGenes[i].m_ActFunction != oth.m_ActFunction)
+            if (a_Parameters.ActivationFunctionDiffCoeff > 0)
+            {
+                if (m_NeuronGenes[i].m_ActFunction != oth.m_ActFunction)
+                {
                     total_act_diff++;
+                }
+            }
             auto nd = m_NeuronGenes[i].GetTraitDistances(oth.m_Traits);
             for (const auto &xx : nd)
             {
                 double val = xx.second * a_Parameters.NeuronTraits.at(xx.first).m_ImportanceCoeff;
                 if (std::isnan(val) || std::isinf(val))
+                {
                     val = 0;
+                }
                 total_neuron_trait_diff[xx.first] += val;
             }
         }
@@ -1015,13 +1023,13 @@ double Genome::CompatibilityDistance(Genome &a_G, Parameters &a_Parameters)
     for(const auto &xx : total_link_trait_diff)
     {
         double n = xx.second * a_Parameters.LinkTraits.at(xx.first).m_ImportanceCoeff / M;
-        if(std::isnan(n) || std::isinf(n)) n=0.0;
+        if (std::isnan(n) || std::isinf(n)) { n = 0.0; }
         total_distance += n;
     }
     for(const auto &xx : total_neuron_trait_diff)
     {
         double n = xx.second * a_Parameters.NeuronTraits.at(xx.first).m_ImportanceCoeff / matching_neurons;
-        if(std::isnan(n) || std::isinf(n)) n=0.0;
+        if (std::isnan(n) || std::isinf(n)) { n = 0.0; }
         total_distance += n;
     }
     return total_distance;
@@ -1029,8 +1037,8 @@ double Genome::CompatibilityDistance(Genome &a_G, Parameters &a_Parameters)
 
 bool Genome::IsCompatibleWith(Genome &a_G, Parameters &a_Parameters)
 {
-    if(this == &a_G) return true;
-    if(GetID() == a_G.GetID()) return true;
+    //if(this == &a_G) return true;
+    //if(GetID() == a_G.GetID()) return true;
     double dist = CompatibilityDistance(a_G, a_Parameters);
     return (dist <= a_Parameters.CompatTreshold);
 }
@@ -1042,7 +1050,7 @@ bool Genome::Mutate_LinkWeights(const Parameters &a_Parameters, RNG &a_RNG)
     bool severe = (a_RNG.RandFloat() < a_Parameters.MutateWeightsSevereProb);
     int tailstart = 0;
     if(NumLinks() > m_initial_num_links)
-        tailstart = static_cast<int>(NumLinks() * 0.75);
+        tailstart = static_cast<int>(NumLinks() * 0.9);
     if(tailstart <= m_initial_num_links)
         tailstart = m_initial_num_links;
     for (size_t i = 0, end = m_LinkGenes.size(); i < end; ++i)
@@ -1597,13 +1605,17 @@ Genome Genome::Mate(Genome &a_Dad, bool a_MateAverage, bool a_InterSpecies, RNG 
     {
         t_baby.m_NeuronGenes.reserve(m_NumInputs + m_NumOutputs);
         for (unsigned i = 0; i < static_cast<unsigned>(m_NumInputs - 1); ++i)
+        {
             t_baby.m_NeuronGenes.push_back(m_NeuronGenes[i]);
+        }
         t_baby.m_NeuronGenes.push_back(m_NeuronGenes[m_NumInputs - 1]);
     }
     else
     {
         for (unsigned i = 0; i < static_cast<unsigned>(m_NumInputs); ++i)
+        {
             t_baby.m_NeuronGenes.push_back(m_NeuronGenes[i]);
+        }
     }
     for (unsigned i = 0; i < static_cast<unsigned>(m_NumOutputs); ++i)
     {
@@ -1629,12 +1641,18 @@ Genome Genome::Mate(Genome &a_Dad, bool a_MateAverage, bool a_InterSpecies, RNG 
     if (GetFitness() == a_Dad.GetFitness())
     {
         if (NumLinks() == a_Dad.NumLinks())
+        {
             t_better = (a_RNG.RandFloat() < 0.5) ? MOM : DAD;
+        }
         else
+        {
             t_better = (NumLinks() < a_Dad.NumLinks()) ? MOM : DAD;
+        }
     }
     else
+    {
         t_better = (GetFitness() > a_Dad.GetFitness()) ? MOM : DAD;
+    }
 
     LinkGene t_emptygene(0, 0, -1, 0, false);
     bool t_skip = false;
@@ -1696,8 +1714,11 @@ Genome Genome::Mate(Genome &a_Dad, bool a_MateAverage, bool a_InterSpecies, RNG 
                     t_skip = true;
             }
         }
-        if(a_InterSpecies)
+        if (a_InterSpecies)
+        {
             t_skip = false;
+        }
+
         if(t_selectedgene.InnovationID() > 0 && !t_baby.HasLink(t_selectedgene.FromNeuronID(), t_selectedgene.ToNeuronID()))
         {
             if(!t_skip)

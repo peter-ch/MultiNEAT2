@@ -295,7 +295,6 @@ namespace NEAT
     std::vector<double> NeuralNetwork::Output()
     {
         std::vector<double> t_output;
-        t_output.reserve(m_num_outputs);
         for (unsigned int i = 0; i < m_num_outputs; i++)
             t_output.push_back(m_neurons[i + m_num_inputs].m_activation);
         return t_output;

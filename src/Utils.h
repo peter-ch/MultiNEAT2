@@ -105,6 +105,11 @@ inline void Scale(double& a,
                   const double a_tr_min,
                   const double a_tr_max)
 {
+    if (a_tr_min == a_tr_max)
+    {
+        a = a_tr_min;
+        return; 
+    }
     if (fabs(a_max - a_min) < std::numeric_limits<double>::epsilon())
     {
         a = (a_tr_min + a_tr_max) / 2.0;
@@ -122,6 +127,11 @@ inline void Scale(float& a,
                   const double a_tr_min,
                   const double a_tr_max)
 {
+    if (a_tr_min == a_tr_max)
+    {
+        a = a_tr_min;
+        return;
+    }
     if (fabs(a_max - a_min) < std::numeric_limits<double>::epsilon())
     {
         a = static_cast<float>((a_tr_min + a_tr_max) / 2.0);

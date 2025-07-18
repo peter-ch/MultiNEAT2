@@ -22,17 +22,17 @@ namespace NEAT {
         AllowClones = true;
         ArchiveEnforcement = false;
         DontUseBiasNeuron = false;
-        AllowLoops = false;
+        AllowLoops = true;
         NormalizeGenomeSize = false;
         CustomConstraints = nullptr;
 
         // GA Parameters
-        YoungAgeTreshold = 5;
+        YoungAgeTreshold = 15;
         YoungAgeFitnessBoost = 1.1;
         SpeciesMaxStagnation = 25000;
         StagnationDelta = 0.0;
-        OldAgeTreshold = 30;
-        OldAgePenalty = 0.5;
+        OldAgeTreshold = 80;
+        OldAgePenalty = 0.75;
         DetectCompetetiveCoevolutionStagnation = false;
         KillWorstSpeciesEach = 15;
         KillWorstAge = 10;
@@ -41,9 +41,9 @@ namespace NEAT {
         OverallMutationRate = 0.75;
         InterspeciesCrossoverRate = 0.0001;
         MultipointCrossoverRate = 0.75;
-        PreferFitterParentRate = 0.25;
+        PreferFitterParentRate = 0.5;
         RouletteWheelSelection = false;
-        TournamentSelection = true;
+        TournamentSelection = false;
         TournamentSize = 5;
         EliteFraction = 0.000001;
 
@@ -71,20 +71,20 @@ namespace NEAT {
         SplitLoopedRecurrent = false;
         NeuronTries = 64;
         MutateAddLinkProb = 0.03;
-        MutateAddLinkFromBiasProb = 0.0;
+        MutateAddLinkFromBiasProb = 0.01;
         MutateRemLinkProb = 0.0;
         MutateRemSimpleNeuronProb = 0.0;
         LinkTries = 64;
         MaxLinks = -1;
         MaxNeurons = -1;
-        RecurrentProb = 0.25;
-        RecurrentLoopProb = 0.25;
-        MutateWeightsProb = 0.90;
-        MutateWeightsSevereProb = 0.25;
-        WeightMutationRate = 1.0;
-        WeightMutationMaxPower = 1.0;
+        RecurrentProb = 0.2;
+        RecurrentLoopProb = 0.5;
+        MutateWeightsProb = 0.80;
+        MutateWeightsSevereProb = 0.2;
+        WeightMutationRate = 0.8;
+        WeightMutationMaxPower = 1.5;
         WeightReplacementRate = 0.2;
-        WeightReplacementMaxPower = 1.0;
+        WeightReplacementMaxPower = 3.0;
         MaxWeight = 8.0;
         MinWeight = -8.0;
         MutateActivationAProb = 0.0;
@@ -93,8 +93,8 @@ namespace NEAT {
         ActivationBMutationMaxPower = 0.0;
         TimeConstantMutationMaxPower = 0.0;
         BiasMutationMaxPower = WeightMutationMaxPower;
-        MinActivationA = 1.0;
-        MaxActivationA = 1.0;
+        MinActivationA = 4.9;
+        MaxActivationA = 4.9;
         MinActivationB = 0.0;
         MaxActivationB = 0.0;
         MutateNeuronActivationTypeProb = 0.0;
@@ -124,39 +124,21 @@ namespace NEAT {
         ExcessCoeff = 1.0;
         ActivationADiffCoeff = 0.0;
         ActivationBDiffCoeff = 0.0;
-        WeightDiffCoeff = 0.5;
+        WeightDiffCoeff = 0.1;
         TimeConstantDiffCoeff = 0.0;
         BiasDiffCoeff = 0.0;
         ActivationFunctionDiffCoeff = 0.0;
         CompatTreshold = 3.0;
-        MinCompatTreshold = 0.0;
-        CompatTresholdModifier = 0.1;
+        MinCompatTreshold = 0.1;
+        CompatTresholdModifier = 0.2;
         CompatTreshChangeInterval_Generations = 1;
         CompatTreshChangeInterval_Evaluations = 1;
         MinDeltaCompatEqualGenomes = 1e-7;
         ConstraintTrials = 2000000;
 
         DontUseBiasNeuron = false;
-        AllowLoops = false;
 
-        // ES-HyperNEAT parameters
-        DivisionThreshold = 0.03;
-        VarianceThreshold = 0.03;
-        BandThreshold = 0.3;
-        InitialDepth = 3;
-        MaxDepth = 3;
-        IterationLevel = 1;
-        CPPN_Bias = 1.0;
-        Width = 2.0;
-        Height = 2.0;
-        Qtree_X = 0.0;
-        Qtree_Y = 0.0;
-        Leo = false;
-        LeoThreshold = 0.1;
-        LeoSeed = false;
-        GeometrySeed = false;
-
-        EliteFraction = 0.0;
+        EliteFraction = 0.0001;
 
         // Universal traits (cleared by default)
         NeuronTraits.clear();

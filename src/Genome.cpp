@@ -368,9 +368,13 @@ Genome::Genome(std::istream &data)
     for (const auto &ng : m_NeuronGenes)
     {
         if (ng.Type() == INPUT || ng.Type() == BIAS)
+        {
             ++m_NumInputs;
+        }
         else if (ng.Type() == OUTPUT)
+        {
             ++m_NumOutputs;
+        }
     }
 
     m_Fitness = 0;
@@ -464,18 +468,26 @@ bool Genome::IsDeadEndNeuron(int a_ID) const
 int Genome::LinksInputtingFrom(int a_ID) const
 {
     int t_counter = 0;
-    for (const auto &l : m_LinkGenes)
+    for (const auto& l : m_LinkGenes)
+    {
         if (l.FromNeuronID() == a_ID)
+        {
             ++t_counter;
+        }
+    }
     return t_counter;
 }
 
 int Genome::LinksOutputtingTo(int a_ID) const
 {
     int t_counter = 0;
-    for (const auto &l : m_LinkGenes)
+    for (const auto& l : m_LinkGenes)
+    {
         if (l.ToNeuronID() == a_ID)
+        {
             ++t_counter;
+        }
+    }
     return t_counter;
 }
 
@@ -1352,19 +1364,27 @@ bool Genome::Mutate_AddLink(InnovationDatabase &a_Innovs, const Parameters &a_Pa
     {
         t_MakeRecurrent = true;
         if (a_RNG.RandFloat() < a_Parameters.RecurrentLoopProb)
+        {
             t_LoopedRecurrent = true;
+        }
     }
     else
     {
         if (a_RNG.RandFloat() < a_Parameters.MutateAddLinkFromBiasProb)
+        {
             t_MakeBias = true;
+        }
     }
     for (unsigned i = 0, n = NumNeurons(); i < n; ++i)
     {
         if (m_NeuronGenes[i].Type() == INPUT || m_NeuronGenes[i].Type() == BIAS)
+        {
             ++t_first_noninput;
+        }
         else
+        {
             break;
+        }
     }
     bool t_Found = false;
     if (!t_MakeRecurrent)
@@ -1385,7 +1405,9 @@ bool Genome::Mutate_AddLink(InnovationDatabase &a_Innovs, const Parameters &a_Pa
         while (HasLink(m_NeuronGenes[t_n1idx].ID(), m_NeuronGenes[t_n2idx].ID())); 
 
         if (t_found_bias && t_MakeBias)
+        {
             t_Found = true;
+        }
         else
         {
             t_NumTries = 0;
@@ -1395,7 +1417,9 @@ bool Genome::Mutate_AddLink(InnovationDatabase &a_Innovs, const Parameters &a_Pa
                 t_n2idx = a_RNG.RandInt(t_first_noninput, NumNeurons() - 1);
                 ++t_NumTries;
                 if (t_NumTries >= a_Parameters.LinkTries)
+                {
                     return false;
+                }
             }
             while (HasLink(m_NeuronGenes[t_n1idx].ID(), m_NeuronGenes[t_n2idx].ID()) ||
                   (m_NeuronGenes[t_n1idx].Type() == OUTPUT) || (t_n1idx == t_n2idx));
@@ -1411,7 +1435,9 @@ bool Genome::Mutate_AddLink(InnovationDatabase &a_Innovs, const Parameters &a_Pa
             t_n2idx = a_RNG.RandInt(t_first_noninput, NumNeurons() - 1);
             ++t_NumTries;
             if (t_NumTries >= a_Parameters.LinkTries)
+            {
                 return false;
+            }
         }
         while (HasLink(m_NeuronGenes[t_n1idx].ID(), m_NeuronGenes[t_n2idx].ID()) || (t_n1idx == t_n2idx));
         t_Found = true;
@@ -1424,13 +1450,17 @@ bool Genome::Mutate_AddLink(InnovationDatabase &a_Innovs, const Parameters &a_Pa
             t_n1idx = t_n2idx = a_RNG.RandInt(t_first_noninput, NumNeurons() - 1);
             ++t_NumTries;
             if (t_NumTries >= a_Parameters.LinkTries)
+            {
                 return false;
+            }
         }
         while (HasLink(m_NeuronGenes[t_n1idx].ID(), m_NeuronGenes[t_n2idx].ID()));
         t_Found = true;
     }
     if (!t_Found)
+    {
         return false;
+    }
     ASSERT(!HasLink(m_NeuronGenes[t_n1idx].ID(), m_NeuronGenes[t_n2idx].ID()));
     int t_n1id = m_NeuronGenes[t_n1idx].ID();
     int t_n2id = m_NeuronGenes[t_n2idx].ID();
@@ -1438,7 +1468,9 @@ bool Genome::Mutate_AddLink(InnovationDatabase &a_Innovs, const Parameters &a_Pa
     double t_weight = a_RNG.RandFloat();
     Scale(t_weight, 0, 1, a_Parameters.MinWeight, a_Parameters.MaxWeight);
     if (t_innovid == -1)
+    {
         t_innovid = a_Innovs.AddLinkInnovation(t_n1id, t_n2id);
+    }
     LinkGene l(t_n1id, t_n2id, t_innovid, t_weight, t_MakeRecurrent);
     l.InitTraits(a_Parameters.LinkTraits, a_RNG);
     m_LinkGenes.push_back(l);
@@ -1559,18 +1591,26 @@ bool Genome::HasDeadEnds() const
 {
     for (const auto &ng : m_NeuronGenes)
     {
-        if (ng.Type() == HIDDEN && IsDeadEndNeuron(ng.ID()))
+        if ((ng.Type() == HIDDEN) && IsDeadEndNeuron(ng.ID()))
+        {
             return true;
+        }
     }
     for (const auto &ng : m_NeuronGenes)
     {
         if (ng.Type() == OUTPUT)
         {
             if ((LinksInputtingFrom(ng.ID()) == 1) && (LinksOutputtingTo(ng.ID()) == 1))
+            {
                 return true;
+            }
             if (NumOutputs() == 1)
+            {
                 if ((LinksInputtingFrom(ng.ID()) == 0) && (LinksOutputtingTo(ng.ID()) == 0))
+                {
                     return true;
+                }
+            }
         }
     }
     return false;

@@ -53,8 +53,8 @@ InnovationDatabase::InnovationDatabase(int a_LastInnovationNum, int a_LastNeuron
 {
     ASSERT((a_LastInnovationNum > 0) && (a_LastNeuronID > 0));
 
-    m_NextInnovationNum = a_LastInnovationNum;
-    m_NextNeuronID = a_LastNeuronID;
+    m_NextInnovationNum = a_LastInnovationNum + 1;
+    m_NextNeuronID = a_LastNeuronID + 1;
     m_Innovations.clear();
 }
 
@@ -65,8 +65,8 @@ void InnovationDatabase::Init(int a_LastInnovationNum, int a_LastNeuronID)
 {
     Flush();
 
-    m_NextNeuronID = a_LastNeuronID;
-    m_NextInnovationNum = a_LastInnovationNum;
+    m_NextNeuronID = a_LastNeuronID + 1;
+    m_NextInnovationNum = a_LastInnovationNum + 1;
 }
 
 // Initializes a database from a given genome
@@ -79,8 +79,8 @@ void InnovationDatabase::Init(const Genome& a_Genome)
         m_Innovations.emplace_back(t_innov);
     }
 
-    m_NextNeuronID = a_Genome.GetLastNeuronID();
-    m_NextInnovationNum = a_Genome.GetLastInnovationID();
+    m_NextNeuronID = a_Genome.GetLastNeuronID() + 1;
+    m_NextInnovationNum = a_Genome.GetLastInnovationID() + 1;
 }
 
 

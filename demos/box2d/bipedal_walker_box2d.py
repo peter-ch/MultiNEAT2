@@ -12,16 +12,18 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.colors import rgb2hex
 from neattools import DrawGenome  # Import the DrawGenome function
+from gymnasium.wrappers import RecordEpisodeStatistics, RecordVideo
 
 FITNESS_SHIFT = 150.0
+HARDCORE = True
 
 # Worker initialization function for multiprocessing
 def init_worker():
     global worker_env
-    worker_env = gym.make('BipedalWalker-v3')
+    worker_env = gym.make('BipedalWalker-v3', hardcore=HARDCORE)
 
 # Define the evaluation function for a genome
-def evaluate_genome(genome, env=None, render=False, max_steps=350):
+def evaluate_genome(genome, env=None, render=False, max_steps=800):
     # Use worker environment if none provided
     if env is None:
         env = worker_env
@@ -36,9 +38,10 @@ def evaluate_genome(genome, env=None, render=False, max_steps=350):
     except pygame.error:
         # Environment was closed, create a new one
         if render:
-            env = gym.make('BipedalWalker-v3', render_mode='human')
+            #env = gym.make('BipedalWalker-v3', render_mode='human')
+            pass # we are given the env
         else:
-            env = gym.make('BipedalWalker-v3')
+            env = gym.make('BipedalWalker-v3', hardcore=HARDCORE)
         observation_data = env.reset()
     
     # Handle different return types from env.reset()
@@ -134,7 +137,7 @@ def main():
     ax3.axis('off')  # Turn off axis for the genome plot
     
     # Create a temporary environment for serial evaluation and rendering
-    temp_env = gym.make('BipedalWalker-v3')
+    temp_env = gym.make('BipedalWalker-v3', hardcore=HARDCORE)
     
     # Create and customize MultiNEAT parameters
     params = pnt.Parameters()
@@ -149,7 +152,7 @@ def main():
     params.MinSpecies = 4
     params.MaxSpecies = 10
     params.TruncationSelection = True
-    params.RouletteWheelSelection = False
+    params.RouletteWheelSelection = True
     params.TournamentSelection = False
     params.TournamentSize = 8
     params.RecurrentProb = 0.2
@@ -185,7 +188,7 @@ def main():
     params.CrossoverRate = 0.6
     params.MultipointCrossoverRate = 0.4
     params.InterspeciesCrossoverRate = 0.001
-    params.SurvivalRate = 0.2
+    params.SurvivalRate = 0.3333
 
     params.MutateNeuronTraitsProb = 0
     params.MutateLinkTraitsProb = 0
@@ -215,7 +218,8 @@ def main():
     # Create the initial population
     pop = pnt.Population(genome_prototype, params, True, params.WeightReplacementMaxPower, int(time.time()))
 
-    generations = 250000
+    generations = 500
+    frames_done=0
     best_fitness_history = []
     
     # Create persistent process pool for parallel evaluation
@@ -223,7 +227,7 @@ def main():
         pool = multiprocessing.Pool(processes=16, initializer=init_worker)
     
     try:
-        for gen in tqdm(range(1,generations), desc="Generations"):
+        for gen in tqdm(range(generations), desc="Generations"):
             best_fitness = -float('inf')
             best_genome = None
             
@@ -313,6 +317,8 @@ def main():
             plt.tight_layout()
             fig.canvas.draw()
             fig.canvas.flush_events()
+            plt.savefig('img/frame_%05d.png' % frames_done)
+            frames_done+=1
             
             # Print generation stats
             print(f"\nGeneration {gen}: Best Fitness = {best_fitness:.2f}")
@@ -320,12 +326,19 @@ def main():
             # Render best individual every N generations
             if best_genome and gen % 50 == 0:
                 print(f"\nRendering best individual from generation {gen}...")
-                for i in range(2):
-                    print(f"Episode {i+1} (Press ESC to skip remaining episodes)")
+                for i in range(1):
                     # Create a fresh render environment for each episode
-                    env_render = gym.make('BipedalWalker-v3', render_mode='human')
+                    env_render = gym.make('BipedalWalker-v3', hardcore=HARDCORE, render_mode='rgb_array')
+                    env_render = RecordVideo(
+                        env_render,
+                        video_folder="vid",
+                        name_prefix="test_%d" % gen,
+                        episode_trigger=lambda x: True  
+                    )
+                    # Track statistics for every episode (lightweight)
+                    env_render = RecordEpisodeStatistics(env_render)
                     try:
-                        evaluate_genome(best_genome, env_render, render=True, max_steps=350)
+                        evaluate_genome(best_genome, env_render, render=True, max_steps=800)
                     finally:
                         env_render.close()
             

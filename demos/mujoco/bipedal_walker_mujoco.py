@@ -12,12 +12,14 @@ import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.colors import rgb2hex
 from neattools import DrawGenome  # Import the DrawGenome function
+from gymnasium.wrappers import RecordEpisodeStatistics, RecordVideo
+import uuid
 
 # Constant to ensure fitness is always positive
 FITNESS_SHIFT = 250.0
 
-MAX_TIMESTEPS = 800
-NUM_TRIALS = 1
+MAX_TIMESTEPS = 1000
+NUM_TRIALS = 3
 
 # Worker initialization function for multiprocessing
 def init_worker():
@@ -31,7 +33,15 @@ def evaluate_genome(args):
     # Handle environment creation based on context
     if render:
         # Create a new rendering environment in the main process
-        env = gym.make('Walker2d-v5', render_mode='human')
+        env = gym.make('Walker2d-v5', render_mode='rgb_array')
+        env = RecordVideo(
+                        env,
+                        video_folder="vid",
+                        name_prefix="test_%d" % genome.GetID(),
+                        episode_trigger=lambda x: True  
+                    )
+        # Track statistics for every episode (lightweight)
+        env = RecordEpisodeStatistics(env)
     else:
         try:
             # Use worker environment if available
@@ -234,14 +244,15 @@ def main():
     # Create the initial population
     pop = pnt.Population(genome_prototype, params, True, 1.0, int(time.time()))
 
-    generations = 2500
+    generations = 1000
+    frames_done = 0
     
     # Create persistent process pool if using parallel evaluation
     pool = None
     if not args.serial:
         pool = multiprocessing.Pool(processes=16, initializer=init_worker)
     
-    for gen in tqdm(range(1, generations), desc="Generations"):
+    for gen in tqdm(range( generations), desc="Generations"):
         best_fitness = -float('inf')
         best_genome = None
         
@@ -333,14 +344,16 @@ def main():
         plt.tight_layout()
         fig.canvas.draw()
         fig.canvas.flush_events()
+        plt.savefig('img/frame_%05d.png' % frames_done)
+        frames_done+=1
         
         # Print generation stats
         print(f"\nGeneration {gen}: Best Fitness = {best_fitness:.2f}")
         
         # Render best individual every N generations
-        if best_genome and gen % 100 == 0:
+        if best_genome and gen % 50 == 0:
             print(f"\nRendering best individual from generation {gen}...")
-            for i in range(5):
+            for i in range(1):
                 print(f"Episode {i+1} (Press ESC to skip remaining episodes)")
                 # Evaluate with rendering in the main process
                 evaluate_genome((best_genome, True, MAX_TIMESTEPS, 1))

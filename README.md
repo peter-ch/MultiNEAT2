@@ -104,6 +104,16 @@ Run the self-contained XOR example with:
 python demos/xor.py
 ```
 
+For the easiest path, launch every example from the graphical menu:
+
+```sh
+python demos.py
+```
+
+The launcher silently selects a compatible built extension and starts the
+chosen demo immediately. It provides safe smoke and full-run modes and keeps
+subprocess output in one window; package management stays outside the app.
+
 The physics-control suite covers seven Box2D configurations and all eleven
 Gymnasium MuJoCo tasks through a shared trainer with reproducible seeding,
 parallel evaluation, checkpoint/resume, metrics, plots, video recording, and

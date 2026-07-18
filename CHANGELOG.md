@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Added `python demos.py`, a standard-library Tk launcher for all 20 examples
+  with automatic runtime selection, immediate launch, safe smoke modes,
+  process control, live logs, and output-folder access.
+- Added bounded CLI smoke modes for XOR and Asteroids.
 - Replaced duplicated Box2D and MuJoCo scripts with a reusable Gymnasium NEAT
   trainer and preserved every existing script name as a compatible entry
   point.

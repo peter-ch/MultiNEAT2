@@ -26,6 +26,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+/runs/
 
 # Editors and operating systems
 .DS_Store

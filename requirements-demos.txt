@@ -1,4 +1,5 @@
 -r requirements-box2d.txt
 -r requirements-mujoco.txt
 -r requirements-visualization.txt
+-r requirements-games.txt
 imageio[ffmpeg]>=2.31

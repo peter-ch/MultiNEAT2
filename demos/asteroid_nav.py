@@ -13,17 +13,24 @@ When fast mode is off the simulation shows only the best-ever individual being r
 """
 
 from __future__ import annotations
-import pygame
+import argparse
 import math
-import time
+from pathlib import Path
 import random
 import sys
+import time
 from typing import Optional, List, Tuple
-import pymultineat as pnt
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(_PROJECT_ROOT))
+
+import pygame  # noqa: E402
+import pymultineat as pnt  # noqa: E402
 
 # Import numba and numpy for optimized routines.
-import numba
-import numpy as np
+import numba  # noqa: E402
+import numpy as np  # noqa: E402
 
 # -----------------------------
 # Constants and configuration
@@ -361,13 +368,51 @@ class AsteroidsSimulation:
 # Main NEAT Loop and Mode Switch
 # -----------------------------
 def main() -> None:
+    global MAX_TRIAL_TIME
+    global FAST_MODE
+
+    parser = argparse.ArgumentParser(description="MultiNEAT Asteroids example")
+    parser.add_argument("--population", type=int, default=500)
+    parser.add_argument(
+        "--generations",
+        type=int,
+        default=0,
+        help="stop after this many generations; zero runs until closed",
+    )
+    parser.add_argument("--max-trial-steps", type=int, default=MAX_TRIAL_TIME)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument(
+        "--headless",
+        action="store_true",
+        help="run without opening the PyGame window",
+    )
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="run four genomes for three simulation steps",
+    )
+    args = parser.parse_args()
+    if args.smoke:
+        args.population = 4
+        args.generations = 1
+        args.max_trial_steps = 3
+        args.headless = True
+
+    MAX_TRIAL_TIME = max(1, args.max_trial_steps)
+    if args.headless:
+        import os
+
+        os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+        FAST_MODE = True
+
     pygame.init()
-    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
+    flags = pygame.HIDDEN if args.headless else 0
+    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), flags=flags)
     pygame.display.set_caption("NEAT Asteroids Experiment")
 
     # Setup MultiNEAT parameters.
     params = pnt.Parameters()
-    params.PopulationSize = 500
+    params.PopulationSize = args.population
     params.DynamicCompatibility = True
     params.NormalizeGenomeSize = False
     params.WeightDiffCoeff = 0.1
@@ -412,7 +457,8 @@ def main() -> None:
     init_struct.OutputActType = pnt.UNSIGNED_SIGMOID
 
     genome_prototype = pnt.Genome(params, init_struct)
-    pop = pnt.Population(genome_prototype, params, True, 1.0, int(time.time()))
+    seed = args.seed if args.seed is not None else int(time.time())
+    pop = pnt.Population(genome_prototype, params, True, 1.0, seed)
 
     gen = 0
 
@@ -420,7 +466,6 @@ def main() -> None:
     # When FAST_MODE is True, evolution runs in fast (non-rendered) training mode.
     # When FAST_MODE is False, we run a continuous demo of only the best individual.
     while True:
-        global FAST_MODE
         if FAST_MODE:
             # Training mode: run one generation.
             total_fitness = 0.0
@@ -460,12 +505,15 @@ def main() -> None:
 
                 pop.Epoch()
                 gen += 1
+                if args.generations and gen >= args.generations:
+                    break
         else:
             # Demo mode: continuously replay the best genome.
             bestGenome = pop.GetBestGenome()
             print("Demo mode: Replaying best individual... (Press F to resume training)", flush=True)
             simulation = AsteroidsSimulation(bestGenome, screen)
             simulation.run()
+    pygame.quit()
 
 if __name__ == "__main__":
     main()

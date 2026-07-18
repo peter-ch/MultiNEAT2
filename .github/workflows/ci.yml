@@ -30,7 +30,7 @@ jobs:
           -r requirements-visualization.txt
 
       - name: Lint Python sources
-        run: ruff check neattools.py demos tests
+        run: ruff check demos.py neattools.py demos tests
 
       - name: Configure
         run: >-

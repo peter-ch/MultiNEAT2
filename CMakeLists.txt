@@ -214,6 +214,23 @@ if(BUILD_TESTING)
             ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:pymultineat>"
             SKIP_RETURN_CODE 77
         )
+
+        if(MSVC)
+            add_test(
+                NAME multineat_demo_launcher
+                CONFIGURATIONS Release RelWithDebInfo MinSizeRel
+                COMMAND
+                    "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_demo_launcher.py"
+            )
+        else()
+            add_test(
+                NAME multineat_demo_launcher
+                COMMAND
+                    "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_demo_launcher.py"
+            )
+        endif()
     endif()
 endif()
 

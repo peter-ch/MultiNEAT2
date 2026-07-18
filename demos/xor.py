@@ -1,9 +1,17 @@
 #!/usr/bin/env python
 # python_xor_demo.py
 
+import argparse
+from pathlib import Path
+import sys
 import time
-import pymultineat as pnt
-from neattools import DrawGenome
+
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(_PROJECT_ROOT) not in sys.path:
+    sys.path.append(str(_PROJECT_ROOT))
+
+import pymultineat as pnt  # noqa: E402
+from neattools import DrawGenome  # noqa: E402
 
 # Define the XOR training data.
 # Note that the genome is initialized with three inputs: two (the XOR inputs)
@@ -39,9 +47,29 @@ def xor_test(genome):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="MultiNEAT XOR example")
+    parser.add_argument("--generations", type=int, default=100)
+    parser.add_argument("--population", type=int, default=150)
+    parser.add_argument("--seed", type=int, default=None)
+    parser.add_argument(
+        "--no-show",
+        action="store_true",
+        help="do not open the final genome visualization",
+    )
+    parser.add_argument(
+        "--smoke",
+        action="store_true",
+        help="run one small headless generation",
+    )
+    args = parser.parse_args()
+    if args.smoke:
+        args.generations = 1
+        args.population = 10
+        args.no_show = True
+
     # Create and customize MultiNEAT parameters.
     params = pnt.Parameters()
-    params.PopulationSize = 150
+    params.PopulationSize = args.population
     params.DynamicCompatibility = True
     params.NormalizeGenomeSize = False
     params.WeightDiffCoeff = 0.1
@@ -94,10 +122,10 @@ def main():
     genome_prototype = pnt.Genome(params, init_struct)
 
     # Create the initial population.
-    pop = pnt.Population(genome_prototype, params, True, 1.0, int(time.time()))
+    seed = args.seed if args.seed is not None else int(time.time())
+    pop = pnt.Population(genome_prototype, params, True, 1.0, seed)
 
-    generations = 100  # total number of generations
-    for gen in range(generations):
+    for gen in range(args.generations):
         # Evaluate all genomes in every species on the XOR task.
         for species in pop.m_Species:
             for i in range(len(species.m_Individuals)):
@@ -116,7 +144,8 @@ def main():
 
     print("Simulation completed.", flush=True)
 
-    DrawGenome(bestGenome)
+    if not args.no_show:
+        DrawGenome(bestGenome)
 
 
 if __name__ == "__main__":

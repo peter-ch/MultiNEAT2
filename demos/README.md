@@ -1,5 +1,16 @@
 # Physics-control demos
 
+The easiest way to start any example is the root graphical launcher:
+
+```sh
+python demos.py
+```
+
+It silently selects the current `pymultineat` build, starts the chosen demo
+immediately, offers safe smoke/inspect/full-run modes, and shows live output.
+Package installation stays outside the launcher. The commands below remain
+available for automation and advanced use.
+
 The Box2D and MuJoCo examples use one shared, tested trainer:
 `demos/gymnasium_neat.py`. Every task-specific file is directly runnable and
 accepts the same command-line options.

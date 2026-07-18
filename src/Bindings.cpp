@@ -126,6 +126,30 @@ PYBIND11_MODULE(pymultineat, m) {
         .value("POLYNOMIAL_MUTATION", NEAT::POLYNOMIAL_MUTATION)
         .export_values();
 
+    py::enum_<NEAT::SpeciesRepresentativeMode>(
+        m, "SpeciesRepresentativeMode")
+        .value("FIRST_REPRESENTATIVE", NEAT::FIRST_REPRESENTATIVE)
+        .value("RANDOM_REPRESENTATIVE", NEAT::RANDOM_REPRESENTATIVE)
+        .value("BEST_REPRESENTATIVE", NEAT::BEST_REPRESENTATIVE)
+        .value("MEDOID_REPRESENTATIVE", NEAT::MEDOID_REPRESENTATIVE)
+        .export_values();
+
+    py::enum_<NEAT::OffspringAllocationMode>(
+        m, "OffspringAllocationMode")
+        .value("LARGEST_REMAINDER", NEAT::LARGEST_REMAINDER)
+        .value("STOCHASTIC_REMAINDER", NEAT::STOCHASTIC_REMAINDER)
+        .export_values();
+
+    py::enum_<NEAT::CompatibilityThresholdMode>(
+        m, "CompatibilityThresholdMode")
+        .value(
+            "LEGACY_COMPATIBILITY_THRESHOLD",
+            NEAT::LEGACY_COMPATIBILITY_THRESHOLD)
+        .value(
+            "PROPORTIONAL_COMPATIBILITY_THRESHOLD",
+            NEAT::PROPORTIONAL_COMPATIBILITY_THRESHOLD)
+        .export_values();
+
 
     // ========================
     // Bindings for traits-related classes
@@ -677,6 +701,22 @@ PYBIND11_MODULE(pymultineat, m) {
             .def_readwrite("WeightMutationSigma", &NEAT::Parameters::WeightMutationSigma)
             .def_readwrite("WeightMutationCauchyScale", &NEAT::Parameters::WeightMutationCauchyScale)
             .def_readwrite("WeightMutationPolynomialEta", &NEAT::Parameters::WeightMutationPolynomialEta)
+            .def_readwrite("SpeciesRepresentativeSelection", &NEAT::Parameters::SpeciesRepresentativeSelection)
+            .def_readwrite("RepresentativeSelectionCandidates", &NEAT::Parameters::RepresentativeSelectionCandidates)
+            .def_readwrite("OffspringAllocation", &NEAT::Parameters::OffspringAllocation)
+            .def_readwrite("MinSpeciesSize", &NEAT::Parameters::MinSpeciesSize)
+            .def_readwrite("SpeciesElitism", &NEAT::Parameters::SpeciesElitism)
+            .def_readwrite("StagnationPenalty", &NEAT::Parameters::StagnationPenalty)
+            .def_readwrite("CompatibilityThresholdControl", &NEAT::Parameters::CompatibilityThresholdControl)
+            .def_readwrite("TargetSpecies", &NEAT::Parameters::TargetSpecies)
+            .def_readwrite("CompatibilityThresholdGain", &NEAT::Parameters::CompatibilityThresholdGain)
+            .def_readwrite("MaxCompatTreshold", &NEAT::Parameters::MaxCompatTreshold)
+            .def_readwrite("RequireEvaluatedGenomes", &NEAT::Parameters::RequireEvaluatedGenomes)
+            .def_readwrite("RejectNonFiniteFitness", &NEAT::Parameters::RejectNonFiniteFitness)
+            .def_readwrite("MutationOperatorsPerOffspring", &NEAT::Parameters::MutationOperatorsPerOffspring)
+            .def_readwrite("AdaptiveMutationStart", &NEAT::Parameters::AdaptiveMutationStart)
+            .def_readwrite("AdaptiveMutationRate", &NEAT::Parameters::AdaptiveMutationRate)
+            .def_readwrite("AdaptiveMutationMaxFactor", &NEAT::Parameters::AdaptiveMutationMaxFactor)
             .def(py::pickle(
                 [](const NEAT::Parameters &parameters) {
                     return parameters.Serialize();

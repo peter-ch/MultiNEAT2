@@ -147,11 +147,34 @@ parameters.SimulatedBinaryCrossoverRate = 0.1
 
 parameters.WeightMutationDistribution = neat.GAUSSIAN_MUTATION
 parameters.WeightMutationSigma = 0.5
+
+# Protect viable niches and choose a central species representative.
+parameters.MinSpeciesSize = 2
+parameters.SpeciesElitism = 2
+parameters.SpeciesRepresentativeSelection = neat.MEDOID_REPRESENTATIVE
+parameters.RepresentativeSelectionCandidates = 32
+parameters.OffspringAllocation = neat.STOCHASTIC_REMAINDER
+
+# Smoothly target eight species.
+parameters.CompatibilityThresholdControl = (
+    neat.PROPORTIONAL_COMPATIBILITY_THRESHOLD
+)
+parameters.TargetSpecies = 8
+parameters.CompatibilityThresholdGain = 0.25
+
+# Increase the mutation budget after sustained global stagnation.
+parameters.MutationOperatorsPerOffspring = 1.0
+parameters.AdaptiveMutationStart = 20
+parameters.AdaptiveMutationRate = 0.05
+parameters.AdaptiveMutationMaxFactor = 3.0
 ```
 
 Direct experiments can use
 `Genome.MateWithMode(..., neat.SIMULATED_BINARY, ...)`; the historical
 `Genome.Mate(..., average_mating, ...)` signature remains unchanged.
+Strict experiments can enable `RequireEvaluatedGenomes` and
+`RejectNonFiniteFitness` to catch incomplete evaluation batches before
+selection. These checks are opt-in for compatibility.
 See [docs/ALGORITHMS.md](docs/ALGORITHMS.md) for formulas, tuning guidance,
 and compatibility details.
 
@@ -170,15 +193,25 @@ python -m pip install -r requirements-visualization.txt
 - activation and trait labels;
 - genome comparison and machine-readable topology statistics;
 - population/species dashboards and an `EvolutionTracker`;
+- population health summaries with entropy-based effective diversity;
+- interactive population and evolution dashboards;
 - static DOT, GraphML, GEXF, JSON, SVG, PNG, and PDF export;
 - optional interactive Plotly HTML graphs with rich hover data.
 
 ```python
-from neattools import DrawGenome, DrawPopulation, InteractiveGenome
+from neattools import (
+    DrawGenome,
+    DrawPopulation,
+    InteractiveGenome,
+    InteractivePopulation,
+    population_summary,
+)
 
 DrawGenome(genome, layout="topology", show_activation=True)
 DrawPopulation(population)
 InteractiveGenome(genome).write_html("genome.html")
+InteractivePopulation(population).write_html("population.html")
+print(population_summary(population))
 ```
 
 ## Persistence
@@ -207,9 +240,15 @@ archives, and all trait data must be preserved exactly.
 - Structural mutation exhaustively samples valid candidates, respects
   recurrent-link split flags, prevents accidental feed-forward cycles, and
   enforces `MaxLinks` and `MaxNeurons`.
-- Offspring are apportioned with the largest-remainder method, preserving the
-  population size exactly without systematic species-order bias. Negative
-  fitness is supported by parent and removal selection.
+- Offspring are apportioned exactly. Stochastic-remainder allocation removes
+  deterministic tie bias, while minimum species sizes and species elitism can
+  protect viable niches. Negative fitness is supported by parent and removal
+  selection.
+- Elitism copies distinct top-ranked genomes rather than repeating one
+  champion to fill a multi-elite quota.
+- Medoid representatives, proportional compatibility-threshold control, and
+  stagnation-adaptive mutation budgets are available without changing legacy
+  defaults.
 - `BuildESHyperNEATPhenotype()` implements quadtree division, variance and band
   pruning, optional LEO expression, iterative hidden discovery, deterministic
   node indexing, link deduplication, and reachability pruning. Quadtree depth
@@ -237,7 +276,8 @@ cmake --build build --config Release --parallel
 ```
 
 It compares checked activation with the fused phenotype hot path on a dense
-network. Results depend on compiler, topology, and CPU.
+network and reports compatibility-distance and crossover throughput on a
+complex genome. Results depend on compiler, topology, and CPU.
 
 ## Project layout
 

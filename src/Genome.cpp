@@ -5,6 +5,7 @@
 #include <array>
 #include <cassert>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -19,6 +20,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include "Assert.h"
 #include "Genome.h"
@@ -1761,18 +1763,23 @@ double Genome::CompatibilityDistance(Genome &a_G, Parameters &a_Parameters)
     std::map<std::string, double> total_neuron_trait_diff;
     double E = 0, D = 0, M = 0, matching_neurons = 0;
 
-    auto gentrait_dists = m_GenomeGene.GetTraitDistances(a_G.m_GenomeGene.m_Traits);
-    for (const auto &kv : gentrait_dists)
+    if (!a_Parameters.GenomeTraits.empty())
     {
-        const auto parameters = a_Parameters.GenomeTraits.find(kv.first);
-        if (parameters == a_Parameters.GenomeTraits.end())
+        const auto gentrait_dists =
+            m_GenomeGene.GetTraitDistances(
+                a_G.m_GenomeGene.m_Traits);
+        for (const auto &kv : gentrait_dists)
         {
-            continue;
+            const auto parameters =
+                a_Parameters.GenomeTraits.find(kv.first);
+            if (parameters == a_Parameters.GenomeTraits.end())
+                continue;
+            double val =
+                kv.second * parameters->second.m_ImportanceCoeff;
+            if (!std::isfinite(val))
+                val = 0.0;
+            total_distance += val;
         }
-        double val = kv.second * parameters->second.m_ImportanceCoeff;
-        if (std::isnan(val) || std::isinf(val))
-            val = 0.0;
-        total_distance += val;
     }
 
     unsigned i1 = 0, i2 = 0;
@@ -1828,19 +1835,20 @@ double Genome::CompatibilityDistance(Genome &a_G, Parameters &a_Parameters)
                         (*links2)[i2].GetWeight();
                     total_w_diff += (wd < 0) ? -wd : wd;
                 }
-                auto linktraitdist =
-                    (*links1)[i1].GetTraitDistances(
-                        (*links2)[i2].m_Traits);
-                for (const auto &xx : linktraitdist)
+                if (!a_Parameters.LinkTraits.empty())
                 {
-                    if (a_Parameters.LinkTraits.count(xx.first) == 0)
+                    const auto linktraitdist =
+                        (*links1)[i1].GetTraitDistances(
+                            (*links2)[i2].m_Traits);
+                    for (const auto &xx : linktraitdist)
                     {
-                        continue;
+                        if (a_Parameters.LinkTraits.count(xx.first) == 0)
+                            continue;
+                        double val = xx.second;
+                        if (!std::isfinite(val))
+                            val = 0.0;
+                        total_link_trait_diff[xx.first] += val;
                     }
-                    double val = xx.second;
-                    if (std::isnan(val) || std::isinf(val))
-                        val = 0.0;
-                    total_link_trait_diff[xx.first] += val;
                 }
                 ++i1;
                 ++i2;
@@ -1868,48 +1876,107 @@ double Genome::CompatibilityDistance(Genome &a_G, Parameters &a_Parameters)
                         + a_Parameters.WeightDiffCoeff * (total_w_diff / M);
     total_distance += dist_links;
 
-    std::unordered_map<int, const NeuronGene*> other_neurons;
-    other_neurons.reserve(a_G.m_NeuronGenes.size());
-    for (const NeuronGene& neuron : a_G.m_NeuronGenes)
-        other_neurons.emplace(neuron.ID(), &neuron);
-    for (size_t i = 0; i < m_NeuronGenes.size(); ++i)
+    const bool compare_neurons =
+        a_Parameters.ActivationADiffCoeff > 0.0 ||
+        a_Parameters.ActivationBDiffCoeff > 0.0 ||
+        a_Parameters.TimeConstantDiffCoeff > 0.0 ||
+        a_Parameters.BiasDiffCoeff > 0.0 ||
+        a_Parameters.ActivationFunctionDiffCoeff > 0.0 ||
+        !a_Parameters.NeuronTraits.empty();
+    if (compare_neurons)
     {
-        if(m_NeuronGenes[i].Type() == INPUT || m_NeuronGenes[i].Type() == BIAS)
-            continue;
-        const auto other_neuron =
-            other_neurons.find(m_NeuronGenes[i].ID());
-        if(other_neuron != other_neurons.end())
+        const auto accumulate_neuron =
+            [&](const NeuronGene& mine, const NeuronGene& other)
         {
             ++matching_neurons;
-            const NeuronGene& oth = *other_neuron->second;
             if(a_Parameters.ActivationADiffCoeff>0)
-                total_A_diff += std::abs(m_NeuronGenes[i].m_A - oth.m_A);
+                total_A_diff += std::abs(mine.m_A - other.m_A);
             if(a_Parameters.ActivationBDiffCoeff>0)
-                total_B_diff += std::abs(m_NeuronGenes[i].m_B - oth.m_B);
+                total_B_diff += std::abs(mine.m_B - other.m_B);
             if(a_Parameters.TimeConstantDiffCoeff>0)
-                total_TC_diff += std::abs(m_NeuronGenes[i].m_TimeConstant - oth.m_TimeConstant);
+                total_TC_diff += std::abs(
+                    mine.m_TimeConstant - other.m_TimeConstant);
             if(a_Parameters.BiasDiffCoeff>0)
-                total_bias_diff += std::abs(m_NeuronGenes[i].m_Bias - oth.m_Bias);
+                total_bias_diff +=
+                    std::abs(mine.m_Bias - other.m_Bias);
             if (a_Parameters.ActivationFunctionDiffCoeff > 0)
             {
-                if (m_NeuronGenes[i].m_ActFunction != oth.m_ActFunction)
-                {
+                if (mine.m_ActFunction != other.m_ActFunction)
                     total_act_diff++;
+            }
+            if (!a_Parameters.NeuronTraits.empty())
+            {
+                const auto distances =
+                    mine.GetTraitDistances(other.m_Traits);
+                for (const auto &distance : distances)
+                {
+                    if (a_Parameters.NeuronTraits.count(
+                            distance.first) == 0)
+                    {
+                        continue;
+                    }
+                    double value = distance.second;
+                    if (!std::isfinite(value))
+                        value = 0.0;
+                    total_neuron_trait_diff[distance.first] += value;
                 }
             }
-            auto nd = m_NeuronGenes[i].GetTraitDistances(oth.m_Traits);
-            for (const auto &xx : nd)
+        };
+
+        const auto by_neuron_id =
+            [](const NeuronGene& lhs, const NeuronGene& rhs)
             {
-                if (a_Parameters.NeuronTraits.count(xx.first) == 0)
+                return lhs.ID() < rhs.ID();
+            };
+        if (std::is_sorted(
+                m_NeuronGenes.begin(),
+                m_NeuronGenes.end(),
+                by_neuron_id) &&
+            std::is_sorted(
+                a_G.m_NeuronGenes.begin(),
+                a_G.m_NeuronGenes.end(),
+                by_neuron_id))
+        {
+            std::size_t other_index = 0;
+            for (const NeuronGene& neuron : m_NeuronGenes)
+            {
+                if (neuron.Type() == INPUT ||
+                    neuron.Type() == BIAS)
                 {
                     continue;
                 }
-                double val = xx.second;
-                if (std::isnan(val) || std::isinf(val))
+                while (other_index < a_G.m_NeuronGenes.size() &&
+                       a_G.m_NeuronGenes[other_index].ID() <
+                           neuron.ID())
                 {
-                    val = 0;
+                    ++other_index;
                 }
-                total_neuron_trait_diff[xx.first] += val;
+                if (other_index < a_G.m_NeuronGenes.size() &&
+                    a_G.m_NeuronGenes[other_index].ID() ==
+                        neuron.ID())
+                {
+                    accumulate_neuron(
+                        neuron,
+                        a_G.m_NeuronGenes[other_index]);
+                }
+            }
+        }
+        else
+        {
+            std::unordered_map<int, const NeuronGene*> other_neurons;
+            other_neurons.reserve(a_G.m_NeuronGenes.size());
+            for (const NeuronGene& neuron : a_G.m_NeuronGenes)
+                other_neurons.emplace(neuron.ID(), &neuron);
+            for (const NeuronGene& neuron : m_NeuronGenes)
+            {
+                if (neuron.Type() == INPUT ||
+                    neuron.Type() == BIAS)
+                {
+                    continue;
+                }
+                const auto other = other_neurons.find(neuron.ID());
+                if (other != other_neurons.end())
+                    accumulate_neuron(neuron, *other->second);
             }
         }
     }
@@ -2783,6 +2850,69 @@ Genome Genome::MateWithMode(
         a_Mode != SINGLE_POINT || a_RNG.RandFloat() < 0.5;
     std::size_t matching_link_index = 0;
 
+    std::unordered_map<int, const NeuronGene*> mom_neurons;
+    std::unordered_map<int, const NeuronGene*> dad_neurons;
+    mom_neurons.reserve(m_NeuronGenes.size());
+    dad_neurons.reserve(a_Dad.m_NeuronGenes.size());
+    for (const auto& neuron : m_NeuronGenes)
+        mom_neurons.emplace(neuron.ID(), &neuron);
+    for (const auto& neuron : a_Dad.m_NeuronGenes)
+        dad_neurons.emplace(neuron.ID(), &neuron);
+
+    std::unordered_set<int> child_neuron_ids;
+    child_neuron_ids.reserve(
+        m_NeuronGenes.size() + a_Dad.m_NeuronGenes.size());
+    for (const auto& neuron : t_baby.m_NeuronGenes)
+        child_neuron_ids.insert(neuron.ID());
+    std::unordered_set<std::uint64_t> child_endpoints;
+    child_endpoints.reserve(
+        m_LinkGenes.size() + a_Dad.m_LinkGenes.size());
+    const auto endpoint_key = [](int source, int target)
+    {
+        return (static_cast<std::uint64_t>(
+                    static_cast<std::uint32_t>(source))
+                << 32U) |
+               static_cast<std::uint32_t>(target);
+    };
+    const auto add_child_neuron =
+        [&](int neuron_id)
+    {
+        if (child_neuron_ids.count(neuron_id) != 0)
+            return;
+        const auto mom = mom_neurons.find(neuron_id);
+        const auto dad = dad_neurons.find(neuron_id);
+        const NeuronGene* selected = nullptr;
+        if (mom != mom_neurons.end() && dad != dad_neurons.end())
+        {
+            if (prefer_fitter_neurons)
+            {
+                selected =
+                    t_better == MOM ? mom->second : dad->second;
+            }
+            else
+            {
+                selected = a_RNG.RandFloat() < 0.5
+                    ? mom->second
+                    : dad->second;
+            }
+        }
+        else if (mom != mom_neurons.end())
+        {
+            selected = mom->second;
+        }
+        else if (dad != dad_neurons.end())
+        {
+            selected = dad->second;
+        }
+        if (selected == nullptr)
+        {
+            throw std::logic_error(
+                "Crossover selected a link with a missing endpoint");
+        }
+        t_baby.m_NeuronGenes.push_back(*selected);
+        child_neuron_ids.insert(neuron_id);
+    };
+
     LinkGene t_emptygene(0, 0, -1, 0, false);
     while (!(t_curMom == mom_links.end() && t_curDad == dad_links.end()))
     {
@@ -2920,75 +3050,16 @@ Genome Genome::MateWithMode(
             t_skip = false;
         }
 
-        if(t_selectedgene.InnovationID() > 0 && !t_baby.HasLink(t_selectedgene.FromNeuronID(), t_selectedgene.ToNeuronID()))
+        if (t_selectedgene.InnovationID() > 0 && !t_skip)
         {
-            if(!t_skip)
+            const std::uint64_t key = endpoint_key(
+                t_selectedgene.FromNeuronID(),
+                t_selectedgene.ToNeuronID());
+            if (child_endpoints.insert(key).second)
             {
                 t_baby.m_LinkGenes.push_back(t_selectedgene);
-                if(!t_baby.HasNeuronID(t_selectedgene.FromNeuronID()) && HasNeuronID(t_selectedgene.FromNeuronID()))
-                {
-                    if(a_Dad.HasNeuronID(t_selectedgene.FromNeuronID()))
-                    {
-                        if(prefer_fitter_neurons)
-                            t_baby.m_NeuronGenes.push_back((t_better == MOM) ?
-                                                           GetNeuronByIndex(GetNeuronIndex(t_selectedgene.FromNeuronID())) :
-                                                           a_Dad.m_NeuronGenes[a_Dad.GetNeuronIndex(t_selectedgene.FromNeuronID())]);
-                        else
-                            t_baby.m_NeuronGenes.push_back((a_RNG.RandFloat() < 0.5) ?
-                                                           GetNeuronByIndex(GetNeuronIndex(t_selectedgene.FromNeuronID())) :
-                                                           a_Dad.m_NeuronGenes[a_Dad.GetNeuronIndex(t_selectedgene.FromNeuronID())]);
-                    }
-                    else
-                        t_baby.m_NeuronGenes.push_back(GetNeuronByIndex(GetNeuronIndex(t_selectedgene.FromNeuronID())));
-                }
-                if(!t_baby.HasNeuronID(t_selectedgene.ToNeuronID()) && HasNeuronID(t_selectedgene.ToNeuronID()))
-                {
-                    if(a_Dad.HasNeuronID(t_selectedgene.ToNeuronID()))
-                    {
-                        if(prefer_fitter_neurons)
-                            t_baby.m_NeuronGenes.push_back((t_better == MOM) ?
-                                                           GetNeuronByIndex(GetNeuronIndex(t_selectedgene.ToNeuronID())) :
-                                                           a_Dad.m_NeuronGenes[a_Dad.GetNeuronIndex(t_selectedgene.ToNeuronID())]);
-                        else
-                            t_baby.m_NeuronGenes.push_back((a_RNG.RandFloat() < 0.5) ?
-                                                           GetNeuronByIndex(GetNeuronIndex(t_selectedgene.ToNeuronID())) :
-                                                           a_Dad.m_NeuronGenes[a_Dad.GetNeuronIndex(t_selectedgene.ToNeuronID())]);
-                    }
-                    else
-                        t_baby.m_NeuronGenes.push_back(GetNeuronByIndex(GetNeuronIndex(t_selectedgene.ToNeuronID())));
-                }
-                if(!t_baby.HasNeuronID(t_selectedgene.FromNeuronID()) && a_Dad.HasNeuronID(t_selectedgene.FromNeuronID()))
-                {
-                    if(HasNeuronID(t_selectedgene.FromNeuronID()))
-                    {
-                        if(prefer_fitter_neurons)
-                            t_baby.m_NeuronGenes.push_back((t_better == DAD) ?
-                                                           a_Dad.m_NeuronGenes[a_Dad.GetNeuronIndex(t_selectedgene.FromNeuronID())]:
-                                                           GetNeuronByIndex(GetNeuronIndex(t_selectedgene.FromNeuronID())));
-                        else
-                            t_baby.m_NeuronGenes.push_back((a_RNG.RandFloat() < 0.5) ?
-                                                           a_Dad.m_NeuronGenes[a_Dad.GetNeuronIndex(t_selectedgene.FromNeuronID())]:
-                                                           GetNeuronByIndex(GetNeuronIndex(t_selectedgene.FromNeuronID())));
-                    }
-                    else
-                        t_baby.m_NeuronGenes.push_back(a_Dad.m_NeuronGenes[a_Dad.GetNeuronIndex(t_selectedgene.FromNeuronID())]);
-                }
-                if(!t_baby.HasNeuronID(t_selectedgene.ToNeuronID()) && a_Dad.HasNeuronID(t_selectedgene.ToNeuronID()))
-                {
-                    if(HasNeuronID(t_selectedgene.ToNeuronID()))
-                    {
-                        if(prefer_fitter_neurons)
-                            t_baby.m_NeuronGenes.push_back((t_better == DAD) ?
-                                                           a_Dad.m_NeuronGenes[a_Dad.GetNeuronIndex(t_selectedgene.ToNeuronID())] :
-                                                           GetNeuronByIndex(GetNeuronIndex(t_selectedgene.ToNeuronID())));
-                        else
-                            t_baby.m_NeuronGenes.push_back((a_RNG.RandFloat() < 0.5) ?
-                                                           a_Dad.m_NeuronGenes[a_Dad.GetNeuronIndex(t_selectedgene.ToNeuronID())] :
-                                                           GetNeuronByIndex(GetNeuronIndex(t_selectedgene.ToNeuronID())));
-                    }
-                    else
-                        t_baby.m_NeuronGenes.push_back(a_Dad.m_NeuronGenes[a_Dad.GetNeuronIndex(t_selectedgene.ToNeuronID())]);
-                }
+                add_child_neuron(t_selectedgene.FromNeuronID());
+                add_child_neuron(t_selectedgene.ToNeuronID());
             }
         }
     }

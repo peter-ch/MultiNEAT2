@@ -1,6 +1,7 @@
 #ifndef _POPULATION_H
 #define _POPULATION_H
 
+#include <cmath>
 #include <vector>
 #include <float.h>
 #include <limits>
@@ -177,10 +178,16 @@ public:
         {
             for(unsigned int j=0; j<m_Species[i].m_Individuals.size(); j++)
             {
-                if (!found ||
-                    m_Species[i].m_Individuals[j].GetFitness() > best)
+                const Genome& genome =
+                    m_Species[i].m_Individuals[j];
+                if (!genome.IsEvaluated() ||
+                    !std::isfinite(genome.GetFitness()))
                 {
-                    best = m_Species[i].m_Individuals[j].GetFitness();
+                    continue;
+                }
+                if (!found || genome.GetFitness() > best)
+                {
+                    best = genome.GetFitness();
                     idx_species = i;
                     idx_genome = j;
                     found = true;

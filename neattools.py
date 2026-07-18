@@ -127,9 +127,7 @@ def Genome2NX(genome: pnt.Genome) -> nx.DiGraph:
             time_constant=neuron.m_TimeConstant,
             bias=neuron.m_Bias,
             act_function=activation,
-            activation_name=_ACTIVATION_NAMES.get(
-                activation, str(activation)
-            ),
+            activation_name=_ACTIVATION_NAMES.get(activation, str(activation)),
             traits=_traits(neuron.m_Traits),
         )
     for link in genome.m_LinkGenes:
@@ -152,10 +150,7 @@ def genome_summary(genome: pnt.Genome) -> dict[str, Any]:
         [data["weight"] for _, _, data in graph.edges(data=True)],
         dtype=float,
     )
-    recurrent = sum(
-        bool(data["is_recurrent"])
-        for _, _, data in graph.edges(data=True)
-    )
+    recurrent = sum(bool(data["is_recurrent"]) for _, _, data in graph.edges(data=True))
     type_counts = defaultdict(int)
     for _, data in graph.nodes(data=True):
         type_counts[data["type_name"]] += 1
@@ -188,12 +183,8 @@ def compare_genomes(
 
     left_neurons = {node.m_ID: node for node in left.m_NeuronGenes}
     right_neurons = {node.m_ID: node for node in right.m_NeuronGenes}
-    left_links = {
-        link.m_InnovationID: link for link in left.m_LinkGenes
-    }
-    right_links = {
-        link.m_InnovationID: link for link in right.m_LinkGenes
-    }
+    left_links = {link.m_InnovationID: link for link in left.m_LinkGenes}
+    right_links = {link.m_InnovationID: link for link in right.m_LinkGenes}
     matching = sorted(left_links.keys() & right_links.keys())
     changed_weights = {
         innovation: (
@@ -211,22 +202,12 @@ def compare_genomes(
     return {
         "left_id": left.GetID(),
         "right_id": right.GetID(),
-        "shared_neurons": sorted(
-            left_neurons.keys() & right_neurons.keys()
-        ),
-        "left_only_neurons": sorted(
-            left_neurons.keys() - right_neurons.keys()
-        ),
-        "right_only_neurons": sorted(
-            right_neurons.keys() - left_neurons.keys()
-        ),
+        "shared_neurons": sorted(left_neurons.keys() & right_neurons.keys()),
+        "left_only_neurons": sorted(left_neurons.keys() - right_neurons.keys()),
+        "right_only_neurons": sorted(right_neurons.keys() - left_neurons.keys()),
         "matching_innovations": matching,
-        "left_only_innovations": sorted(
-            left_links.keys() - right_links.keys()
-        ),
-        "right_only_innovations": sorted(
-            right_links.keys() - left_links.keys()
-        ),
+        "left_only_innovations": sorted(left_links.keys() - right_links.keys()),
+        "right_only_innovations": sorted(right_links.keys() - left_links.keys()),
         "changed_weights": changed_weights,
     }
 
@@ -248,9 +229,7 @@ def _topology_layers(graph: nx.DiGraph) -> list[list[int]]:
     feed_forward = _feed_forward_graph(graph)
     components = list(nx.strongly_connected_components(feed_forward))
     component_index = {
-        node: index
-        for index, component in enumerate(components)
-        for node in component
+        node: index for index, component in enumerate(components) for node in component
     }
     condensed = nx.DiGraph()
     condensed.add_nodes_from(range(len(components)))
@@ -269,14 +248,9 @@ def _topology_layers(graph: nx.DiGraph) -> list[list[int]]:
             else 0
         )
 
-    node_layer = {
-        node: component_layer[component_index[node]]
-        for node in graph.nodes
-    }
+    node_layer = {node: component_layer[component_index[node]] for node in graph.nodes}
     inputs = [
-        node
-        for node, data in graph.nodes(data=True)
-        if data["type"] in (INPUT, BIAS)
+        node for node, data in graph.nodes(data=True) if data["type"] in (INPUT, BIAS)
     ]
     for node in inputs:
         node_layer[node] = 0
@@ -285,9 +259,7 @@ def _topology_layers(graph: nx.DiGraph) -> list[list[int]]:
     # even when node IDs or split coordinates carry no geometric information.
     for _ in range(max(1, graph.number_of_nodes())):
         changed = False
-        for source, target in condensed_edges_from_nodes(
-            feed_forward, node_layer
-        ):
+        for source, target in condensed_edges_from_nodes(feed_forward, node_layer):
             if graph.nodes[target]["type"] in (INPUT, BIAS):
                 continue
             proposed = node_layer[source] + 1
@@ -298,16 +270,10 @@ def _topology_layers(graph: nx.DiGraph) -> list[list[int]]:
             break
 
     output_nodes = [
-        node
-        for node, data in graph.nodes(data=True)
-        if data["type"] == OUTPUT
+        node for node, data in graph.nodes(data=True) if data["type"] == OUTPUT
     ]
     maximum_hidden = max(
-        (
-            layer
-            for node, layer in node_layer.items()
-            if node not in output_nodes
-        ),
+        (layer for node, layer in node_layer.items() if node not in output_nodes),
         default=0,
     )
     for node in output_nodes:
@@ -319,15 +285,10 @@ def _topology_layers(graph: nx.DiGraph) -> list[list[int]]:
 
     # A few barycentric sweeps reduce edge crossings without external
     # Graphviz dependencies.
-    layers = [
-        sorted(grouped[layer])
-        for layer in sorted(grouped)
-    ]
+    layers = [sorted(grouped[layer]) for layer in sorted(grouped)]
     for _ in range(4):
         positions = {
-            node: index
-            for layer in layers
-            for index, node in enumerate(layer)
+            node: index for layer in layers for index, node in enumerate(layer)
         }
         for layer_index in range(1, len(layers)):
             layers[layer_index].sort(
@@ -336,9 +297,7 @@ def _topology_layers(graph: nx.DiGraph) -> list[list[int]]:
                 )
             )
         positions = {
-            node: index
-            for layer in layers
-            for index, node in enumerate(layer)
+            node: index for layer in layers for index, node in enumerate(layer)
         }
         for layer_index in range(len(layers) - 2, -1, -1):
             layers[layer_index].sort(
@@ -403,9 +362,8 @@ def compute_node_positions(
         node: (float(data["x"]), float(data["y"]))
         for node, data in graph.nodes(data=True)
     }
-    coordinate_spread = (
-        np.ptp([value[0] for value in coordinates.values()])
-        + np.ptp([value[1] for value in coordinates.values()])
+    coordinate_spread = np.ptp([value[0] for value in coordinates.values()]) + np.ptp(
+        [value[1] for value in coordinates.values()]
     )
     if layout == "auto":
         layout = "coordinates" if coordinate_spread > 0.0 else "topology"
@@ -443,10 +401,7 @@ def compute_node_positions(
             else:
                 layer = min(1.0, max(0.0, float(data["split_y"])))
             grouped[layer].append(node)
-        layers = [
-            sorted(grouped[layer])
-            for layer in sorted(grouped)
-        ]
+        layers = [sorted(grouped[layer]) for layer in sorted(grouped)]
     else:
         layers = _topology_layers(graph)
 
@@ -493,9 +448,7 @@ def get_layered_nodes(
     for node, (x, y) in positions.items():
         grouped[round(y, 6)].append((node, x))
     return {
-        layer: [
-            node for node, _ in sorted(grouped[layer], key=lambda item: item[1])
-        ]
+        layer: [node for node, _ in sorted(grouped[layer], key=lambda item: item[1])]
         for layer in sorted(grouped, reverse=True)
     }
 
@@ -562,10 +515,7 @@ def DrawGenome(
     graph = Genome2NX(genome)
     positions = compute_node_positions(genome, layout=layout)
     maximum_weight = max(
-        (
-            abs(data["weight"])
-            for _, _, data in graph.edges(data=True)
-        ),
+        (abs(data["weight"]) for _, _, data in graph.edges(data=True)),
         default=1.0,
     )
 
@@ -578,9 +528,7 @@ def DrawGenome(
     legend_handles: list[Any] = []
     for neuron_type, color, shape, label in node_groups:
         nodes = [
-            node
-            for node, data in graph.nodes(data=True)
-            if data["type"] == neuron_type
+            node for node, data in graph.nodes(data=True) if data["type"] == neuron_type
         ]
         if not nodes:
             continue
@@ -608,19 +556,13 @@ def DrawGenome(
             )
         )
 
-    edge_groups: MutableMapping[tuple[bool, str], list[tuple[int, int]]] = (
-        defaultdict(list)
+    edge_groups: MutableMapping[tuple[bool, str], list[tuple[int, int]]] = defaultdict(
+        list
     )
-    edge_widths: MutableMapping[
-        tuple[bool, str], list[float]
-    ] = defaultdict(list)
-    edge_alphas: MutableMapping[
-        tuple[bool, str], list[float]
-    ] = defaultdict(list)
+    edge_widths: MutableMapping[tuple[bool, str], list[float]] = defaultdict(list)
+    edge_alphas: MutableMapping[tuple[bool, str], list[float]] = defaultdict(list)
     for source, target, data in graph.edges(data=True):
-        color, width, alpha = _edge_style(
-            data["weight"], maximum_weight, theme
-        )
+        color, width, alpha = _edge_style(data["weight"], maximum_weight, theme)
         recurrent = bool(data["is_recurrent"]) or source == target
         key = recurrent, color
         edge_groups[key].append((source, target))
@@ -652,8 +594,7 @@ def DrawGenome(
             parts.append(data["activation_name"])
         if show_traits and data["traits"]:
             parts.extend(
-                f"{key}={value}"
-                for key, value in sorted(data["traits"].items())
+                f"{key}={value}" for key, value in sorted(data["traits"].items())
             )
         labels[node] = "\n".join(parts)
     nx.draw_networkx_labels(
@@ -667,9 +608,7 @@ def DrawGenome(
 
     if with_edge_labels:
         edge_labels = {
-            (source, target): (
-                f"{data['weight']:.3g}\n#{data['innovation_id']}"
-            )
+            (source, target): (f"{data['weight']:.3g}\n#{data['innovation_id']}")
             for source, target, data in graph.edges(data=True)
         }
         nx.draw_networkx_edge_labels(
@@ -703,12 +642,8 @@ def DrawGenome(
     if show_legend and legend_handles:
         legend_handles.extend(
             [
-                mpl_lines.Line2D(
-                    [], [], color=theme.positive_color, label="Positive"
-                ),
-                mpl_lines.Line2D(
-                    [], [], color=theme.negative_color, label="Negative"
-                ),
+                mpl_lines.Line2D([], [], color=theme.positive_color, label="Positive"),
+                mpl_lines.Line2D([], [], color=theme.negative_color, label="Negative"),
                 mpl_lines.Line2D(
                     [],
                     [],
@@ -787,8 +722,107 @@ def _population_rows(population: pnt.Population) -> list[dict[str, Any]]:
                 species.m_G / 255.0,
                 species.m_B / 255.0,
             )
+            summary["evaluated"] = bool(genome.IsEvaluated())
             rows.append(summary)
     return rows
+
+
+def species_summary(species: pnt.Species) -> dict[str, Any]:
+    """Return fitness, complexity, and lifecycle metrics for one species."""
+
+    genomes = list(species.m_Individuals)
+    summaries = [genome_summary(genome) for genome in genomes]
+    finite_fitness = np.asarray(
+        [
+            item["fitness"]
+            for item in summaries
+            if math.isfinite(float(item["fitness"]))
+        ],
+        dtype=float,
+    )
+    links = np.asarray([item["links"] for item in summaries], dtype=float)
+    neurons = np.asarray([item["neurons"] for item in summaries], dtype=float)
+    recurrent = np.asarray([item["recurrent_links"] for item in summaries], dtype=float)
+    return {
+        "id": int(species.ID()),
+        "size": len(genomes),
+        "evaluated": int(species.NumEvaluated()),
+        "best_fitness": (
+            float(np.max(finite_fitness)) if finite_fitness.size else None
+        ),
+        "mean_fitness": (
+            float(np.mean(finite_fitness)) if finite_fitness.size else None
+        ),
+        "median_fitness": (
+            float(np.median(finite_fitness)) if finite_fitness.size else None
+        ),
+        "fitness_std": (float(np.std(finite_fitness)) if finite_fitness.size else None),
+        "historical_best_fitness": float(species.GetBestFitness()),
+        "age_generations": int(species.AgeGens()),
+        "stagnation_generations": int(species.GensNoImprovement()),
+        "mean_links": float(np.mean(links)) if links.size else 0.0,
+        "mean_neurons": (float(np.mean(neurons)) if neurons.size else 0.0),
+        "mean_recurrent_links": (float(np.mean(recurrent)) if recurrent.size else 0.0),
+        "color_rgb": (
+            int(species.m_R),
+            int(species.m_G),
+            int(species.m_B),
+        ),
+    }
+
+
+def population_summary(population: pnt.Population) -> dict[str, Any]:
+    """Return population health, diversity, and complexity diagnostics."""
+
+    rows = _population_rows(population)
+    if not rows:
+        raise ValueError("Cannot summarize an empty population")
+    finite_fitness = np.asarray(
+        [row["fitness"] for row in rows if math.isfinite(float(row["fitness"]))],
+        dtype=float,
+    )
+    species = [species_summary(item) for item in population.m_Species]
+    sizes = np.asarray([item["size"] for item in species], dtype=float)
+    proportions = sizes / float(np.sum(sizes))
+    entropy = float(
+        -np.sum(proportions[proportions > 0.0] * np.log(proportions[proportions > 0.0]))
+    )
+    normalized_entropy = entropy / math.log(len(species)) if len(species) > 1 else 0.0
+    links = np.asarray([row["links"] for row in rows], dtype=float)
+    neurons = np.asarray([row["neurons"] for row in rows], dtype=float)
+    recurrent = np.asarray([row["recurrent_links"] for row in rows], dtype=float)
+    return {
+        "generation": int(population.GetGeneration()),
+        "population_size": len(rows),
+        "evaluated": sum(bool(row["evaluated"]) for row in rows),
+        "best_fitness": (
+            float(np.max(finite_fitness)) if finite_fitness.size else None
+        ),
+        "worst_fitness": (
+            float(np.min(finite_fitness)) if finite_fitness.size else None
+        ),
+        "mean_fitness": (
+            float(np.mean(finite_fitness)) if finite_fitness.size else None
+        ),
+        "median_fitness": (
+            float(np.median(finite_fitness)) if finite_fitness.size else None
+        ),
+        "fitness_std": (float(np.std(finite_fitness)) if finite_fitness.size else None),
+        "species": len(species),
+        "species_entropy": entropy,
+        "normalized_species_entropy": normalized_entropy,
+        "effective_species": float(math.exp(entropy)),
+        "largest_species_fraction": float(np.max(proportions)),
+        "mean_links": float(np.mean(links)),
+        "links_std": float(np.std(links)),
+        "mean_neurons": float(np.mean(neurons)),
+        "neurons_std": float(np.std(neurons)),
+        "mean_recurrent_links": float(np.mean(recurrent)),
+        "compatibility_threshold": float(population.m_Parameters.CompatTreshold),
+        "stagnation": int(population.GetStagnation()),
+        "mean_population_complexity": float(population.GetCurrentMPC()),
+        "species_detail": species,
+    }
 
 
 def DrawPopulation(
@@ -849,9 +883,7 @@ def DrawPopulation(
         species_rows[row["species_id"]].append(row)
     species_ids = sorted(species_rows)
     sizes = [len(species_rows[item]) for item in species_ids]
-    species_colors = [
-        species_rows[item][0]["species_color"] for item in species_ids
-    ]
+    species_colors = [species_rows[item][0]["species_color"] for item in species_ids]
     axes[1, 0].bar(
         [str(item) for item in species_ids],
         sizes,
@@ -861,13 +893,22 @@ def DrawPopulation(
     axes[1, 0].set_xlabel("species ID")
     axes[1, 0].set_ylabel("genomes")
 
-    best = [
-        max(row["fitness"] for row in species_rows[item])
+    species_fitness = [
+        np.asarray(
+            [
+                row["fitness"]
+                for row in species_rows[item]
+                if math.isfinite(float(row["fitness"]))
+            ],
+            dtype=float,
+        )
         for item in species_ids
     ]
+    best = [
+        float(np.max(values)) if values.size else np.nan for values in species_fitness
+    ]
     mean = [
-        float(np.mean([row["fitness"] for row in species_rows[item]]))
-        for item in species_ids
+        float(np.mean(values)) if values.size else np.nan for values in species_fitness
     ]
     x = np.arange(len(species_ids))
     axes[1, 1].plot(
@@ -910,22 +951,29 @@ class EvolutionTracker:
         population: pnt.Population,
         generation: int | None = None,
     ) -> dict[str, float]:
-        rows = _population_rows(population)
-        if not rows:
-            raise ValueError("Cannot record an empty population")
-        fitness = np.asarray([row["fitness"] for row in rows], dtype=float)
+        summary = population_summary(population)
+        if summary["best_fitness"] is None:
+            raise ValueError("Cannot record a population without finite fitness")
         record = {
             "generation": float(
                 len(self.history) if generation is None else generation
             ),
-            "best_fitness": float(np.max(fitness)),
-            "mean_fitness": float(np.mean(fitness)),
-            "median_fitness": float(np.median(fitness)),
-            "species": float(len(population.m_Species)),
-            "mean_links": float(np.mean([row["links"] for row in rows])),
-            "mean_neurons": float(
-                np.mean([row["neurons"] for row in rows])
-            ),
+            "best_fitness": float(summary["best_fitness"]),
+            "worst_fitness": float(summary["worst_fitness"]),
+            "mean_fitness": float(summary["mean_fitness"]),
+            "median_fitness": float(summary["median_fitness"]),
+            "fitness_std": float(summary["fitness_std"]),
+            "species": float(summary["species"]),
+            "species_entropy": float(summary["species_entropy"]),
+            "effective_species": float(summary["effective_species"]),
+            "largest_species_fraction": float(summary["largest_species_fraction"]),
+            "mean_links": float(summary["mean_links"]),
+            "links_std": float(summary["links_std"]),
+            "mean_neurons": float(summary["mean_neurons"]),
+            "neurons_std": float(summary["neurons_std"]),
+            "mean_recurrent_links": float(summary["mean_recurrent_links"]),
+            "compatibility_threshold": float(summary["compatibility_threshold"]),
+            "stagnation": float(summary["stagnation"]),
         }
         self.history.append(record)
         return record
@@ -937,6 +985,34 @@ class EvolutionTracker:
         show: bool = True,
     ) -> Any:
         return DrawEvolution(self.history, theme=theme, show=show)
+
+    def interactive(self, *, title: str | None = None) -> Any:
+        """Return an interactive Plotly view of the recorded trajectory."""
+
+        return InteractiveEvolution(self.history, title=title)
+
+    def save(self, path: str | Path) -> Path:
+        """Write history as JSON or CSV, selected by the file suffix."""
+
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if destination.suffix.lower() == ".json":
+            destination.write_text(
+                json.dumps(self.history, indent=2),
+                encoding="utf-8",
+            )
+        elif destination.suffix.lower() == ".csv":
+            import csv
+
+            keys = list(self.history[0]) if self.history else []
+            with destination.open("w", newline="", encoding="utf-8") as stream:
+                writer = csv.DictWriter(stream, fieldnames=keys)
+                if keys:
+                    writer.writeheader()
+                    writer.writerows(self.history)
+        else:
+            raise ValueError("Evolution history export requires .json or .csv")
+        return destination
 
 
 def DrawEvolution(
@@ -970,7 +1046,14 @@ def DrawEvolution(
         ),
         (
             axes[1],
-            (("species", theme.bias_color, "species"),),
+            (
+                ("species", theme.bias_color, "species"),
+                (
+                    "effective_species",
+                    theme.hidden_color,
+                    "effective species",
+                ),
+            ),
             "Diversity",
         ),
         (
@@ -978,6 +1061,11 @@ def DrawEvolution(
             (
                 ("mean_links", theme.negative_color, "mean links"),
                 ("mean_neurons", theme.positive_color, "mean neurons"),
+                (
+                    "mean_recurrent_links",
+                    theme.output_color,
+                    "mean recurrent links",
+                ),
             ),
             "Complexity",
         ),
@@ -1003,6 +1091,235 @@ def DrawEvolution(
     return figure
 
 
+def InteractiveEvolution(
+    history: Sequence[Mapping[str, float]],
+    *,
+    title: str | None = None,
+) -> Any:
+    """Return a linked interactive view of evolutionary trajectories."""
+
+    if not history:
+        raise ValueError("InteractiveEvolution requires at least one record")
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+    except ImportError as error:
+        raise ImportError(
+            "InteractiveEvolution requires plotly (pip install plotly)."
+        ) from error
+
+    generation = [row["generation"] for row in history]
+    figure = make_subplots(
+        rows=3,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.07,
+        subplot_titles=("Fitness", "Diversity", "Complexity"),
+    )
+    groups = (
+        (
+            1,
+            (
+                ("best_fitness", "best"),
+                ("mean_fitness", "mean"),
+                ("median_fitness", "median"),
+            ),
+        ),
+        (
+            2,
+            (
+                ("species", "species"),
+                ("effective_species", "effective species"),
+            ),
+        ),
+        (
+            3,
+            (
+                ("mean_links", "mean links"),
+                ("mean_neurons", "mean neurons"),
+                ("mean_recurrent_links", "mean recurrent links"),
+            ),
+        ),
+    )
+    for row, metrics in groups:
+        for key, label in metrics:
+            if key not in history[0]:
+                continue
+            figure.add_trace(
+                go.Scatter(
+                    x=generation,
+                    y=[item[key] for item in history],
+                    mode="lines+markers",
+                    name=label,
+                    hovertemplate=(
+                        "generation %{x}<br>" + label + " %{y:.6g}<extra></extra>"
+                    ),
+                ),
+                row=row,
+                col=1,
+            )
+    figure.update_xaxes(title_text="Generation", row=3, col=1)
+    figure.update_layout(
+        title=title or "Evolution dynamics",
+        template="plotly_dark",
+        hovermode="x unified",
+        height=850,
+    )
+    return figure
+
+
+def InteractivePopulation(
+    population: pnt.Population,
+    *,
+    title: str | None = None,
+) -> Any:
+    """Return an interactive population, species, and topology dashboard."""
+
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+    except ImportError as error:
+        raise ImportError(
+            "InteractivePopulation requires plotly (pip install plotly)."
+        ) from error
+
+    rows = _population_rows(population)
+    if not rows:
+        raise ValueError("Cannot draw an empty population")
+    summary = population_summary(population)
+    finite_rows = [row for row in rows if math.isfinite(float(row["fitness"]))]
+    species_detail = summary["species_detail"]
+    figure = make_subplots(
+        rows=2,
+        cols=2,
+        horizontal_spacing=0.10,
+        vertical_spacing=0.13,
+        subplot_titles=(
+            "Fitness vs. topology complexity",
+            "Fitness distribution",
+            "Species sizes",
+            "Species fitness",
+        ),
+    )
+    marker_sizes = [
+        max(8.0, min(38.0, 6.0 + float(row["neurons"]))) for row in finite_rows
+    ]
+    marker_colors = [
+        "rgb({},{},{})".format(
+            round(255 * row["species_color"][0]),
+            round(255 * row["species_color"][1]),
+            round(255 * row["species_color"][2]),
+        )
+        for row in finite_rows
+    ]
+    figure.add_trace(
+        go.Scatter(
+            x=[row["links"] for row in finite_rows],
+            y=[row["fitness"] for row in finite_rows],
+            mode="markers",
+            marker={
+                "size": marker_sizes,
+                "color": marker_colors,
+                "line": {"width": 0.5},
+                "opacity": 0.82,
+            },
+            customdata=[
+                [
+                    row["id"],
+                    row["species_id"],
+                    row["neurons"],
+                    row["recurrent_links"],
+                ]
+                for row in finite_rows
+            ],
+            hovertemplate=(
+                "genome %{customdata[0]}<br>"
+                "species %{customdata[1]}<br>"
+                "fitness %{y:.6g}<br>"
+                "links %{x}<br>"
+                "neurons %{customdata[2]}<br>"
+                "recurrent %{customdata[3]}<extra></extra>"
+            ),
+            name="genomes",
+            showlegend=False,
+        ),
+        row=1,
+        col=1,
+    )
+    figure.add_trace(
+        go.Histogram(
+            x=[row["fitness"] for row in finite_rows],
+            name="fitness",
+            showlegend=False,
+            hovertemplate="fitness %{x:.6g}<br>genomes %{y}<extra></extra>",
+        ),
+        row=1,
+        col=2,
+    )
+    figure.add_trace(
+        go.Bar(
+            x=[str(item["id"]) for item in species_detail],
+            y=[item["size"] for item in species_detail],
+            marker_color=[
+                "rgb({},{},{})".format(*item["color_rgb"]) for item in species_detail
+            ],
+            customdata=[
+                [
+                    item["age_generations"],
+                    item["stagnation_generations"],
+                ]
+                for item in species_detail
+            ],
+            hovertemplate=(
+                "species %{x}<br>size %{y}<br>"
+                "age %{customdata[0]}<br>"
+                "stagnation %{customdata[1]}<extra></extra>"
+            ),
+            name="species size",
+            showlegend=False,
+        ),
+        row=2,
+        col=1,
+    )
+    for metric, label in (
+        ("best_fitness", "best"),
+        ("mean_fitness", "mean"),
+    ):
+        figure.add_trace(
+            go.Scatter(
+                x=[str(item["id"]) for item in species_detail],
+                y=[item[metric] for item in species_detail],
+                mode="lines+markers",
+                name=label,
+                hovertemplate=(
+                    "species %{x}<br>" + label + " fitness %{y:.6g}<extra></extra>"
+                ),
+            ),
+            row=2,
+            col=2,
+        )
+    figure.update_xaxes(title_text="Links", row=1, col=1)
+    figure.update_yaxes(title_text="Fitness", row=1, col=1)
+    figure.update_xaxes(title_text="Fitness", row=1, col=2)
+    figure.update_yaxes(title_text="Genomes", row=1, col=2)
+    figure.update_xaxes(title_text="Species ID", row=2, col=1)
+    figure.update_yaxes(title_text="Genomes", row=2, col=1)
+    figure.update_xaxes(title_text="Species ID", row=2, col=2)
+    figure.update_yaxes(title_text="Fitness", row=2, col=2)
+    figure.update_layout(
+        title=title
+        or (
+            f"Population generation {summary['generation']} · "
+            f"{summary['species']} species · "
+            f"effective diversity {summary['effective_species']:.2f}"
+        ),
+        template="plotly_dark",
+        height=850,
+        barmode="overlay",
+    )
+    return figure
+
+
 def InteractiveGenome(
     genome: pnt.Genome,
     *,
@@ -1022,8 +1339,11 @@ def InteractiveGenome(
     positions = compute_node_positions(genome, layout=layout)
     edge_traces = []
     maximum_weight = max(
-        (abs(data["weight"]) for _, _, data in graph.edges(data=True)),
-        default=1.0,
+        1.0e-12,
+        max(
+            (abs(data["weight"]) for _, _, data in graph.edges(data=True)),
+            default=1.0,
+        ),
     )
     for source, target, data in graph.edges(data=True):
         x0, y0 = positions[source]
@@ -1040,11 +1360,8 @@ def InteractiveGenome(
                 mode="lines",
                 line={
                     "color": color,
-                    "width": 1
-                    + 5 * abs(data["weight"]) / maximum_weight,
-                    "dash": "dash"
-                    if data["is_recurrent"]
-                    else "solid",
+                    "width": 1 + 5 * abs(data["weight"]) / maximum_weight,
+                    "dash": "dash" if data["is_recurrent"] else "solid",
                 },
                 hoverinfo="text",
                 text=(
@@ -1071,18 +1388,13 @@ def InteractiveGenome(
         x, y = positions[node]
         node_x.append(x)
         node_y.append(y)
-        node_colors.append(
-            type_colors.get(data["type"], DEFAULT_THEME.muted)
-        )
-        traits = "<br>".join(
-            f"{key}: {value}" for key, value in data["traits"].items()
-        )
+        node_colors.append(type_colors.get(data["type"], DEFAULT_THEME.muted))
+        traits = "<br>".join(f"{key}: {value}" for key, value in data["traits"].items())
         node_text.append(
             f"neuron {node}<br>{data['type_name']}<br>"
             f"{data['activation_name']}<br>"
             f"a={data['a']:.4g}, b={data['b']:.4g}, "
-            f"bias={data['bias']:.4g}"
-            + (f"<br>{traits}" if traits else "")
+            f"bias={data['bias']:.4g}" + (f"<br>{traits}" if traits else "")
         )
     node_trace = go.Scatter(
         x=node_x,
@@ -1101,8 +1413,7 @@ def InteractiveGenome(
     )
     figure = go.Figure(data=[*edge_traces, node_trace])
     figure.update_layout(
-        title=title
-        or f"Genome {genome.GetID()} · fitness {genome.GetFitness():.6g}",
+        title=title or f"Genome {genome.GetID()} · fitness {genome.GetFitness():.6g}",
         template="plotly_dark",
         xaxis={"visible": False},
         yaxis={"visible": False},
@@ -1163,9 +1474,7 @@ def export_genome_graph(
             encoding="utf-8",
         )
     elif suffix == ".html":
-        InteractiveGenome(genome).write_html(
-            destination, include_plotlyjs="cdn"
-        )
+        InteractiveGenome(genome).write_html(destination, include_plotlyjs="cdn")
     elif suffix in {".svg", ".png", ".pdf"}:
         axis = DrawGenome(genome, show=False)
         axis.figure.savefig(
@@ -1195,19 +1504,13 @@ def _serializable_graph(graph: nx.DiGraph) -> nx.DiGraph:
     for node, data in graph.nodes(data=True):
         result.add_node(
             node,
-            **{
-                key: _serializable_attribute(value)
-                for key, value in data.items()
-            },
+            **{key: _serializable_attribute(value) for key, value in data.items()},
         )
     for source, target, data in graph.edges(data=True):
         result.add_edge(
             source,
             target,
-            **{
-                key: _serializable_attribute(value)
-                for key, value in data.items()
-            },
+            **{key: _serializable_attribute(value) for key, value in data.items()},
         )
     return result
 
@@ -1243,7 +1546,9 @@ __all__ = [
     "DrawPopulation",
     "EvolutionTracker",
     "Genome2NX",
+    "InteractiveEvolution",
     "InteractiveGenome",
+    "InteractivePopulation",
     "VisualTheme",
     "compare_genomes",
     "compute_node_positions",
@@ -1252,5 +1557,7 @@ __all__ = [
     "get_layered_nodes",
     "get_topologically_sorted_nodes",
     "narrate_traits",
+    "population_summary",
     "print_genome_summary",
+    "species_summary",
 ]

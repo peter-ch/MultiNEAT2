@@ -51,6 +51,30 @@ enum WeightMutationMode
     POLYNOMIAL_MUTATION
 };
 
+// Strategy used to carry a species representative into the next generation.
+// FIRST_REPRESENTATIVE preserves the historical sorted leader behavior.
+enum SpeciesRepresentativeMode
+{
+    FIRST_REPRESENTATIVE = 0,
+    RANDOM_REPRESENTATIVE,
+    BEST_REPRESENTATIVE,
+    MEDOID_REPRESENTATIVE
+};
+
+// Strategy used to turn fractional species quotas into integer offspring.
+enum OffspringAllocationMode
+{
+    LARGEST_REMAINDER = 0,
+    STOCHASTIC_REMAINDER
+};
+
+// Dynamic compatibility-threshold controller.
+enum CompatibilityThresholdMode
+{
+    LEGACY_COMPATIBILITY_THRESHOLD = 0,
+    PROPORTIONAL_COMPATIBILITY_THRESHOLD
+};
+
 //////////////////////////////////////////////
 // The NEAT Parameters class
 //////////////////////////////////////////////
@@ -509,6 +533,45 @@ public:
     double WeightMutationSigma;
     double WeightMutationCauchyScale;
     double WeightMutationPolynomialEta;
+
+    // Species representatives can remain leader-based for exact historical
+    // behavior, be sampled, or use a compatibility-distance medoid. A zero
+    // candidate limit makes MEDOID_REPRESENTATIVE examine every individual.
+    SpeciesRepresentativeMode SpeciesRepresentativeSelection;
+    unsigned int RepresentativeSelectionCandidates;
+
+    // Exact offspring allocation controls. MinSpeciesSize protects niches
+    // that receive a non-zero quota; SpeciesElitism also guarantees a quota
+    // to the best N species. Defaults preserve historical apportionment.
+    OffspringAllocationMode OffspringAllocation;
+    unsigned int MinSpeciesSize;
+    unsigned int SpeciesElitism;
+
+    // Multiplier applied to a stagnant non-champion species. This replaces
+    // the previously hard-coded value while keeping that value as default.
+    double StagnationPenalty;
+
+    // Proportional control is smoother than the historical one-step
+    // threshold update. TargetSpecies == 0 uses the midpoint of the existing
+    // MinSpecies/MaxSpecies interval.
+    CompatibilityThresholdMode CompatibilityThresholdControl;
+    unsigned int TargetSpecies;
+    double CompatibilityThresholdGain;
+    double MaxCompatTreshold;
+
+    // Optional strict evaluation guards. They are disabled by default so
+    // established workflows that rely on Epoch() marking genomes evaluated
+    // continue to work.
+    bool RequireEvaluatedGenomes;
+    bool RejectNonFiniteFitness;
+
+    // Expected number of mutation operators applied to a mutated offspring.
+    // Stagnation adaptation multiplies this budget after the configured
+    // generation and is disabled when AdaptiveMutationRate is zero.
+    double MutationOperatorsPerOffspring;
+    unsigned int AdaptiveMutationStart;
+    double AdaptiveMutationRate;
+    double AdaptiveMutationMaxFactor;
 
     /////////////////////////////////////
     // Constructors

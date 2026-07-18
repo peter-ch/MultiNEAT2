@@ -1,6 +1,7 @@
 #include "Parameters.h"
 
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <functional>
 #include <limits>
@@ -162,7 +163,23 @@ namespace
     X(WeightMutationDistribution)                                           \
     X(WeightMutationSigma)                                                  \
     X(WeightMutationCauchyScale)                                            \
-    X(WeightMutationPolynomialEta)
+    X(WeightMutationPolynomialEta)                                          \
+    X(SpeciesRepresentativeSelection)                                       \
+    X(RepresentativeSelectionCandidates)                                    \
+    X(OffspringAllocation)                                                  \
+    X(MinSpeciesSize)                                                       \
+    X(SpeciesElitism)                                                       \
+    X(StagnationPenalty)                                                    \
+    X(CompatibilityThresholdControl)                                        \
+    X(TargetSpecies)                                                        \
+    X(CompatibilityThresholdGain)                                           \
+    X(MaxCompatTreshold)                                                    \
+    X(RequireEvaluatedGenomes)                                              \
+    X(RejectNonFiniteFitness)                                               \
+    X(MutationOperatorsPerOffspring)                                        \
+    X(AdaptiveMutationStart)                                                \
+    X(AdaptiveMutationRate)                                                 \
+    X(AdaptiveMutationMaxFactor)
 
 template <typename T>
 void WriteScalar(std::ostream& output, const T& value)
@@ -456,6 +473,27 @@ void Parameters::Reset()
     WeightMutationSigma = 1.0;
     WeightMutationCauchyScale = 1.0;
     WeightMutationPolynomialEta = 20.0;
+
+    SpeciesRepresentativeSelection = FIRST_REPRESENTATIVE;
+    RepresentativeSelectionCandidates = 0;
+    OffspringAllocation = LARGEST_REMAINDER;
+    MinSpeciesSize = 0;
+    SpeciesElitism = 0;
+    StagnationPenalty = 0.0000001;
+
+    CompatibilityThresholdControl =
+        LEGACY_COMPATIBILITY_THRESHOLD;
+    TargetSpecies = 0;
+    CompatibilityThresholdGain = 0.25;
+    MaxCompatTreshold = 1.0e9;
+
+    RequireEvaluatedGenomes = false;
+    RejectNonFiniteFitness = false;
+
+    MutationOperatorsPerOffspring = 1.0;
+    AdaptiveMutationStart = 0;
+    AdaptiveMutationRate = 0.0;
+    AdaptiveMutationMaxFactor = 1.0;
 }
 
 int Parameters::Load(std::ifstream& input)
@@ -622,6 +660,40 @@ bool Parameters::Validate(std::string* error) const
         return fail(
             "WeightMutationDistribution is not a supported mutation mode");
     }
+    if (SpeciesRepresentativeSelection < FIRST_REPRESENTATIVE ||
+        SpeciesRepresentativeSelection > MEDOID_REPRESENTATIVE)
+    {
+        return fail(
+            "SpeciesRepresentativeSelection is not a supported mode");
+    }
+    if (OffspringAllocation < LARGEST_REMAINDER ||
+        OffspringAllocation > STOCHASTIC_REMAINDER)
+    {
+        return fail("OffspringAllocation is not a supported mode");
+    }
+    if (CompatibilityThresholdControl <
+            LEGACY_COMPATIBILITY_THRESHOLD ||
+        CompatibilityThresholdControl >
+            PROPORTIONAL_COMPATIBILITY_THRESHOLD)
+    {
+        return fail(
+            "CompatibilityThresholdControl is not a supported mode");
+    }
+    if (MinSpeciesSize > PopulationSize)
+        return fail("MinSpeciesSize cannot exceed PopulationSize");
+    if (SpeciesElitism > PopulationSize)
+        return fail("SpeciesElitism cannot exceed PopulationSize");
+    if (MinSpeciesSize > 0 && SpeciesElitism > 0 &&
+        static_cast<std::uint64_t>(MinSpeciesSize) *
+                static_cast<std::uint64_t>(SpeciesElitism) >
+            PopulationSize)
+    {
+        return fail(
+            "MinSpeciesSize times SpeciesElitism cannot exceed "
+            "PopulationSize");
+    }
+    if (TargetSpecies > PopulationSize)
+        return fail("TargetSpecies cannot exceed PopulationSize");
     if (DetectCompetetiveCoevolutionStagnation &&
         (KillWorstSpeciesEach <= 0 || KillWorstAge < 0))
     {
@@ -753,6 +825,44 @@ bool Parameters::Validate(std::string* error) const
         if (!std::isfinite(item.second) || item.second < 0.0)
             return fail(std::string(item.first) +
                         " must be finite and non-negative");
+    }
+    const std::pair<const char*, double> new_non_negative[] = {
+        {"StagnationPenalty", StagnationPenalty},
+        {"CompatibilityThresholdGain",
+         CompatibilityThresholdGain},
+        {"AdaptiveMutationRate", AdaptiveMutationRate}};
+    for (const auto& item : new_non_negative)
+    {
+        if (!std::isfinite(item.second) || item.second < 0.0)
+            return fail(std::string(item.first) +
+                        " must be finite and non-negative");
+    }
+    if (!std::isfinite(MaxCompatTreshold) ||
+        MaxCompatTreshold < MinCompatTreshold)
+    {
+        return fail(
+            "MaxCompatTreshold must be finite and at least "
+            "MinCompatTreshold");
+    }
+    if (CompatTreshold > MaxCompatTreshold)
+        return fail("CompatTreshold cannot exceed MaxCompatTreshold");
+    if (!std::isfinite(MutationOperatorsPerOffspring) ||
+        MutationOperatorsPerOffspring < 1.0 ||
+        MutationOperatorsPerOffspring > 256.0)
+    {
+        return fail(
+            "MutationOperatorsPerOffspring must be finite and in [1, 256]");
+    }
+    if (!std::isfinite(AdaptiveMutationMaxFactor) ||
+        AdaptiveMutationMaxFactor < 1.0 ||
+        AdaptiveMutationMaxFactor > 256.0 ||
+        MutationOperatorsPerOffspring *
+                AdaptiveMutationMaxFactor >
+            1024.0)
+    {
+        return fail(
+            "Adaptive mutation settings exceed the supported operator "
+            "budget");
     }
     if (!std::isfinite(RankSelectionPressure) ||
         RankSelectionPressure < 1.0 ||

@@ -19,6 +19,78 @@
 
 namespace NEAT
 {
+namespace
+{
+
+std::size_t ChooseRepresentativeIndex(
+    Species& species,
+    Parameters& parameters,
+    RNG& rng)
+{
+    const std::size_t count = species.m_Individuals.size();
+    if (count == 0)
+        throw std::runtime_error(
+            "Cannot choose a representative from an empty species");
+    switch (parameters.SpeciesRepresentativeSelection)
+    {
+    case FIRST_REPRESENTATIVE:
+    case BEST_REPRESENTATIVE:
+        // Epoch sorts every species best-first before reaching this point.
+        return 0;
+
+    case RANDOM_REPRESENTATIVE:
+        return static_cast<std::size_t>(
+            rng.RandInt(0, static_cast<int>(count) - 1));
+
+    case MEDOID_REPRESENTATIVE:
+        break;
+    }
+
+    std::vector<std::size_t> candidates(count);
+    std::iota(candidates.begin(), candidates.end(), std::size_t{0});
+    const std::size_t limit =
+        parameters.RepresentativeSelectionCandidates == 0
+            ? count
+            : std::min(
+                  count,
+                  static_cast<std::size_t>(
+                      parameters.RepresentativeSelectionCandidates));
+    // Partial Fisher-Yates sampling bounds expensive medoid searches without
+    // biasing toward the sorted leaders.
+    for (std::size_t i = 0; i < limit; ++i)
+    {
+        const std::size_t selected =
+            static_cast<std::size_t>(rng.RandInt(
+                static_cast<int>(i),
+                static_cast<int>(count) - 1));
+        std::swap(candidates[i], candidates[selected]);
+    }
+    candidates.resize(limit);
+
+    std::size_t best_index = candidates.front();
+    double best_distance = std::numeric_limits<double>::max();
+    for (const std::size_t candidate : candidates)
+    {
+        double distance = 0.0;
+        for (std::size_t other = 0; other < count; ++other)
+        {
+            if (candidate == other)
+                continue;
+            distance += species.m_Individuals[candidate]
+                            .CompatibilityDistance(
+                                species.m_Individuals[other],
+                                parameters);
+        }
+        if (distance < best_distance)
+        {
+            best_distance = distance;
+            best_index = candidate;
+        }
+    }
+    return best_index;
+}
+
+} // namespace
 
 bool Population::Validate(std::string* error) const
 {
@@ -357,20 +429,23 @@ void Population::Save(const char* a_FileName)
 // Calculates the current mean population complexity
 void Population::CalculateMPC()
 {
-    m_CurrentMPC = 0;
-
-    const unsigned int genome_count = NumGenomes();
+    double total_links = 0.0;
+    unsigned int genome_count = 0;
+    for (const auto& species : m_Species)
+    {
+        for (const auto& genome : species.m_Individuals)
+        {
+            total_links += static_cast<double>(genome.NumLinks());
+            ++genome_count;
+        }
+    }
     if (genome_count == 0)
     {
+        m_CurrentMPC = 0.0;
         return;
     }
-
-    for (unsigned int i = 0; i < genome_count; ++i)
-    {
-        m_CurrentMPC += AccessGenomeByIndex(static_cast<int>(i)).NumLinks();
-    }
-
-    m_CurrentMPC /= static_cast<double>(genome_count);
+    m_CurrentMPC =
+        total_links / static_cast<double>(genome_count);
 }
 
 
@@ -648,12 +723,32 @@ void Population::Epoch()
     {
         throw std::runtime_error("Cannot run Epoch on an empty population");
     }
-    // So, all genomes are evaluated..
-    for(unsigned int i=0; i<m_Species.size(); i++)
+    // Historical Epoch() treated every member as evaluated. Strict modes are
+    // additive and let experiments fail early instead of silently selecting
+    // missing or non-finite measurements.
+    for (const auto& species : m_Species)
     {
-        for(unsigned int j=0; j<m_Species[i].m_Individuals.size(); j++)
+        for (const auto& genome : species.m_Individuals)
         {
-            m_Species[i].m_Individuals[j].SetEvaluated();
+            if (m_Parameters.RequireEvaluatedGenomes &&
+                !genome.IsEvaluated())
+            {
+                throw std::runtime_error(
+                    "Epoch requires every genome to be evaluated");
+            }
+            if (m_Parameters.RejectNonFiniteFitness &&
+                !std::isfinite(genome.GetFitness()))
+            {
+                throw std::runtime_error(
+                    "Epoch requires every fitness value to be finite");
+            }
+        }
+    }
+    for (auto& species : m_Species)
+    {
+        for (auto& genome : species.m_Individuals)
+        {
+            genome.SetEvaluated();
         }
     }
 
@@ -706,6 +801,8 @@ void Population::Epoch()
         for(unsigned int j=0; j<m_Species[i].m_Individuals.size(); j++)
         {
             const double t_Fitness = m_Species[i].m_Individuals[j].GetFitness();
+            if (!std::isfinite(t_Fitness))
+                continue;
             if (t_Fitness > m_BestFitnessEver)
             {
                 // Reset the stagnation counter only if the fitness jump is greater or equal to the delta.
@@ -726,9 +823,11 @@ void Population::Epoch()
     {
         for(unsigned int j=0; j<m_Species[i].m_Individuals.size(); j++)
         {
-            if (m_Species[i].m_Individuals[j].GetFitness() > t_bestf)
+            const double fitness =
+                m_Species[i].m_Individuals[j].GetFitness();
+            if (std::isfinite(fitness) && fitness > t_bestf)
             {
-                t_bestf = m_Species[i].m_Individuals[j].GetFitness();
+                t_bestf = fitness;
                 m_BestGenome = m_Species[i].m_Individuals[j];
             }
         }
@@ -741,17 +840,44 @@ void Population::Epoch()
             (m_Generation %
              m_Parameters.CompatTreshChangeInterval_Generations) == 0)
         {
-            if (m_Species.size() > m_Parameters.MaxSpecies)
+            if (m_Parameters.CompatibilityThresholdControl ==
+                PROPORTIONAL_COMPATIBILITY_THRESHOLD)
             {
-                m_Parameters.CompatTreshold += m_Parameters.CompatTresholdModifier;
+                const unsigned int target =
+                    m_Parameters.TargetSpecies > 0
+                        ? m_Parameters.TargetSpecies
+                        : m_Parameters.MinSpecies +
+                              (m_Parameters.MaxSpecies -
+                               m_Parameters.MinSpecies) /
+                                  2U;
+                const double normalized_error =
+                    (static_cast<double>(m_Species.size()) -
+                     static_cast<double>(target)) /
+                    static_cast<double>(target);
+                m_Parameters.CompatTreshold *= std::exp(
+                    m_Parameters.CompatibilityThresholdGain *
+                    normalized_error);
             }
-            else if (m_Species.size() < m_Parameters.MinSpecies)
+            else
             {
-                m_Parameters.CompatTreshold -= m_Parameters.CompatTresholdModifier;
+                if (m_Species.size() > m_Parameters.MaxSpecies)
+                {
+                    m_Parameters.CompatTreshold +=
+                        m_Parameters.CompatTresholdModifier;
+                }
+                else if (m_Species.size() <
+                         m_Parameters.MinSpecies)
+                {
+                    m_Parameters.CompatTreshold -=
+                        m_Parameters.CompatTresholdModifier;
+                }
             }
         }
 
-        if (m_Parameters.CompatTreshold < m_Parameters.MinCompatTreshold) m_Parameters.CompatTreshold = m_Parameters.MinCompatTreshold;
+        m_Parameters.CompatTreshold = std::clamp(
+            m_Parameters.CompatTreshold,
+            m_Parameters.MinCompatTreshold,
+            m_Parameters.MaxCompatTreshold);
     }
     
     // A special case for global stagnation.
@@ -857,12 +983,11 @@ void Population::Epoch()
     // Reproduction
     /////////////////////////////
 
-    // Convert per-species fractional requirements into an exact population
-    // total before reproduction. The old post-reproduction padding cloned a
-    // leader (and its ID), violating both ID uniqueness and AllowClones.
-    std::vector<unsigned int> offspring_counts(m_Species.size(), 0);
-    std::vector<double> offspring_remainders(m_Species.size(), 0.0);
-    unsigned int assigned_offspring = 0;
+    // Convert per-species fractional requirements into exact integer quotas.
+    // Optional floors protect viable niches before the remaining capacity is
+    // apportioned in proportion to adjusted fitness.
+    std::vector<double> quotas(m_Species.size(), 0.0);
+    std::vector<double> requirements(m_Species.size(), 0.0);
     for (std::size_t i = 0; i < m_Species.size(); ++i)
     {
         const double requirement = m_Species[i].GetOffspringRqd();
@@ -871,7 +996,104 @@ void Population::Epoch()
             throw std::runtime_error(
                 "Species offspring requirements must be finite and non-negative");
         }
-        const double integral = std::floor(requirement);
+        requirements[i] = m_Species[i].IsWorstSpecies()
+            ? 0.0
+            : requirement;
+    }
+
+    if (m_Parameters.MinSpeciesSize == 0 &&
+        m_Parameters.SpeciesElitism == 0)
+    {
+        quotas = requirements;
+    }
+    else
+    {
+        std::vector<unsigned int> floors(m_Species.size(), 0);
+        std::vector<bool> included(m_Species.size(), false);
+        unsigned int reserved = 0;
+        const std::size_t protected_count = std::min(
+            m_Species.size(),
+            static_cast<std::size_t>(m_Parameters.SpeciesElitism));
+
+        // Protected species are considered first because m_Species is sorted
+        // best-first. Validation guarantees at least a one-member reserve can
+        // fit; a larger requested floor may intentionally reduce the number
+        // of retained niches.
+        for (std::size_t i = 0; i < protected_count; ++i)
+        {
+            const unsigned int desired = std::max(
+                1U, m_Parameters.MinSpeciesSize);
+            if (reserved + desired > m_Parameters.PopulationSize)
+                break;
+            floors[i] = desired;
+            included[i] = true;
+            reserved += desired;
+        }
+
+        for (std::size_t i = 0; i < m_Species.size(); ++i)
+        {
+            if (included[i] || requirements[i] <= 0.0)
+                continue;
+            if (m_Parameters.MinSpeciesSize > 0)
+            {
+                if (reserved + m_Parameters.MinSpeciesSize >
+                    m_Parameters.PopulationSize)
+                {
+                    continue;
+                }
+                floors[i] = m_Parameters.MinSpeciesSize;
+                reserved += m_Parameters.MinSpeciesSize;
+            }
+            included[i] = true;
+        }
+
+        if (std::none_of(
+                included.begin(), included.end(),
+                [](bool value) { return value; }))
+        {
+            included.front() = true;
+        }
+
+        const unsigned int remaining =
+            m_Parameters.PopulationSize - reserved;
+        double total_weight = 0.0;
+        for (std::size_t i = 0; i < requirements.size(); ++i)
+        {
+            if (included[i])
+                total_weight += requirements[i];
+        }
+        if (total_weight <= 0.0)
+        {
+            total_weight = static_cast<double>(std::count(
+                included.begin(), included.end(), true));
+            for (std::size_t i = 0; i < quotas.size(); ++i)
+            {
+                if (included[i])
+                    quotas[i] = static_cast<double>(floors[i]) +
+                        static_cast<double>(remaining) /
+                            total_weight;
+            }
+        }
+        else
+        {
+            for (std::size_t i = 0; i < quotas.size(); ++i)
+            {
+                if (included[i])
+                {
+                    quotas[i] = static_cast<double>(floors[i]) +
+                        static_cast<double>(remaining) *
+                            requirements[i] / total_weight;
+                }
+            }
+        }
+    }
+
+    std::vector<unsigned int> offspring_counts(m_Species.size(), 0);
+    std::vector<double> offspring_remainders(m_Species.size(), 0.0);
+    unsigned int assigned_offspring = 0;
+    for (std::size_t i = 0; i < quotas.size(); ++i)
+    {
+        const double integral = std::floor(quotas[i]);
         if (integral >
             static_cast<double>(std::numeric_limits<unsigned int>::max()))
         {
@@ -879,62 +1101,87 @@ void Population::Epoch()
                 "Species offspring requirement is too large");
         }
         offspring_counts[i] = static_cast<unsigned int>(integral);
-        offspring_remainders[i] = requirement - integral;
+        offspring_remainders[i] = quotas[i] - integral;
         assigned_offspring += offspring_counts[i];
     }
+
     if (assigned_offspring < m_Parameters.PopulationSize)
     {
-        std::vector<std::size_t> order;
-        order.reserve(m_Species.size());
-        for (std::size_t i = 0; i < m_Species.size(); ++i)
-        {
-            if (!m_Species[i].IsWorstSpecies())
-                order.push_back(i);
-        }
-        if (order.empty())
-            throw std::runtime_error(
-                "No species is eligible to receive offspring");
-        std::stable_sort(
-            order.begin(), order.end(),
-            [&offspring_remainders](std::size_t lhs, std::size_t rhs)
-            {
-                return offspring_remainders[lhs] >
-                       offspring_remainders[rhs];
-            });
         unsigned int remaining =
             m_Parameters.PopulationSize - assigned_offspring;
-        for (unsigned int i = 0; i < remaining; ++i)
+        if (m_Parameters.OffspringAllocation ==
+            STOCHASTIC_REMAINDER)
         {
-            ++offspring_counts[
-                order[static_cast<std::size_t>(i) % order.size()]];
+            while (remaining > 0)
+            {
+                double total = std::accumulate(
+                    offspring_remainders.begin(),
+                    offspring_remainders.end(),
+                    0.0);
+                if (total <= 0.0)
+                    break;
+                const std::size_t selected =
+                    static_cast<std::size_t>(
+                        m_RNG.Roulette(offspring_remainders));
+                ++offspring_counts[selected];
+                offspring_remainders[selected] = 0.0;
+                --remaining;
+            }
+        }
+        if (remaining > 0)
+        {
+            std::vector<std::size_t> order;
+            order.reserve(m_Species.size());
+            for (std::size_t i = 0; i < m_Species.size(); ++i)
+            {
+                if (quotas[i] > 0.0)
+                    order.push_back(i);
+            }
+            if (order.empty())
+                throw std::runtime_error(
+                    "No species is eligible to receive offspring");
+            std::stable_sort(
+                order.begin(), order.end(),
+                [&offspring_remainders](
+                    std::size_t lhs, std::size_t rhs)
+                {
+                    return offspring_remainders[lhs] >
+                           offspring_remainders[rhs];
+                });
+            for (unsigned int i = 0; i < remaining; ++i)
+            {
+                ++offspring_counts[
+                    order[static_cast<std::size_t>(i) %
+                          order.size()]];
+            }
         }
     }
-    else
+    else if (assigned_offspring > m_Parameters.PopulationSize)
     {
         unsigned int excess =
             assigned_offspring - m_Parameters.PopulationSize;
-        std::vector<std::size_t> order(m_Species.size());
-        std::iota(order.begin(), order.end(), std::size_t{0});
-        std::stable_sort(
-            order.begin(), order.end(),
-            [&offspring_remainders](std::size_t lhs, std::size_t rhs)
-            {
-                return offspring_remainders[lhs] <
-                       offspring_remainders[rhs];
-            });
-        for (std::size_t i = 0; i < order.size() && excess > 0; ++i)
+        for (std::size_t i = offspring_counts.size();
+             i > 0 && excess > 0;
+             --i)
         {
-            const std::size_t index = order[i];
+            const std::size_t index = i - 1;
+            const unsigned int protected_floor =
+                (m_Parameters.MinSpeciesSize > 0 &&
+                 offspring_counts[index] > 0)
+                    ? m_Parameters.MinSpeciesSize
+                    : 0U;
+            const unsigned int available =
+                offspring_counts[index] > protected_floor
+                    ? offspring_counts[index] - protected_floor
+                    : 0U;
             const unsigned int reduction =
-                std::min(excess, offspring_counts[index]);
+                std::min(excess, available);
             offspring_counts[index] -= reduction;
             excess -= reduction;
         }
         if (excess != 0)
-        {
             throw std::runtime_error(
                 "Unable to reconcile species offspring counts");
-        }
     }
     for (std::size_t i = 0; i < m_Species.size(); ++i)
     {
@@ -948,8 +1195,13 @@ void Population::Epoch()
     const std::size_t existing_species_count = m_TempSpecies.size();
     for(unsigned int i=0; i<m_TempSpecies.size(); i++)
     {
+        const std::size_t representative =
+            ChooseRepresentativeIndex(
+                m_Species[i], m_Parameters, m_RNG);
+        Genome representative_genome =
+            m_Species[i].m_Individuals[representative];
         m_TempSpecies[i].Clear();
-        m_TempSpecies[i].AddIndividual(m_Species[i].m_Individuals[0]);
+        m_TempSpecies[i].AddIndividual(representative_genome);
     }
 
     for(unsigned int i=0; i<m_Species.size(); i++)
@@ -1286,6 +1538,21 @@ Genome* Population::Tick(Genome& a_deleted_genome)
     {
         throw std::runtime_error("Called Tick() on population with no evaluated individuals.\n");
     }
+    if (m_Parameters.RejectNonFiniteFitness)
+    {
+        for (const auto& species : m_Species)
+        {
+            for (const auto& genome : species.m_Individuals)
+            {
+                if (genome.IsEvaluated() &&
+                    !std::isfinite(genome.GetFitness()))
+                {
+                    throw std::runtime_error(
+                        "Tick requires evaluated fitness values to be finite");
+                }
+            }
+        }
+    }
     
 #ifdef VDEBUG
     std::cout << "tracking stuff\n";
@@ -1302,7 +1569,7 @@ Genome* Population::Tick(Genome& a_deleted_genome)
             double t_fitness = m_Species[i].m_Individuals[j].GetFitness();
             if (!m_Species[i].m_Individuals[j].IsEvaluated())
                 continue;
-            if (std::isnan(t_fitness) || std::isinf(t_fitness))
+            if (!std::isfinite(t_fitness))
             {
                 t_fitness = 0;
             }
@@ -1328,15 +1595,19 @@ Genome* Population::Tick(Genome& a_deleted_genome)
         {
             if (!m_Species[i].m_Individuals[j].IsEvaluated())
                 continue;
-            if (m_Species[i].m_Individuals[j].GetFitness() > t_f)
+            const double fitness =
+                m_Species[i].m_Individuals[j].GetFitness();
+            if (!std::isfinite(fitness))
+                continue;
+            if (fitness > t_f)
             {
-                t_f = m_Species[i].m_Individuals[j].GetFitness();
+                t_f = fitness;
                 m_BestGenome = m_Species[i].m_Individuals[j];
             }
 
-            if (m_Species[i].m_Individuals[j].GetFitness() > m_Species[i].GetBestFitness())
+            if (fitness > m_Species[i].GetBestFitness())
             {
-                m_Species[i].m_BestFitness = m_Species[i].m_Individuals[j].GetFitness();
+                m_Species[i].m_BestFitness = fitness;
                 m_Species[i].m_EvalsNoImprovement = 0;
             }
         }
@@ -1352,17 +1623,43 @@ Genome* Population::Tick(Genome& a_deleted_genome)
             (m_NumEvaluations %
              m_Parameters.CompatTreshChangeInterval_Evaluations) == 0)
         {
-            if (m_Species.size() > m_Parameters.MaxSpecies)
+            if (m_Parameters.CompatibilityThresholdControl ==
+                PROPORTIONAL_COMPATIBILITY_THRESHOLD)
             {
-                m_Parameters.CompatTreshold += m_Parameters.CompatTresholdModifier;
+                const unsigned int target =
+                    m_Parameters.TargetSpecies > 0
+                        ? m_Parameters.TargetSpecies
+                        : m_Parameters.MinSpecies +
+                              (m_Parameters.MaxSpecies -
+                               m_Parameters.MinSpecies) /
+                                  2U;
+                const double normalized_error =
+                    (static_cast<double>(m_Species.size()) -
+                     static_cast<double>(target)) /
+                    static_cast<double>(target);
+                m_Parameters.CompatTreshold *= std::exp(
+                    m_Parameters.CompatibilityThresholdGain *
+                    normalized_error);
             }
-            else if (m_Species.size() < m_Parameters.MinSpecies)
+            else
             {
-                m_Parameters.CompatTreshold -= m_Parameters.CompatTresholdModifier;
+                if (m_Species.size() > m_Parameters.MaxSpecies)
+                {
+                    m_Parameters.CompatTreshold +=
+                        m_Parameters.CompatTresholdModifier;
+                }
+                else if (m_Species.size() <
+                         m_Parameters.MinSpecies)
+                {
+                    m_Parameters.CompatTreshold -=
+                        m_Parameters.CompatTresholdModifier;
+                }
             }
 
-            if (m_Parameters.CompatTreshold < m_Parameters.MinCompatTreshold)
-                m_Parameters.CompatTreshold = m_Parameters.MinCompatTreshold;
+            m_Parameters.CompatTreshold = std::clamp(
+                m_Parameters.CompatTreshold,
+                m_Parameters.MinCompatTreshold,
+                m_Parameters.MaxCompatTreshold);
             
             if (m_Parameters.CompatTreshold != t_oldcompat)
             {

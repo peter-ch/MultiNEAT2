@@ -15,6 +15,13 @@
 
 namespace NEAT
 {
+    double FitnessForOrdering(double fitness)
+    {
+        return std::isfinite(fitness)
+            ? fitness
+            : std::numeric_limits<double>::lowest();
+    }
+
     void NormalizeSelectionWeights(std::vector<double>& weights)
     {
         if (weights.empty())
@@ -63,7 +70,8 @@ namespace NEAT
 
     bool genome_greater(const Genome& ls, const Genome& rs)
     {
-        return (ls.GetFitness() > rs.GetFitness());
+        return FitnessForOrdering(ls.GetFitness()) >
+               FitnessForOrdering(rs.GetFitness());
     }
 
     bool idxfitnesspair_greater(const std::pair<int, double>& ls,
@@ -161,6 +169,7 @@ namespace NEAT
 
         // Make a pool of only evaluated individuals!
         std::vector< std::pair<int, double> > t_Evaluated;
+        t_Evaluated.reserve(m_Individuals.size());
         for (unsigned int i = 0; i < m_Individuals.size(); i++)
         {
             if (m_Individuals[i].IsEvaluated())
@@ -190,10 +199,16 @@ namespace NEAT
             selection_mode == RANK_LINEAR ||
             selection_mode == RANK_EXP)
         {
-            std::stable_sort(
-                t_Evaluated.begin(),
-                t_Evaluated.end(),
-                idxfitnesspair_greater);
+            if (!std::is_sorted(
+                    t_Evaluated.begin(),
+                    t_Evaluated.end(),
+                    idxfitnesspair_greater))
+            {
+                std::stable_sort(
+                    t_Evaluated.begin(),
+                    t_Evaluated.end(),
+                    idxfitnesspair_greater);
+            }
         }
 
         int t_chosen_one = 0;
@@ -398,6 +413,7 @@ namespace NEAT
                 throw std::invalid_argument("TournamentSize must be greater than zero");
             }
             std::vector< std::pair<int, double> > t_picked;
+            t_picked.reserve(a_Parameters.TournamentSize);
             // choose N individuals at random
             for (unsigned int i = 0; i < a_Parameters.TournamentSize; ++i)
             {
@@ -417,6 +433,7 @@ namespace NEAT
                 throw std::invalid_argument("TournamentSize must be greater than zero");
             }
             std::vector< std::pair<int, double> > t_picked;
+            t_picked.reserve(a_Parameters.TournamentSize);
             // choose N individuals at random
             for (unsigned int i = 0; i < a_Parameters.TournamentSize; ++i)
             {
@@ -427,6 +444,7 @@ namespace NEAT
 
             // do a roulette on the picked
             std::vector<double> probs;
+            probs.reserve(t_picked.size());
             for (auto p : t_picked)
             {
                 probs.push_back(p.second);
@@ -455,6 +473,7 @@ namespace NEAT
         {
             // Roulette wheel selection 
             std::vector<double> t_probs;
+            t_probs.reserve(t_Evaluated.size());
             for (const auto &evaluated : t_Evaluated)
             {
                 t_probs.push_back(evaluated.second);
@@ -509,14 +528,32 @@ namespace NEAT
         }
 
         double t_max_fitness = std::numeric_limits<double>::lowest();
-        int t_leader_idx = 0;
+        std::size_t t_leader_idx = 0;
+        bool found_evaluated = false;
         for (unsigned int i = 0; i < m_Individuals.size(); i++)
         {
-            double t_f = m_Individuals[i].GetFitness();
-            if (t_f > t_max_fitness)
+            if (!m_Individuals[i].IsEvaluated())
+                continue;
+            const double t_f =
+                FitnessForOrdering(m_Individuals[i].GetFitness());
+            if (!found_evaluated || t_f > t_max_fitness)
             {
                 t_max_fitness = t_f;
                 t_leader_idx = i;
+                found_evaluated = true;
+            }
+        }
+        if (!found_evaluated)
+        {
+            for (std::size_t i = 0; i < m_Individuals.size(); ++i)
+            {
+                const double fitness =
+                    FitnessForOrdering(m_Individuals[i].GetFitness());
+                if (i == 0 || fitness > t_max_fitness)
+                {
+                    t_max_fitness = fitness;
+                    t_leader_idx = i;
+                }
             }
         }
 
@@ -586,12 +623,14 @@ namespace NEAT
         for (unsigned int i = 0; i < m_Individuals.size(); i++)
         {
             double t_fitness = m_Individuals[i].GetFitness();
-            // this prevents nan or infinity to be fitness
-            if (std::isnan(t_fitness)) t_fitness = 0.0000001;
-            if (std::isinf(t_fitness)) t_fitness = 0.0000001;
+            // Invalid fitness never becomes a champion and receives only the
+            // smallest usable allocation weight.
+            const bool valid_fitness = std::isfinite(t_fitness);
+            if (!valid_fitness)
+                t_fitness = 0.0000001;
 
             // update the best fitness and stagnation counter
-            if (t_fitness > m_BestFitness)
+            if (valid_fitness && t_fitness > m_BestFitness)
             {
                 if (m_BestFitness == std::numeric_limits<double>::lowest() ||
                     t_fitness - m_BestFitness >=
@@ -631,7 +670,7 @@ namespace NEAT
                 {
                     // when the fitness is lowered that much, the species will
                     // likely have 0 offspring and therefore will not survive
-                    t_fitness *= 0.0000001;
+                    t_fitness *= a_Parameters.StagnationPenalty;
                 }
             }
 
@@ -679,6 +718,10 @@ namespace NEAT
             {
                 elite_offspring = 1;
             }
+            elite_offspring = std::min(
+                {elite_offspring,
+                 t_offspring_count,
+                 static_cast<unsigned int>(m_Individuals.size())});
         }
 
         // no offspring?! yikes.. dead species!
@@ -702,7 +745,10 @@ namespace NEAT
 
             if (elite_count < elite_offspring)
             {
-                t_baby = GetLeader();
+                // SortIndividuals() runs before reproduction, so this copies
+                // distinct top genomes rather than cloning one leader N
+                // times when EliteFraction selects multiple elites.
+                t_baby = m_Individuals[elite_count];
                 elite_count++;
             }
             else
@@ -1458,6 +1504,53 @@ namespace NEAT
         {
             throw std::runtime_error(
                 "No enabled mutation could be applied to the genome");
+        }
+
+        double mutation_budget =
+            a_Parameters.MutationOperatorsPerOffspring;
+        if (a_Parameters.AdaptiveMutationRate > 0.0 &&
+            a_Pop.GetStagnation() >
+                a_Parameters.AdaptiveMutationStart)
+        {
+            const double stagnant_generations =
+                static_cast<double>(
+                    a_Pop.GetStagnation() -
+                    a_Parameters.AdaptiveMutationStart);
+            const double factor = std::min(
+                a_Parameters.AdaptiveMutationMaxFactor,
+                1.0 + a_Parameters.AdaptiveMutationRate *
+                          stagnant_generations);
+            mutation_budget *= factor;
+        }
+        unsigned int operator_count =
+            static_cast<unsigned int>(std::floor(mutation_budget));
+        const double fractional =
+            mutation_budget - std::floor(mutation_budget);
+        if (fractional > 0.0 && a_RNG.RandFloat() < fractional)
+            ++operator_count;
+        operator_count = std::max(1U, operator_count);
+
+        if (operator_count > 1)
+        {
+            // Reuse the validated single-operator path. Disabling adaptation
+            // in the local copy bounds recursion at exactly one level while
+            // recomputing topology-dependent mutation availability after
+            // every successful operation.
+            Parameters single_operator = a_Parameters;
+            single_operator.MutationOperatorsPerOffspring = 1.0;
+            single_operator.AdaptiveMutationRate = 0.0;
+            single_operator.AdaptiveMutationMaxFactor = 1.0;
+            for (unsigned int operation = 1;
+                 operation < operator_count;
+                 ++operation)
+            {
+                MutateGenome(
+                    t_baby_is_clone,
+                    a_Pop,
+                    t_baby,
+                    single_operator,
+                    a_RNG);
+            }
         }
     }
 

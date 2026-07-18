@@ -1,6 +1,7 @@
 #ifndef _SPECIES_H
 #define _SPECIES_H
 
+#include <cmath>
 #include <cstddef>
 #include <stdexcept>
 #include <vector>
@@ -107,7 +108,8 @@ public:
         double f = std::numeric_limits<double>::lowest();
         for(std::size_t i=0; i<m_Individuals.size(); i++)
         {
-            if (m_Individuals[i].IsEvaluated())
+            if (m_Individuals[i].IsEvaluated() &&
+                std::isfinite(m_Individuals[i].GetFitness()))
             {
                 if (m_Individuals[i].GetFitness() > f)
                 {

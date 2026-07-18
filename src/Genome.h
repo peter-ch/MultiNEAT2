@@ -351,6 +351,12 @@ namespace NEAT
         // Set all traits to random values
         void Randomize_Traits(const Parameters& a_Parameters, RNG &a_RNG);
 
+        // Randomize every spiking neuron and synapse parameter through the
+        // population RNG so seeded populations remain reproducible.
+        void Randomize_SpikingParameters(
+            const Parameters& a_Parameters,
+            RNG& a_RNG);
+
         // Perturbs the A parameters of the neuron activation functions
         bool Mutate_NeuronActivations_A(const Parameters &a_Parameters, RNG &a_RNG);
 
@@ -365,6 +371,15 @@ namespace NEAT
 
         // Perturbs the neuron biases
         bool Mutate_NeuronBiases(const Parameters &a_Parameters, RNG &a_RNG);
+
+        // Evolves the stateful neuron and synapse parameters used by the
+        // spiking activation modes.
+        bool Mutate_NeuronSpikingParameters(
+            const Parameters &a_Parameters,
+            RNG &a_RNG);
+        bool Mutate_LinkSpikingParameters(
+            const Parameters &a_Parameters,
+            RNG &a_RNG);
 
         // Perturbs the neuron traits
         bool Mutate_NeuronTraits(const Parameters &a_Parameters, RNG &a_RNG);

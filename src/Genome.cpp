@@ -36,6 +36,115 @@ namespace NEAT
 // Helper inline
 inline double sqr(double x) { return x * x; }
 
+namespace
+{
+double RandomRange(
+    RNG& rng,
+    double minimum,
+    double maximum)
+{
+    if (minimum == maximum)
+        return minimum;
+    return minimum + rng.RandFloat() * (maximum - minimum);
+}
+
+void InitializeNeuronSpiking(
+    NeuronGene& neuron,
+    const Parameters& parameters,
+    RNG* rng = nullptr)
+{
+    const auto value =
+        [rng](double minimum, double maximum)
+    {
+        return rng == nullptr
+            ? minimum + (maximum - minimum) * 0.5
+            : RandomRange(*rng, minimum, maximum);
+    };
+    if (IsSpikingActivation(neuron.m_ActFunction))
+    {
+        neuron.m_TimeConstant = value(
+            parameters.MinSpikingTimeConstant,
+            parameters.MaxSpikingTimeConstant);
+    }
+    neuron.m_SpikeThreshold =
+        neuron.m_ActFunction == SPIKING_IZHIKEVICH
+            ? value(
+                  parameters.MinIzhikevichThreshold,
+                  parameters.MaxIzhikevichThreshold)
+            : value(
+                  parameters.MinSpikeThreshold,
+                  parameters.MaxSpikeThreshold);
+    neuron.m_ResetPotential = value(
+        parameters.MinResetPotential,
+        parameters.MaxResetPotential);
+    neuron.m_RestingPotential = value(
+        parameters.MinRestingPotential,
+        parameters.MaxRestingPotential);
+    neuron.m_RefractoryPeriod = value(
+        parameters.MinRefractoryPeriod,
+        parameters.MaxRefractoryPeriod);
+    neuron.m_MembraneResistance = value(
+        parameters.MinMembraneResistance,
+        parameters.MaxMembraneResistance);
+    neuron.m_AdaptationTimeConstant = value(
+        parameters.MinAdaptationTimeConstant,
+        parameters.MaxAdaptationTimeConstant);
+    neuron.m_AdaptationIncrement = value(
+        parameters.MinAdaptationIncrement,
+        parameters.MaxAdaptationIncrement);
+    neuron.m_RateTimeConstant = value(
+        parameters.MinSpikeRateTimeConstant,
+        parameters.MaxSpikeRateTimeConstant);
+    neuron.m_IzhikevichA = value(
+        parameters.MinIzhikevichA,
+        parameters.MaxIzhikevichA);
+    neuron.m_IzhikevichB = value(
+        parameters.MinIzhikevichB,
+        parameters.MaxIzhikevichB);
+    neuron.m_IzhikevichC = value(
+        parameters.MinIzhikevichC,
+        parameters.MaxIzhikevichC);
+    neuron.m_IzhikevichD = value(
+        parameters.MinIzhikevichD,
+        parameters.MaxIzhikevichD);
+}
+
+void InitializeLinkSpiking(
+    LinkGene& link,
+    const Parameters& parameters,
+    RNG* rng = nullptr)
+{
+    const auto value =
+        [rng](double minimum, double maximum)
+    {
+        return rng == nullptr
+            ? minimum + (maximum - minimum) * 0.5
+            : RandomRange(*rng, minimum, maximum);
+    };
+    link.m_SynapticDelay = value(
+        parameters.MinSynapticDelay,
+        parameters.MaxSynapticDelay);
+    link.m_SynapticTimeConstant = value(
+        parameters.MinSynapticTimeConstant,
+        parameters.MaxSynapticTimeConstant);
+    link.m_STDPEnabled =
+        rng == nullptr
+            ? parameters.InitialSTDPEnabledProb >= 1.0
+            : rng->RandFloat() <
+                  parameters.InitialSTDPEnabledProb;
+    link.m_STDPPlus = value(
+        parameters.MinSTDPPlus, parameters.MaxSTDPPlus);
+    link.m_STDPMinus = value(
+        parameters.MinSTDPMinus, parameters.MaxSTDPMinus);
+    link.m_STDPTauPlus = value(
+        parameters.MinSTDPTau, parameters.MaxSTDPTau);
+    link.m_STDPTauMinus = value(
+        parameters.MinSTDPTau, parameters.MaxSTDPTau);
+    link.m_STDPMinWeight = parameters.MinWeight;
+    link.m_STDPMaxWeight = parameters.MaxWeight;
+}
+}
+
 int Genome::GetNeuronIndex(int a_ID) const
 {
     ASSERT(a_ID > 0);
@@ -185,14 +294,41 @@ bool Genome::Validate(std::string* error) const
         if (neuron.Type() < INPUT || neuron.Type() > OUTPUT)
             return fail("Genome contains an invalid neuron type");
         if (neuron.m_ActFunction < SIGNED_SIGMOID ||
-            neuron.m_ActFunction > SOFTPLUS)
+            neuron.m_ActFunction > SPIKING_IZHIKEVICH)
             return fail("Genome contains an invalid activation function");
         if (!std::isfinite(neuron.m_SplitY) ||
             !std::isfinite(neuron.m_A) ||
             !std::isfinite(neuron.m_B) ||
             !std::isfinite(neuron.m_TimeConstant) ||
-            !std::isfinite(neuron.m_Bias))
+            !std::isfinite(neuron.m_Bias) ||
+            !std::isfinite(neuron.m_SpikeThreshold) ||
+            !std::isfinite(neuron.m_ResetPotential) ||
+            !std::isfinite(neuron.m_RestingPotential) ||
+            !std::isfinite(neuron.m_RefractoryPeriod) ||
+            !std::isfinite(neuron.m_MembraneResistance) ||
+            !std::isfinite(neuron.m_AdaptationTimeConstant) ||
+            !std::isfinite(neuron.m_AdaptationIncrement) ||
+            !std::isfinite(neuron.m_RateTimeConstant) ||
+            !std::isfinite(neuron.m_IzhikevichA) ||
+            !std::isfinite(neuron.m_IzhikevichB) ||
+            !std::isfinite(neuron.m_IzhikevichC) ||
+            !std::isfinite(neuron.m_IzhikevichD))
             return fail("Genome neuron parameters must be finite");
+        if (IsSpikingActivation(neuron.m_ActFunction) &&
+            neuron.m_TimeConstant <= 0.0)
+        {
+            return fail(
+                "Spiking genome neurons require positive time constants");
+        }
+        if (neuron.m_RefractoryPeriod < 0.0 ||
+            neuron.m_MembraneResistance <= 0.0 ||
+            neuron.m_AdaptationTimeConstant <= 0.0 ||
+            neuron.m_RateTimeConstant <= 0.0)
+        {
+            return fail(
+                "Spiking neuron resistance and adaptation time constants "
+                "must be positive and refractory periods non-negative");
+        }
         if (neuron.Type() == INPUT || neuron.Type() == BIAS)
             ++actual_inputs;
         else if (neuron.Type() == OUTPUT)
@@ -227,6 +363,24 @@ bool Genome::Validate(std::string* error) const
             return fail("Genome link endpoint does not exist");
         if (!std::isfinite(link.GetWeight()))
             return fail("Genome link weights must be finite");
+        if (!std::isfinite(link.m_SynapticDelay) ||
+            link.m_SynapticDelay < 0.0 ||
+            !std::isfinite(link.m_SynapticTimeConstant) ||
+            link.m_SynapticTimeConstant <= 0.0 ||
+            !std::isfinite(link.m_STDPPlus) ||
+            link.m_STDPPlus < 0.0 ||
+            !std::isfinite(link.m_STDPMinus) ||
+            link.m_STDPMinus < 0.0 ||
+            !std::isfinite(link.m_STDPTauPlus) ||
+            link.m_STDPTauPlus <= 0.0 ||
+            !std::isfinite(link.m_STDPTauMinus) ||
+            link.m_STDPTauMinus <= 0.0 ||
+            !std::isfinite(link.m_STDPMinWeight) ||
+            !std::isfinite(link.m_STDPMaxWeight) ||
+            link.m_STDPMinWeight > link.m_STDPMaxWeight)
+        {
+            return fail("Genome contains invalid spiking synapse parameters");
+        }
     }
     return true;
 }
@@ -313,6 +467,7 @@ Genome::Genome(const Parameters &a_Parameters, const GenomeInitStruct &in)
                      (a_Parameters.MinNeuronTimeConstant + a_Parameters.MaxNeuronTimeConstant) / 2.0,
                      (a_Parameters.MinNeuronBias + a_Parameters.MaxNeuronBias) / 2.0,
                      in.OutputActType);
+        InitializeNeuronSpiking(outnode, a_Parameters);
         outnode.InitTraits(a_Parameters.NeuronTraits, t_RNG);
         m_NeuronGenes.push_back(outnode);
         ++t_nnum;
@@ -332,6 +487,7 @@ Genome::Genome(const Parameters &a_Parameters, const GenomeInitStruct &in)
                             (a_Parameters.MinNeuronTimeConstant + a_Parameters.MaxNeuronTimeConstant) / 2.0,
                             (a_Parameters.MinNeuronBias + a_Parameters.MaxNeuronBias) / 2.0,
                             in.HiddenActType);
+                InitializeNeuronSpiking(hidden, a_Parameters);
                 hidden.InitTraits(a_Parameters.NeuronTraits, t_RNG);
                 m_NeuronGenes.push_back(hidden);
                 ++t_nnum;
@@ -350,6 +506,7 @@ Genome::Genome(const Parameters &a_Parameters, const GenomeInitStruct &in)
                     for (int j = 0; j < prev_layer_size; ++j)
                     {
                         LinkGene L(j + last_src_id, i + last_dest_id, t_innovnum, 0.0, false);
+                        InitializeLinkSpiking(L, a_Parameters);
                         L.InitTraits(a_Parameters.LinkTraits, t_RNG);
                         m_LinkGenes.push_back(L);
                         ++t_innovnum;
@@ -368,6 +525,7 @@ Genome::Genome(const Parameters &a_Parameters, const GenomeInitStruct &in)
                 for (int j = 0; j < prev_layer_size; ++j)
                 {
                     LinkGene L(j + last_src_id, i + last_dest_id, t_innovnum, 0.0, false);
+                    InitializeLinkSpiking(L, a_Parameters);
                     L.InitTraits(a_Parameters.LinkTraits, t_RNG);
                     m_LinkGenes.push_back(L);
                     ++t_innovnum;
@@ -384,6 +542,7 @@ Genome::Genome(const Parameters &a_Parameters, const GenomeInitStruct &in)
                 for (unsigned j = 0; j < static_cast<unsigned>(in.NumInputs); ++j)
                 {
                     LinkGene L(j + 1, i + in.NumInputs + 1, t_innovnum, 0.0, false);
+                    InitializeLinkSpiking(L, a_Parameters);
                     L.InitTraits(a_Parameters.LinkTraits, t_RNG);
                     m_LinkGenes.push_back(L);
                     ++t_innovnum;
@@ -417,12 +576,14 @@ Genome::Genome(const Parameters &a_Parameters, const GenomeInitStruct &in)
                     if (!found)
                     {
                         LinkGene L(t_inp_id, t_out_id, t_innovnum, 0.0, false);
+                        InitializeLinkSpiking(L, a_Parameters);
                         L.InitTraits(a_Parameters.LinkTraits, t_RNG);
                         m_LinkGenes.push_back(L);
                         ++t_innovnum;
                         if (!a_Parameters.DontUseBiasNeuron)
                         {
                             LinkGene BL(t_bias_id, t_out_id, t_innovnum, 0.0, false);
+                            InitializeLinkSpiking(BL, a_Parameters);
                             BL.InitTraits(a_Parameters.LinkTraits, t_RNG);
                             m_LinkGenes.push_back(BL);
                             ++t_innovnum;
@@ -477,7 +638,7 @@ Genome::Genome(std::istream &data)
         if (token == "GenomeFormat")
         {
             data >> format_version;
-            if (format_version < 1 || format_version > 2)
+            if (format_version < 1 || format_version > 3)
                 throw std::runtime_error(
                     "Genome: unsupported serialization format.");
         }
@@ -509,6 +670,21 @@ Genome::Genome(std::istream &data)
             neuron.m_Bias = bias;
             if (format_version >= 2)
                 data >> neuron.x >> neuron.y;
+            if (format_version >= 3)
+            {
+                data >> neuron.m_SpikeThreshold
+                     >> neuron.m_ResetPotential
+                     >> neuron.m_RestingPotential
+                     >> neuron.m_RefractoryPeriod
+                     >> neuron.m_MembraneResistance
+                     >> neuron.m_AdaptationTimeConstant
+                     >> neuron.m_AdaptationIncrement
+                     >> neuron.m_RateTimeConstant
+                     >> neuron.m_IzhikevichA
+                     >> neuron.m_IzhikevichB
+                     >> neuron.m_IzhikevichC
+                     >> neuron.m_IzhikevichD;
+            }
             m_NeuronGenes.push_back(neuron);
             last_neuron = static_cast<int>(m_NeuronGenes.size()) - 1;
         }
@@ -520,6 +696,26 @@ Genome::Genome(std::istream &data)
             m_NeuronGenes[static_cast<std::size_t>(last_neuron)].m_Traits =
                 Serialization::ReadTraits(data);
         }
+        else if (token == "NeuronSpiking")
+        {
+            if (last_neuron < 0)
+                throw std::runtime_error(
+                    "Genome: NeuronSpiking appears before a neuron.");
+            NeuronGene& neuron =
+                m_NeuronGenes[static_cast<std::size_t>(last_neuron)];
+            data >> neuron.m_SpikeThreshold
+                 >> neuron.m_ResetPotential
+                 >> neuron.m_RestingPotential
+                 >> neuron.m_RefractoryPeriod
+                 >> neuron.m_MembraneResistance
+                 >> neuron.m_AdaptationTimeConstant
+                 >> neuron.m_AdaptationIncrement
+                 >> neuron.m_RateTimeConstant
+                 >> neuron.m_IzhikevichA
+                 >> neuron.m_IzhikevichB
+                 >> neuron.m_IzhikevichC
+                 >> neuron.m_IzhikevichD;
+        }
         else if (token == "Link")
         {
             int from, to, innovation, recurrent;
@@ -528,6 +724,22 @@ Genome::Genome(std::istream &data)
             m_LinkGenes.emplace_back(
                 from, to, innovation, weight, recurrent != 0);
             last_link = static_cast<int>(m_LinkGenes.size()) - 1;
+            if (format_version >= 3)
+            {
+                LinkGene& link =
+                    m_LinkGenes[static_cast<std::size_t>(last_link)];
+                int stdp_enabled = 0;
+                data >> link.m_SynapticDelay
+                     >> link.m_SynapticTimeConstant
+                     >> stdp_enabled
+                     >> link.m_STDPPlus
+                     >> link.m_STDPMinus
+                     >> link.m_STDPTauPlus
+                     >> link.m_STDPTauMinus
+                     >> link.m_STDPMinWeight
+                     >> link.m_STDPMaxWeight;
+                link.m_STDPEnabled = stdp_enabled != 0;
+            }
         }
         else if (token == "LinkTraits")
         {
@@ -536,6 +748,25 @@ Genome::Genome(std::istream &data)
                     "Genome: LinkTraits appears before a link.");
             m_LinkGenes[static_cast<std::size_t>(last_link)].m_Traits =
                 Serialization::ReadTraits(data);
+        }
+        else if (token == "LinkSpiking")
+        {
+            if (last_link < 0)
+                throw std::runtime_error(
+                    "Genome: LinkSpiking appears before a link.");
+            LinkGene& link =
+                m_LinkGenes[static_cast<std::size_t>(last_link)];
+            int stdp_enabled = 0;
+            data >> link.m_SynapticDelay
+                 >> link.m_SynapticTimeConstant
+                 >> stdp_enabled
+                 >> link.m_STDPPlus
+                 >> link.m_STDPMinus
+                 >> link.m_STDPTauPlus
+                 >> link.m_STDPTauMinus
+                 >> link.m_STDPMinWeight
+                 >> link.m_STDPMaxWeight;
+            link.m_STDPEnabled = stdp_enabled != 0;
         }
         else
         {
@@ -583,7 +814,7 @@ std::string Genome::Serialize() const
     std::ostringstream output;
     Serialization::UseRoundTripPrecision(output);
     output << "GenomeStart " << GetID() << "\n";
-    output << "GenomeFormat 2\n";
+    output << "GenomeFormat 3\n";
     output << "GenomeState " << m_Fitness << ' ' << m_AdjustedFitness << ' '
            << m_OffspringAmount << ' ' << m_Depth << ' ' << m_NumInputs << ' '
            << m_NumOutputs << ' ' << static_cast<int>(m_Evaluated) << ' '
@@ -597,7 +828,19 @@ std::string Genome::Serialize() const
                << ' ' << static_cast<int>(neuron.m_ActFunction) << ' '
                << neuron.m_A << ' ' << neuron.m_B << ' '
                << neuron.m_TimeConstant << ' ' << neuron.m_Bias << ' '
-               << neuron.x << ' ' << neuron.y << '\n';
+               << neuron.x << ' ' << neuron.y << ' '
+               << neuron.m_SpikeThreshold << ' '
+               << neuron.m_ResetPotential << ' '
+               << neuron.m_RestingPotential << ' '
+               << neuron.m_RefractoryPeriod << ' '
+               << neuron.m_MembraneResistance << ' '
+               << neuron.m_AdaptationTimeConstant << ' '
+               << neuron.m_AdaptationIncrement << ' '
+               << neuron.m_RateTimeConstant << ' '
+               << neuron.m_IzhikevichA << ' '
+               << neuron.m_IzhikevichB << ' '
+               << neuron.m_IzhikevichC << ' '
+               << neuron.m_IzhikevichD << '\n';
         Serialization::WriteTraits(
             output, "NeuronTraits", neuron.m_Traits);
     }
@@ -606,6 +849,12 @@ std::string Genome::Serialize() const
         output << "Link " << link.m_FromNeuronID << ' ' << link.m_ToNeuronID
                << ' ' << link.m_InnovationID << ' '
                << static_cast<int>(link.m_IsRecurrent) << ' ' << link.m_Weight
+               << ' ' << link.m_SynapticDelay << ' '
+               << link.m_SynapticTimeConstant << ' '
+               << static_cast<int>(link.m_STDPEnabled) << ' '
+               << link.m_STDPPlus << ' ' << link.m_STDPMinus << ' '
+               << link.m_STDPTauPlus << ' ' << link.m_STDPTauMinus << ' '
+               << link.m_STDPMinWeight << ' ' << link.m_STDPMaxWeight
                << '\n';
         Serialization::WriteTraits(output, "LinkTraits", link.m_Traits);
     }
@@ -851,6 +1100,19 @@ void Genome::BuildPhenotype(NeuralNetwork &a_Net)
         t_n.m_timeconst = ng.m_TimeConstant;
         t_n.m_bias = ng.m_Bias;
         t_n.m_activation_function_type = ng.m_ActFunction;
+        t_n.m_spike_threshold = ng.m_SpikeThreshold;
+        t_n.m_reset_potential = ng.m_ResetPotential;
+        t_n.m_resting_potential = ng.m_RestingPotential;
+        t_n.m_refractory_period = ng.m_RefractoryPeriod;
+        t_n.m_membrane_resistance = ng.m_MembraneResistance;
+        t_n.m_adaptation_time_constant =
+            ng.m_AdaptationTimeConstant;
+        t_n.m_adaptation_increment = ng.m_AdaptationIncrement;
+        t_n.m_rate_time_constant = ng.m_RateTimeConstant;
+        t_n.m_izhikevich_a = ng.m_IzhikevichA;
+        t_n.m_izhikevich_b = ng.m_IzhikevichB;
+        t_n.m_izhikevich_c = ng.m_IzhikevichC;
+        t_n.m_izhikevich_d = ng.m_IzhikevichD;
         t_n.m_split_y = ng.SplitY();
         t_n.m_type = ng.Type();
         t_n.m_x = static_cast<double>(ng.x);
@@ -876,6 +1138,16 @@ void Genome::BuildPhenotype(NeuralNetwork &a_Net)
         c.m_target_neuron_idx = target->second;
         c.m_weight = lg.GetWeight();
         c.m_recur_flag = lg.IsRecurrent();
+        c.m_synaptic_delay = lg.m_SynapticDelay;
+        c.m_synaptic_time_constant =
+            lg.m_SynapticTimeConstant;
+        c.m_stdp_enabled = lg.m_STDPEnabled;
+        c.m_stdp_plus = lg.m_STDPPlus;
+        c.m_stdp_minus = lg.m_STDPMinus;
+        c.m_stdp_tau_plus = lg.m_STDPTauPlus;
+        c.m_stdp_tau_minus = lg.m_STDPTauMinus;
+        c.m_stdp_min_weight = lg.m_STDPMinWeight;
+        c.m_stdp_max_weight = lg.m_STDPMaxWeight;
 
         c.m_hebb_rate = 0.3;
         c.m_hebb_pre_rate = 0.1;
@@ -912,7 +1184,10 @@ ActivationFunction GetRandomActivation(Parameters &a_Parameters, RNG &a_RNG)
         a_Parameters.ActivationFunction_UnsignedSine_Prob,
         a_Parameters.ActivationFunction_Linear_Prob,
         a_Parameters.ActivationFunction_Relu_Prob,
-        a_Parameters.ActivationFunction_Softplus_Prob
+        a_Parameters.ActivationFunction_Softplus_Prob,
+        a_Parameters.ActivationFunction_SpikingLIF_Prob,
+        a_Parameters.ActivationFunction_SpikingAdaptiveLIF_Prob,
+        a_Parameters.ActivationFunction_SpikingIzhikevich_Prob
     };
 
     double total = 0.0;
@@ -1768,7 +2043,10 @@ void Genome::DerivePhenotypicChanges(NeuralNetwork &a_Net)
 double Genome::CompatibilityDistance(Genome &a_G, Parameters &a_Parameters)
 {
     double total_distance = 0.0, total_w_diff = 0.0, total_A_diff = 0.0,
-           total_B_diff = 0.0, total_TC_diff = 0.0, total_bias_diff = 0.0, total_act_diff = 0.0;
+           total_B_diff = 0.0, total_TC_diff = 0.0,
+           total_bias_diff = 0.0, total_act_diff = 0.0,
+           total_spiking_neuron_diff = 0.0,
+           total_spiking_link_diff = 0.0;
     std::map<std::string, double> total_link_trait_diff;
     std::map<std::string, double> total_neuron_trait_diff;
     double E = 0, D = 0, M = 0, matching_neurons = 0;
@@ -1845,6 +2123,60 @@ double Genome::CompatibilityDistance(Genome &a_G, Parameters &a_Parameters)
                         (*links2)[i2].GetWeight();
                     total_w_diff += (wd < 0) ? -wd : wd;
                 }
+                if (a_Parameters.SpikingLinkDiffCoeff > 0.0)
+                {
+                    const LinkGene& first = (*links1)[i1];
+                    const LinkGene& second = (*links2)[i2];
+                    const auto normalized =
+                        [](double lhs,
+                           double rhs,
+                           double minimum,
+                           double maximum)
+                    {
+                        const double span = maximum - minimum;
+                        return span > 0.0
+                            ? std::abs(lhs - rhs) / span
+                            : (lhs == rhs ? 0.0 : 1.0);
+                    };
+                    double difference = 0.0;
+                    difference += normalized(
+                        first.m_SynapticDelay,
+                        second.m_SynapticDelay,
+                        a_Parameters.MinSynapticDelay,
+                        a_Parameters.MaxSynapticDelay);
+                    difference += normalized(
+                        first.m_SynapticTimeConstant,
+                        second.m_SynapticTimeConstant,
+                        a_Parameters.MinSynapticTimeConstant,
+                        a_Parameters.MaxSynapticTimeConstant);
+                    difference +=
+                        first.m_STDPEnabled ==
+                                second.m_STDPEnabled
+                            ? 0.0
+                            : 1.0;
+                    difference += normalized(
+                        first.m_STDPPlus,
+                        second.m_STDPPlus,
+                        a_Parameters.MinSTDPPlus,
+                        a_Parameters.MaxSTDPPlus);
+                    difference += normalized(
+                        first.m_STDPMinus,
+                        second.m_STDPMinus,
+                        a_Parameters.MinSTDPMinus,
+                        a_Parameters.MaxSTDPMinus);
+                    difference += normalized(
+                        first.m_STDPTauPlus,
+                        second.m_STDPTauPlus,
+                        a_Parameters.MinSTDPTau,
+                        a_Parameters.MaxSTDPTau);
+                    difference += normalized(
+                        first.m_STDPTauMinus,
+                        second.m_STDPTauMinus,
+                        a_Parameters.MinSTDPTau,
+                        a_Parameters.MaxSTDPTau);
+                    total_spiking_link_diff +=
+                        difference / 7.0;
+                }
                 if (!a_Parameters.LinkTraits.empty())
                 {
                     const auto linktraitdist =
@@ -1883,7 +2215,9 @@ double Genome::CompatibilityDistance(Genome &a_G, Parameters &a_Parameters)
     if(M < 1.0) M = 1.0;
     double dist_links = a_Parameters.ExcessCoeff * (E / normalizer)
                         + a_Parameters.DisjointCoeff * (D / normalizer)
-                        + a_Parameters.WeightDiffCoeff * (total_w_diff / M);
+                        + a_Parameters.WeightDiffCoeff * (total_w_diff / M)
+                        + a_Parameters.SpikingLinkDiffCoeff *
+                              (total_spiking_link_diff / M);
     total_distance += dist_links;
 
     const bool compare_neurons =
@@ -1892,6 +2226,7 @@ double Genome::CompatibilityDistance(Genome &a_G, Parameters &a_Parameters)
         a_Parameters.TimeConstantDiffCoeff > 0.0 ||
         a_Parameters.BiasDiffCoeff > 0.0 ||
         a_Parameters.ActivationFunctionDiffCoeff > 0.0 ||
+        a_Parameters.SpikingNeuronDiffCoeff > 0.0 ||
         !a_Parameters.NeuronTraits.empty();
     if (compare_neurons)
     {
@@ -1913,6 +2248,100 @@ double Genome::CompatibilityDistance(Genome &a_G, Parameters &a_Parameters)
             {
                 if (mine.m_ActFunction != other.m_ActFunction)
                     total_act_diff++;
+            }
+            if (a_Parameters.SpikingNeuronDiffCoeff > 0.0 &&
+                (IsSpikingActivation(mine.m_ActFunction) ||
+                 IsSpikingActivation(other.m_ActFunction)))
+            {
+                const auto normalized =
+                    [](double lhs,
+                       double rhs,
+                       double minimum,
+                       double maximum)
+                {
+                    const double span = maximum - minimum;
+                    return span > 0.0
+                        ? std::abs(lhs - rhs) / span
+                        : (lhs == rhs ? 0.0 : 1.0);
+                };
+                double difference = 0.0;
+                difference += normalized(
+                    mine.m_TimeConstant,
+                    other.m_TimeConstant,
+                    a_Parameters.MinSpikingTimeConstant,
+                    a_Parameters.MaxSpikingTimeConstant);
+                difference += normalized(
+                    mine.m_SpikeThreshold,
+                    other.m_SpikeThreshold,
+                    mine.m_ActFunction ==
+                                SPIKING_IZHIKEVICH ||
+                            other.m_ActFunction ==
+                                SPIKING_IZHIKEVICH
+                        ? a_Parameters.MinIzhikevichThreshold
+                        : a_Parameters.MinSpikeThreshold,
+                    mine.m_ActFunction ==
+                                SPIKING_IZHIKEVICH ||
+                            other.m_ActFunction ==
+                                SPIKING_IZHIKEVICH
+                        ? a_Parameters.MaxIzhikevichThreshold
+                        : a_Parameters.MaxSpikeThreshold);
+                difference += normalized(
+                    mine.m_ResetPotential,
+                    other.m_ResetPotential,
+                    a_Parameters.MinResetPotential,
+                    a_Parameters.MaxResetPotential);
+                difference += normalized(
+                    mine.m_RestingPotential,
+                    other.m_RestingPotential,
+                    a_Parameters.MinRestingPotential,
+                    a_Parameters.MaxRestingPotential);
+                difference += normalized(
+                    mine.m_RefractoryPeriod,
+                    other.m_RefractoryPeriod,
+                    a_Parameters.MinRefractoryPeriod,
+                    a_Parameters.MaxRefractoryPeriod);
+                difference += normalized(
+                    mine.m_MembraneResistance,
+                    other.m_MembraneResistance,
+                    a_Parameters.MinMembraneResistance,
+                    a_Parameters.MaxMembraneResistance);
+                difference += normalized(
+                    mine.m_AdaptationTimeConstant,
+                    other.m_AdaptationTimeConstant,
+                    a_Parameters.MinAdaptationTimeConstant,
+                    a_Parameters.MaxAdaptationTimeConstant);
+                difference += normalized(
+                    mine.m_AdaptationIncrement,
+                    other.m_AdaptationIncrement,
+                    a_Parameters.MinAdaptationIncrement,
+                    a_Parameters.MaxAdaptationIncrement);
+                difference += normalized(
+                    mine.m_RateTimeConstant,
+                    other.m_RateTimeConstant,
+                    a_Parameters.MinSpikeRateTimeConstant,
+                    a_Parameters.MaxSpikeRateTimeConstant);
+                difference += normalized(
+                    mine.m_IzhikevichA,
+                    other.m_IzhikevichA,
+                    a_Parameters.MinIzhikevichA,
+                    a_Parameters.MaxIzhikevichA);
+                difference += normalized(
+                    mine.m_IzhikevichB,
+                    other.m_IzhikevichB,
+                    a_Parameters.MinIzhikevichB,
+                    a_Parameters.MaxIzhikevichB);
+                difference += normalized(
+                    mine.m_IzhikevichC,
+                    other.m_IzhikevichC,
+                    a_Parameters.MinIzhikevichC,
+                    a_Parameters.MaxIzhikevichC);
+                difference += normalized(
+                    mine.m_IzhikevichD,
+                    other.m_IzhikevichD,
+                    a_Parameters.MinIzhikevichD,
+                    a_Parameters.MaxIzhikevichD);
+                total_spiking_neuron_diff +=
+                    difference / 13.0;
             }
             if (!a_Parameters.NeuronTraits.empty())
             {
@@ -1995,7 +2424,10 @@ double Genome::CompatibilityDistance(Genome &a_G, Parameters &a_Parameters)
                           + a_Parameters.ActivationBDiffCoeff*(total_B_diff/matching_neurons)
                           + a_Parameters.TimeConstantDiffCoeff*(total_TC_diff/matching_neurons)
                           + a_Parameters.BiasDiffCoeff*(total_bias_diff/matching_neurons)
-                          + a_Parameters.ActivationFunctionDiffCoeff*(total_act_diff/matching_neurons);
+                          + a_Parameters.ActivationFunctionDiffCoeff*(total_act_diff/matching_neurons)
+                          + a_Parameters.SpikingNeuronDiffCoeff *
+                                (total_spiking_neuron_diff /
+                                 matching_neurons);
     total_distance += dist_neurons;
     for(const auto &xx : total_link_trait_diff)
     {
@@ -2173,6 +2605,19 @@ void Genome::Randomize_Traits(const Parameters &a_Parameters, RNG &a_RNG)
     m_GenomeGene.InitTraits(a_Parameters.GenomeTraits, a_RNG);
 }
 
+void Genome::Randomize_SpikingParameters(
+    const Parameters& parameters,
+    RNG& rng)
+{
+    for (auto& neuron : m_NeuronGenes)
+    {
+        if (neuron.Type() != INPUT && neuron.Type() != BIAS)
+            InitializeNeuronSpiking(neuron, parameters, &rng);
+    }
+    for (auto& link : m_LinkGenes)
+        InitializeLinkSpiking(link, parameters, &rng);
+}
+
 bool Genome::Mutate_NeuronActivations_A(const Parameters &a_Parameters, RNG &a_RNG)
 {
     bool did_mutate = false;
@@ -2228,13 +2673,18 @@ bool Genome::Mutate_NeuronActivation_Type(const Parameters &a_Parameters, RNG &a
         a_Parameters.ActivationFunction_UnsignedSine_Prob,
         a_Parameters.ActivationFunction_Linear_Prob,
         a_Parameters.ActivationFunction_Relu_Prob,
-        a_Parameters.ActivationFunction_Softplus_Prob
+        a_Parameters.ActivationFunction_Softplus_Prob,
+        a_Parameters.ActivationFunction_SpikingLIF_Prob,
+        a_Parameters.ActivationFunction_SpikingAdaptiveLIF_Prob,
+        a_Parameters.ActivationFunction_SpikingIzhikevich_Prob
     };
     int idx = a_RNG.Roulette(probs);
     ActivationFunction newAF = static_cast<ActivationFunction>(idx);
     if (static_cast<int>(newAF) == oldf)
         return false;
     m_NeuronGenes[choice].m_ActFunction = newAF;
+    InitializeNeuronSpiking(
+        m_NeuronGenes[choice], a_Parameters, &a_RNG);
     return true;
 }
 
@@ -2248,7 +2698,20 @@ bool Genome::Mutate_NeuronTimeConstants(const Parameters &a_Parameters, RNG &a_R
             const double original = ng.m_TimeConstant;
             double r = a_RNG.RandFloatSigned() * a_Parameters.TimeConstantMutationMaxPower;
             ng.m_TimeConstant += r;
-            Clamp(ng.m_TimeConstant, a_Parameters.MinNeuronTimeConstant, a_Parameters.MaxNeuronTimeConstant);
+            if (IsSpikingActivation(ng.m_ActFunction))
+            {
+                Clamp(
+                    ng.m_TimeConstant,
+                    a_Parameters.MinSpikingTimeConstant,
+                    a_Parameters.MaxSpikingTimeConstant);
+            }
+            else
+            {
+                Clamp(
+                    ng.m_TimeConstant,
+                    a_Parameters.MinNeuronTimeConstant,
+                    a_Parameters.MaxNeuronTimeConstant);
+            }
             did_mutate = did_mutate || ng.m_TimeConstant != original;
         }
     }
@@ -2270,6 +2733,164 @@ bool Genome::Mutate_NeuronBiases(const Parameters &a_Parameters, RNG &a_RNG)
         }
     }
     return did_mutate;
+}
+
+bool Genome::Mutate_NeuronSpikingParameters(
+    const Parameters &parameters,
+    RNG &rng)
+{
+    bool mutated = false;
+    const auto perturb =
+        [&](double& value, double minimum, double maximum)
+    {
+        if (rng.RandFloat() >=
+            parameters.SpikingParameterMutationRate)
+        {
+            return;
+        }
+        const double original = value;
+        const double span = maximum - minimum;
+        value +=
+            rng.RandFloatSigned() * span *
+            parameters.SpikingParameterMutationPower;
+        Clamp(value, minimum, maximum);
+        if (value == original && minimum < maximum)
+        {
+            value = RandomRange(rng, minimum, maximum);
+        }
+        mutated = mutated || value != original;
+    };
+    for (auto& neuron : m_NeuronGenes)
+    {
+        if (neuron.Type() == INPUT || neuron.Type() == BIAS)
+            continue;
+        if (IsSpikingActivation(neuron.m_ActFunction))
+        {
+            perturb(
+                neuron.m_TimeConstant,
+                parameters.MinSpikingTimeConstant,
+                parameters.MaxSpikingTimeConstant);
+        }
+        if (neuron.m_ActFunction == SPIKING_IZHIKEVICH)
+        {
+            perturb(
+                neuron.m_SpikeThreshold,
+                parameters.MinIzhikevichThreshold,
+                parameters.MaxIzhikevichThreshold);
+        }
+        else
+        {
+            perturb(
+                neuron.m_SpikeThreshold,
+                parameters.MinSpikeThreshold,
+                parameters.MaxSpikeThreshold);
+        }
+        perturb(
+            neuron.m_ResetPotential,
+            parameters.MinResetPotential,
+            parameters.MaxResetPotential);
+        perturb(
+            neuron.m_RestingPotential,
+            parameters.MinRestingPotential,
+            parameters.MaxRestingPotential);
+        perturb(
+            neuron.m_RefractoryPeriod,
+            parameters.MinRefractoryPeriod,
+            parameters.MaxRefractoryPeriod);
+        perturb(
+            neuron.m_MembraneResistance,
+            parameters.MinMembraneResistance,
+            parameters.MaxMembraneResistance);
+        perturb(
+            neuron.m_AdaptationTimeConstant,
+            parameters.MinAdaptationTimeConstant,
+            parameters.MaxAdaptationTimeConstant);
+        perturb(
+            neuron.m_AdaptationIncrement,
+            parameters.MinAdaptationIncrement,
+            parameters.MaxAdaptationIncrement);
+        perturb(
+            neuron.m_RateTimeConstant,
+            parameters.MinSpikeRateTimeConstant,
+            parameters.MaxSpikeRateTimeConstant);
+        perturb(
+            neuron.m_IzhikevichA,
+            parameters.MinIzhikevichA,
+            parameters.MaxIzhikevichA);
+        perturb(
+            neuron.m_IzhikevichB,
+            parameters.MinIzhikevichB,
+            parameters.MaxIzhikevichB);
+        perturb(
+            neuron.m_IzhikevichC,
+            parameters.MinIzhikevichC,
+            parameters.MaxIzhikevichC);
+        perturb(
+            neuron.m_IzhikevichD,
+            parameters.MinIzhikevichD,
+            parameters.MaxIzhikevichD);
+    }
+    return mutated;
+}
+
+bool Genome::Mutate_LinkSpikingParameters(
+    const Parameters &parameters,
+    RNG &rng)
+{
+    bool mutated = false;
+    const auto perturb =
+        [&](double& value, double minimum, double maximum)
+    {
+        if (rng.RandFloat() >=
+            parameters.SpikingParameterMutationRate)
+        {
+            return;
+        }
+        const double original = value;
+        value +=
+            rng.RandFloatSigned() * (maximum - minimum) *
+            parameters.SpikingParameterMutationPower;
+        Clamp(value, minimum, maximum);
+        if (value == original && minimum < maximum)
+            value = RandomRange(rng, minimum, maximum);
+        mutated = mutated || value != original;
+    };
+    for (auto& link : m_LinkGenes)
+    {
+        perturb(
+            link.m_SynapticDelay,
+            parameters.MinSynapticDelay,
+            parameters.MaxSynapticDelay);
+        perturb(
+            link.m_SynapticTimeConstant,
+            parameters.MinSynapticTimeConstant,
+            parameters.MaxSynapticTimeConstant);
+        perturb(
+            link.m_STDPPlus,
+            parameters.MinSTDPPlus,
+            parameters.MaxSTDPPlus);
+        perturb(
+            link.m_STDPMinus,
+            parameters.MinSTDPMinus,
+            parameters.MaxSTDPMinus);
+        perturb(
+            link.m_STDPTauPlus,
+            parameters.MinSTDPTau,
+            parameters.MaxSTDPTau);
+        perturb(
+            link.m_STDPTauMinus,
+            parameters.MinSTDPTau,
+            parameters.MaxSTDPTau);
+        if (rng.RandFloat() <
+            parameters.SpikingParameterMutationRate)
+        {
+            link.m_STDPEnabled = !link.m_STDPEnabled;
+            mutated = true;
+        }
+        link.m_STDPMinWeight = parameters.MinWeight;
+        link.m_STDPMaxWeight = parameters.MaxWeight;
+    }
+    return mutated;
 }
 
 bool Genome::Mutate_NeuronTraits(const Parameters &a_Parameters, RNG &a_RNG)
@@ -2359,14 +2980,38 @@ bool Genome::Mutate_AddNeuron(InnovationDatabase &a_Innovs, Parameters &a_Parame
         Clamp(t_TC, a_Parameters.MinNeuronTimeConstant, a_Parameters.MaxNeuronTimeConstant);
         Clamp(t_Bs, a_Parameters.MinNeuronBias, a_Parameters.MaxNeuronBias);
         t_ngene.Init(t_A, t_B, t_TC, t_Bs, GetRandomActivation(a_Parameters, a_RNG));
+        InitializeNeuronSpiking(
+            t_ngene, a_Parameters, &a_RNG);
         t_ngene.InitTraits(a_Parameters.NeuronTraits, a_RNG);
         m_NeuronGenes.push_back(t_ngene);
         bool t_recurrentflag = t_chosenlink.IsRecurrent();
         LinkGene l1(t_in, t_nid, t_l1id, 1.0, t_recurrentflag);
+        l1.m_SynapticDelay =
+            t_chosenlink.m_SynapticDelay * 0.5;
+        l1.m_SynapticTimeConstant =
+            t_chosenlink.m_SynapticTimeConstant;
+        l1.m_STDPEnabled = t_chosenlink.m_STDPEnabled;
+        l1.m_STDPPlus = t_chosenlink.m_STDPPlus;
+        l1.m_STDPMinus = t_chosenlink.m_STDPMinus;
+        l1.m_STDPTauPlus = t_chosenlink.m_STDPTauPlus;
+        l1.m_STDPTauMinus = t_chosenlink.m_STDPTauMinus;
+        l1.m_STDPMinWeight = t_chosenlink.m_STDPMinWeight;
+        l1.m_STDPMaxWeight = t_chosenlink.m_STDPMaxWeight;
         Clamp(l1.m_Weight, a_Parameters.MinWeight, a_Parameters.MaxWeight);
         l1.InitTraits(a_Parameters.LinkTraits, a_RNG);
         m_LinkGenes.push_back(l1);
         LinkGene l2(t_nid, t_out, t_l2id, t_orig_weight, t_recurrentflag);
+        l2.m_SynapticDelay =
+            t_chosenlink.m_SynapticDelay * 0.5;
+        l2.m_SynapticTimeConstant =
+            t_chosenlink.m_SynapticTimeConstant;
+        l2.m_STDPEnabled = t_chosenlink.m_STDPEnabled;
+        l2.m_STDPPlus = t_chosenlink.m_STDPPlus;
+        l2.m_STDPMinus = t_chosenlink.m_STDPMinus;
+        l2.m_STDPTauPlus = t_chosenlink.m_STDPTauPlus;
+        l2.m_STDPTauMinus = t_chosenlink.m_STDPTauMinus;
+        l2.m_STDPMinWeight = t_chosenlink.m_STDPMinWeight;
+        l2.m_STDPMaxWeight = t_chosenlink.m_STDPMaxWeight;
         l2.InitTraits(a_Parameters.LinkTraits, a_RNG);
         m_LinkGenes.push_back(l2);
     }
@@ -2410,14 +3055,38 @@ bool Genome::Mutate_AddNeuron(InnovationDatabase &a_Innovs, Parameters &a_Parame
         Clamp(t_TC, a_Parameters.MinNeuronTimeConstant, a_Parameters.MaxNeuronTimeConstant);
         Clamp(t_Bs, a_Parameters.MinNeuronBias, a_Parameters.MaxNeuronBias);
         t_ngene.Init(t_A, t_B, t_TC, t_Bs, GetRandomActivation(a_Parameters, a_RNG));
+        InitializeNeuronSpiking(
+            t_ngene, a_Parameters, &a_RNG);
         t_ngene.InitTraits(a_Parameters.NeuronTraits, a_RNG);
         bool t_recurrentflag = t_chosenlink.IsRecurrent();
         m_NeuronGenes.push_back(t_ngene);
         LinkGene l1(t_in, t_nid, t_l1id, 1.0, t_recurrentflag);
+        l1.m_SynapticDelay =
+            t_chosenlink.m_SynapticDelay * 0.5;
+        l1.m_SynapticTimeConstant =
+            t_chosenlink.m_SynapticTimeConstant;
+        l1.m_STDPEnabled = t_chosenlink.m_STDPEnabled;
+        l1.m_STDPPlus = t_chosenlink.m_STDPPlus;
+        l1.m_STDPMinus = t_chosenlink.m_STDPMinus;
+        l1.m_STDPTauPlus = t_chosenlink.m_STDPTauPlus;
+        l1.m_STDPTauMinus = t_chosenlink.m_STDPTauMinus;
+        l1.m_STDPMinWeight = t_chosenlink.m_STDPMinWeight;
+        l1.m_STDPMaxWeight = t_chosenlink.m_STDPMaxWeight;
         Clamp(l1.m_Weight, a_Parameters.MinWeight, a_Parameters.MaxWeight);
         l1.InitTraits(a_Parameters.LinkTraits, a_RNG);
         m_LinkGenes.push_back(l1);
         LinkGene l2(t_nid, t_out, t_l2id, t_orig_weight, t_recurrentflag);
+        l2.m_SynapticDelay =
+            t_chosenlink.m_SynapticDelay * 0.5;
+        l2.m_SynapticTimeConstant =
+            t_chosenlink.m_SynapticTimeConstant;
+        l2.m_STDPEnabled = t_chosenlink.m_STDPEnabled;
+        l2.m_STDPPlus = t_chosenlink.m_STDPPlus;
+        l2.m_STDPMinus = t_chosenlink.m_STDPMinus;
+        l2.m_STDPTauPlus = t_chosenlink.m_STDPTauPlus;
+        l2.m_STDPTauMinus = t_chosenlink.m_STDPTauMinus;
+        l2.m_STDPMinWeight = t_chosenlink.m_STDPMinWeight;
+        l2.m_STDPMaxWeight = t_chosenlink.m_STDPMaxWeight;
         l2.InitTraits(a_Parameters.LinkTraits, a_RNG);
         m_LinkGenes.push_back(l2);
     }
@@ -2582,6 +3251,7 @@ bool Genome::Mutate_AddLink(InnovationDatabase &a_Innovs, const Parameters &a_Pa
         t_innovid = a_Innovs.AddLinkInnovation(t_n1id, t_n2id);
     }
     LinkGene l(t_n1id, t_n2id, t_innovid, t_weight, t_MakeRecurrent);
+    InitializeLinkSpiking(l, a_Parameters, &a_RNG);
     l.InitTraits(a_Parameters.LinkTraits, a_RNG);
     m_LinkGenes.push_back(l);
     return true;
@@ -2642,8 +3312,46 @@ bool Genome::Mutate_RemoveSimpleNeuron(InnovationDatabase &a_Innovs, const Param
     }
     else
     {
+        const LinkGene incoming =
+            m_LinkGenes[static_cast<std::size_t>(t_l1idx)];
+        const LinkGene outgoing =
+            m_LinkGenes[static_cast<std::size_t>(t_l2idx)];
+        const auto apply_combined_spiking =
+            [&](LinkGene& link)
+        {
+            link.m_SynapticDelay =
+                incoming.m_SynapticDelay +
+                outgoing.m_SynapticDelay;
+            Clamp(
+                link.m_SynapticDelay,
+                a_Parameters.MinSynapticDelay,
+                a_Parameters.MaxSynapticDelay);
+            link.m_SynapticTimeConstant =
+                (incoming.m_SynapticTimeConstant +
+                 outgoing.m_SynapticTimeConstant) *
+                0.5;
+            link.m_STDPEnabled =
+                incoming.m_STDPEnabled ||
+                outgoing.m_STDPEnabled;
+            link.m_STDPPlus =
+                (incoming.m_STDPPlus + outgoing.m_STDPPlus) *
+                0.5;
+            link.m_STDPMinus =
+                (incoming.m_STDPMinus + outgoing.m_STDPMinus) *
+                0.5;
+            link.m_STDPTauPlus =
+                (incoming.m_STDPTauPlus +
+                 outgoing.m_STDPTauPlus) *
+                0.5;
+            link.m_STDPTauMinus =
+                (incoming.m_STDPTauMinus +
+                 outgoing.m_STDPTauMinus) *
+                0.5;
+            link.m_STDPMinWeight = a_Parameters.MinWeight;
+            link.m_STDPMaxWeight = a_Parameters.MaxWeight;
+        };
         double t_weight =
-            m_LinkGenes[static_cast<std::size_t>(t_l1idx)].GetWeight();
+            incoming.GetWeight();
         int t_innovid = a_Innovs.CheckInnovation(
             m_LinkGenes[static_cast<std::size_t>(t_l1idx)].FromNeuronID(),
             m_LinkGenes[static_cast<std::size_t>(t_l2idx)].ToNeuronID(),
@@ -2657,6 +3365,7 @@ bool Genome::Mutate_RemoveSimpleNeuron(InnovationDatabase &a_Innovs, const Param
             RemoveNeuronGene(m_NeuronGenes[t_neurons_to_delete[t_choice]].ID());
             int t_newinnov = a_Innovs.AddLinkInnovation(from, to);
             LinkGene lg(from, to, t_newinnov, t_weight, false);
+            apply_combined_spiking(lg);
             lg.InitTraits(a_Parameters.LinkTraits, a_RNG);
             m_LinkGenes.push_back(lg);
             return true;
@@ -2669,6 +3378,7 @@ bool Genome::Mutate_RemoveSimpleNeuron(InnovationDatabase &a_Innovs, const Param
                 m_LinkGenes[static_cast<std::size_t>(t_l2idx)].ToNeuronID();
             RemoveNeuronGene(m_NeuronGenes[t_neurons_to_delete[t_choice]].ID());
             LinkGene lg(from, to, t_innovid, t_weight, false);
+            apply_combined_spiking(lg);
             lg.InitTraits(a_Parameters.LinkTraits, a_RNG);
             m_LinkGenes.push_back(lg);
             return true;
@@ -3241,12 +3951,41 @@ void Genome::Save(FILE *fp)
                 ng.m_ID, static_cast<int>(ng.m_Type), ng.m_SplitY,
                 static_cast<int>(ng.m_ActFunction), ng.m_A, ng.m_B,
                 ng.m_TimeConstant, ng.m_Bias);
+        fprintf(
+            fp,
+            "NeuronSpiking %3.18f %3.18f %3.18f %3.18f %3.18f "
+            "%3.18f %3.18f %3.18f %3.18f %3.18f %3.18f %3.18f\n",
+            ng.m_SpikeThreshold,
+            ng.m_ResetPotential,
+            ng.m_RestingPotential,
+            ng.m_RefractoryPeriod,
+            ng.m_MembraneResistance,
+            ng.m_AdaptationTimeConstant,
+            ng.m_AdaptationIncrement,
+            ng.m_RateTimeConstant,
+            ng.m_IzhikevichA,
+            ng.m_IzhikevichB,
+            ng.m_IzhikevichC,
+            ng.m_IzhikevichD);
     }
     for (const auto &lg : m_LinkGenes)
     {
         fprintf(fp, "Link %d %d %d %d %3.8f\n",
                 lg.m_FromNeuronID, lg.m_ToNeuronID, lg.m_InnovationID,
                 static_cast<int>(lg.m_IsRecurrent), lg.m_Weight);
+        fprintf(
+            fp,
+            "LinkSpiking %3.18f %3.18f %d %3.18f %3.18f "
+            "%3.18f %3.18f %3.18f %3.18f\n",
+            lg.m_SynapticDelay,
+            lg.m_SynapticTimeConstant,
+            static_cast<int>(lg.m_STDPEnabled),
+            lg.m_STDPPlus,
+            lg.m_STDPMinus,
+            lg.m_STDPTauPlus,
+            lg.m_STDPTauMinus,
+            lg.m_STDPMinWeight,
+            lg.m_STDPMaxWeight);
     }
     fprintf(fp, "GenomeEnd\n\n");
 }
@@ -3346,6 +4085,19 @@ bool Genome::IsIdenticalTo(const Genome& other) const
             n1.m_TimeConstant != n2.m_TimeConstant ||
             n1.m_Bias != n2.m_Bias ||
             n1.m_ActFunction != n2.m_ActFunction ||
+            n1.m_SpikeThreshold != n2.m_SpikeThreshold ||
+            n1.m_ResetPotential != n2.m_ResetPotential ||
+            n1.m_RestingPotential != n2.m_RestingPotential ||
+            n1.m_RefractoryPeriod != n2.m_RefractoryPeriod ||
+            n1.m_MembraneResistance != n2.m_MembraneResistance ||
+            n1.m_AdaptationTimeConstant !=
+                n2.m_AdaptationTimeConstant ||
+            n1.m_AdaptationIncrement != n2.m_AdaptationIncrement ||
+            n1.m_RateTimeConstant != n2.m_RateTimeConstant ||
+            n1.m_IzhikevichA != n2.m_IzhikevichA ||
+            n1.m_IzhikevichB != n2.m_IzhikevichB ||
+            n1.m_IzhikevichC != n2.m_IzhikevichC ||
+            n1.m_IzhikevichD != n2.m_IzhikevichD ||
             n1.m_Traits != n2.m_Traits)
         {
             return false;
@@ -3362,6 +4114,16 @@ bool Genome::IsIdenticalTo(const Genome& other) const
             l1.m_ToNeuronID != l2.m_ToNeuronID ||
             l1.m_Weight != l2.m_Weight ||
             l1.m_IsRecurrent != l2.m_IsRecurrent ||
+            l1.m_SynapticDelay != l2.m_SynapticDelay ||
+            l1.m_SynapticTimeConstant !=
+                l2.m_SynapticTimeConstant ||
+            l1.m_STDPEnabled != l2.m_STDPEnabled ||
+            l1.m_STDPPlus != l2.m_STDPPlus ||
+            l1.m_STDPMinus != l2.m_STDPMinus ||
+            l1.m_STDPTauPlus != l2.m_STDPTauPlus ||
+            l1.m_STDPTauMinus != l2.m_STDPTauMinus ||
+            l1.m_STDPMinWeight != l2.m_STDPMinWeight ||
+            l1.m_STDPMaxWeight != l2.m_STDPMaxWeight ||
             l1.m_Traits != l2.m_Traits)
         {
             return false;

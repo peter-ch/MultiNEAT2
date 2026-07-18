@@ -15,6 +15,7 @@
 #include "Population.h"
 #include "Random.h"
 #include "Species.h"
+#include "SpikingLearning.h"
 #include "Substrate.h"
 #include "Utils.h"
 
@@ -322,7 +323,10 @@ int main()
         &Parameters::ActivationFunction_UnsignedSine_Prob,
         &Parameters::ActivationFunction_Linear_Prob,
         &Parameters::ActivationFunction_Relu_Prob,
-        &Parameters::ActivationFunction_Softplus_Prob};
+        &Parameters::ActivationFunction_Softplus_Prob,
+        &Parameters::ActivationFunction_SpikingLIF_Prob,
+        &Parameters::ActivationFunction_SpikingAdaptiveLIF_Prob,
+        &Parameters::ActivationFunction_SpikingIzhikevich_Prob};
     for (const auto probability : activation_probabilities)
         no_activation_parameters.*probability = 0.0;
     CheckThrows<std::invalid_argument>(
@@ -410,6 +414,403 @@ int main()
             invalid.Output();
         },
         "invalid neural-network dimensions are rejected");
+
+    Parameters spiking_parameters;
+    spiking_parameters.ConfigureSpiking(true);
+    spiking_parameters.PopulationSize = 6;
+    Check(spiking_parameters.Validate(&parameter_validation_error),
+          "spiking evolution preset validates");
+    const Parameters restored_spiking_parameters =
+        Parameters::Deserialize(spiking_parameters.Serialize());
+    Check(
+        restored_spiking_parameters
+                    .ActivationFunction_SpikingLIF_Prob == 0.65 &&
+            restored_spiking_parameters
+                    .MutateNeuronSpikingParametersProb == 0.25 &&
+            restored_spiking_parameters.InitialSTDPEnabledProb == 0.1,
+        "spiking evolution parameters round-trip");
+
+    NeuralNetwork spiking_network;
+    Neuron spike_input;
+    spike_input.m_type = INPUT;
+    Neuron lif_output;
+    lif_output.m_type = OUTPUT;
+    lif_output.m_activation_function_type = SPIKING_LIF;
+    lif_output.m_timeconst = 0.01;
+    lif_output.m_spike_threshold = 0.5;
+    lif_output.m_reset_potential = 0.0;
+    lif_output.m_resting_potential = 0.0;
+    lif_output.m_refractory_period = 0.002;
+    Connection delayed_synapse;
+    delayed_synapse.m_source_neuron_idx = 0;
+    delayed_synapse.m_target_neuron_idx = 1;
+    delayed_synapse.m_weight = 10.0;
+    delayed_synapse.m_synaptic_delay = 0.003;
+    delayed_synapse.m_synaptic_time_constant = 0.001;
+    spiking_network.AddNeuron(spike_input);
+    spiking_network.AddNeuron(lif_output);
+    spiking_network.AddConnection(delayed_synapse);
+    spiking_network.SetInputOutputDimensions(1, 1);
+    spiking_network.SetSpikingInputMode(BINARY_SPIKE_INPUT);
+    spiking_network.SetSpikingOutputMode(SPIKE_OUTPUT);
+    spiking_network.SetSpikingTimeStep(0.001);
+    spiking_network.Flush();
+    const std::vector<double> spike_on{1.0};
+    const std::vector<double> spike_off{0.0};
+    Check(spiking_network.StepSpiking(spike_on).front() == 0.0 &&
+              spiking_network.StepSpiking(spike_off).front() == 0.0 &&
+              spiking_network.StepSpiking(spike_off).front() == 1.0,
+          "LIF integration honors delayed spike delivery");
+    Check(
+        spiking_network.GetSpikeHistory().size() == 2 &&
+            std::abs(
+                spiking_network.GetSpikeHistory().back().time -
+                0.003) < 1.0e-12,
+        "spike recorder captures input and neuron events with time");
+    const std::string spiking_state = spiking_network.Serialize();
+    const NeuralNetwork restored_spiking_network =
+        NeuralNetwork::Deserialize(spiking_state);
+    Check(
+        restored_spiking_network.Serialize() == spiking_state &&
+            restored_spiking_network.SpikingTime() ==
+                spiking_network.SpikingTime(),
+        "complete spiking runtime state round-trips exactly");
+    spiking_network.StepSpiking(spike_off);
+    Check(spiking_network.OutputRates().front() > 0.0 &&
+              spiking_network.OutputFilteredSpikes().front() > 0.0,
+          "spike-count and filtered-rate output decoders are available");
+
+    NeuralNetwork plastic_network;
+    lif_output.m_refractory_period = 0.0;
+    delayed_synapse.m_synaptic_delay = 0.0;
+    delayed_synapse.m_stdp_enabled = true;
+    delayed_synapse.m_stdp_plus = 0.1;
+    delayed_synapse.m_stdp_minus = 0.1;
+    delayed_synapse.m_stdp_min_weight = 9.5;
+    delayed_synapse.m_stdp_max_weight = 10.05;
+    plastic_network.AddNeuron(spike_input);
+    plastic_network.AddNeuron(lif_output);
+    plastic_network.AddConnection(delayed_synapse);
+    plastic_network.SetInputOutputDimensions(1, 1);
+    plastic_network.SetSpikingInputMode(BINARY_SPIKE_INPUT);
+    plastic_network.Flush();
+    plastic_network.StepSpiking(spike_on, 0.001);
+    Check(
+        plastic_network.m_connections[0].m_weight == 10.05,
+        "pair-based STDP potentiates coincident spikes and clamps weights");
+
+    NeuralNetwork poisson_first = plastic_network;
+    NeuralNetwork poisson_second = plastic_network;
+    poisson_first.Flush();
+    poisson_second.Flush();
+    poisson_first.SetSpikingInputMode(POISSON_RATE_INPUT);
+    poisson_second.SetSpikingInputMode(POISSON_RATE_INPUT);
+    poisson_first.SeedSpiking(123456);
+    poisson_second.SeedSpiking(123456);
+    const std::vector<std::vector<double>> poisson_inputs(
+        100, std::vector<double>{120.0});
+    Check(
+        poisson_first.SimulateSpiking(
+            poisson_inputs, 0.001, false) ==
+            poisson_second.SimulateSpiking(
+                poisson_inputs, 0.001, false),
+        "Poisson rate encoding is reproducible when seeded");
+    CheckThrows<std::invalid_argument>(
+        [&] { poisson_first.StepSpiking({-1.0}, 0.001); },
+        "Poisson encoding rejects negative rates");
+
+    NeuralNetwork izhikevich_network;
+    Neuron izhikevich_output;
+    izhikevich_output.m_type = OUTPUT;
+    izhikevich_output.m_activation_function_type =
+        SPIKING_IZHIKEVICH;
+    izhikevich_output.m_timeconst = 0.02;
+    izhikevich_output.m_spike_threshold = 30.0;
+    izhikevich_output.m_izhikevich_a = 0.02;
+    izhikevich_output.m_izhikevich_b = 0.2;
+    izhikevich_output.m_izhikevich_c = -65.0;
+    izhikevich_output.m_izhikevich_d = 8.0;
+    izhikevich_output.m_bias = 12.0;
+    izhikevich_network.AddNeuron(izhikevich_output);
+    izhikevich_network.SetInputOutputDimensions(0, 1);
+    izhikevich_network.Flush();
+    bool izhikevich_spiked = false;
+    for (int step = 0; step < 200; ++step)
+    {
+        izhikevich_spiked =
+            izhikevich_network.StepSpiking({}, 0.001).front() > 0.0 ||
+            izhikevich_spiked;
+    }
+    Check(izhikevich_spiked,
+          "Izhikevich activation generates spikes under tonic current");
+
+    GenomeInitStruct spiking_init;
+    spiking_init.NumInputs = 2;
+    spiking_init.NumOutputs = 1;
+    spiking_init.OutputActType = SPIKING_ADAPTIVE_LIF;
+    spiking_parameters.DontUseBiasNeuron = true;
+    Genome spiking_genome(spiking_parameters, spiking_init);
+    const Genome restored_spiking_genome =
+        Genome::Deserialize(spiking_genome.Serialize());
+    Check(
+        restored_spiking_genome.IsIdenticalTo(spiking_genome) &&
+            IsSpikingActivation(
+                restored_spiking_genome.m_NeuronGenes[2]
+                    .m_ActFunction),
+        "spiking genes and synapses round-trip");
+    RNG spiking_rng;
+    spiking_rng.Seed(912);
+    spiking_parameters.SpikingParameterMutationRate = 1.0;
+    Check(
+        spiking_genome.Mutate_NeuronSpikingParameters(
+            spiking_parameters, spiking_rng) &&
+            spiking_genome.Mutate_LinkSpikingParameters(
+                spiking_parameters, spiking_rng),
+        "built-in spiking neuron and synapse mutations are effective");
+    NeuralNetwork evolved_spiking_phenotype;
+    spiking_genome.BuildPhenotype(evolved_spiking_phenotype);
+    Check(
+        evolved_spiking_phenotype.IsSpiking() &&
+            evolved_spiking_phenotype.m_connections[0]
+                    .m_synaptic_time_constant > 0.0,
+        "spiking evolutionary state builds into a runnable phenotype");
+    Population first_spiking_population(
+        restored_spiking_genome,
+        spiking_parameters,
+        true,
+        5.0,
+        4411);
+    Population second_spiking_population(
+        restored_spiking_genome,
+        spiking_parameters,
+        true,
+        5.0,
+        4411);
+    Check(
+        first_spiking_population.Serialize() ==
+            second_spiking_population.Serialize(),
+        "spiking genotype initialization uses the seeded population RNG");
+
+    NeuralNetwork eprop_network;
+    Neuron eprop_input;
+    eprop_input.m_type = INPUT;
+    Neuron eprop_output;
+    eprop_output.m_type = OUTPUT;
+    eprop_output.m_activation_function_type = SPIKING_LIF;
+    eprop_output.m_timeconst = 0.01;
+    eprop_output.m_spike_threshold = 0.5;
+    eprop_output.m_refractory_period = 0.0;
+    Neuron eprop_hidden = eprop_output;
+    eprop_hidden.m_type = HIDDEN;
+    eprop_hidden.m_activation_function_type =
+        SPIKING_ADAPTIVE_LIF;
+    eprop_hidden.m_adaptation_increment = 0.01;
+    Connection eprop_input_link;
+    eprop_input_link.m_source_neuron_idx = 0;
+    eprop_input_link.m_target_neuron_idx = 2;
+    eprop_input_link.m_weight = 0.1;
+    eprop_input_link.m_synaptic_time_constant = 0.001;
+    Connection eprop_output_link;
+    eprop_output_link.m_source_neuron_idx = 2;
+    eprop_output_link.m_target_neuron_idx = 1;
+    eprop_output_link.m_weight = 2.0;
+    eprop_output_link.m_synaptic_time_constant = 0.001;
+    eprop_network.AddNeuron(eprop_input);
+    eprop_network.AddNeuron(eprop_output);
+    eprop_network.AddNeuron(eprop_hidden);
+    eprop_network.AddConnection(eprop_input_link);
+    eprop_network.AddConnection(eprop_output_link);
+    eprop_network.SetInputOutputDimensions(1, 1);
+    eprop_network.SetSpikingInputMode(BINARY_SPIKE_INPUT);
+    eprop_network.SetSpikingOutputMode(SPIKE_OUTPUT);
+    eprop_network.SetSpikingTimeStep(0.001);
+    eprop_network.EnableSpikeRecording(false);
+    eprop_network.Flush();
+
+    EPropConfig eprop_config;
+    eprop_config.learning_rate = 0.2;
+    eprop_config.update_interval = 20;
+    eprop_config.gradient_clip_norm = 10.0;
+    eprop_config.max_weight = 12.0;
+    eprop_config.feedback_mode = EPROP_SYMMETRIC_FEEDBACK;
+    eprop_config.surrogate_scale = 5.0;
+    eprop_config.surrogate_dampening = 0.5;
+    EPropLearner eprop(eprop_config);
+    eprop.Initialize(eprop_network);
+    const std::vector<std::vector<double>> eprop_inputs(
+        20, std::vector<double>{1.0});
+    const std::vector<std::vector<double>> eprop_targets(
+        20, std::vector<double>{1.0});
+    double first_eprop_loss = 0.0;
+    double final_eprop_loss = 0.0;
+    for (int epoch = 0; epoch < 30; ++epoch)
+    {
+        const EPropSequenceResult result =
+            eprop.TrainSequence(
+                eprop_network,
+                eprop_inputs,
+                eprop_targets,
+                0.001,
+                true,
+                true);
+        if (epoch == 0)
+            first_eprop_loss = result.mean_loss;
+        final_eprop_loss = result.mean_loss;
+    }
+    Check(
+        final_eprop_loss < first_eprop_loss * 0.25 &&
+            eprop_network.m_connections[0].m_weight > 0.1 &&
+            eprop_network.m_connections[1].m_weight > 2.0,
+        "e-prop assigns temporal credit through a hidden adaptive "
+        "spiking neuron and reduces supervised loss");
+    const std::string eprop_network_state =
+        eprop_network.Serialize();
+    const std::string eprop_learner_state = eprop.Serialize();
+    NeuralNetwork resumed_eprop_network =
+        NeuralNetwork::Deserialize(eprop_network_state);
+    EPropLearner resumed_eprop =
+        EPropLearner::Deserialize(eprop_learner_state);
+    Check(
+        resumed_eprop.Serialize() == eprop_learner_state,
+        "e-prop eligibility and optimizer state round-trip exactly");
+    eprop.TrainSequence(
+        eprop_network,
+        eprop_inputs,
+        eprop_targets,
+        0.001,
+        true,
+        true);
+    resumed_eprop.TrainSequence(
+        resumed_eprop_network,
+        eprop_inputs,
+        eprop_targets,
+        0.001,
+        true,
+        true);
+    Check(
+        resumed_eprop_network.Serialize() ==
+            eprop_network.Serialize() &&
+            resumed_eprop.Serialize() == eprop.Serialize(),
+        "e-prop checkpoint resume is deterministic");
+
+    NeuralNetwork stdp_eprop_network =
+        NeuralNetwork::Deserialize(eprop_network_state);
+    stdp_eprop_network.m_connections[0].m_stdp_enabled = true;
+    EPropLearner guarded_eprop(eprop_config);
+    CheckThrows<std::logic_error>(
+        [&]
+        {
+            guarded_eprop.Initialize(stdp_eprop_network);
+        },
+        "e-prop rejects simultaneous STDP unless explicitly allowed");
+    NeuralNetwork changed_eprop_network =
+        NeuralNetwork::Deserialize(eprop_network_state);
+    changed_eprop_network.AddNeuron(eprop_hidden);
+    CheckThrows<std::logic_error>(
+        [&]
+        {
+            eprop.TrainStep(
+                changed_eprop_network,
+                {1.0},
+                {1.0},
+                0.001);
+        },
+        "e-prop detects topology changes instead of corrupting state");
+
+    EPropConfig deterministic_feedback_config = eprop_config;
+    deterministic_feedback_config.feedback_mode =
+        EPROP_RANDOM_FEEDBACK;
+    deterministic_feedback_config.random_seed = 8080;
+    EPropLearner deterministic_feedback_a(
+        deterministic_feedback_config);
+    EPropLearner deterministic_feedback_b(
+        deterministic_feedback_config);
+    deterministic_feedback_a.Initialize(eprop_network);
+    deterministic_feedback_b.Initialize(eprop_network);
+    Check(
+        deterministic_feedback_a.FeedbackMatrix() ==
+            deterministic_feedback_b.FeedbackMatrix(),
+        "e-prop random feedback is reproducible from its seed");
+
+    NeuralNetwork modulated_eprop_network;
+    modulated_eprop_network.AddNeuron(eprop_input);
+    modulated_eprop_network.AddNeuron(eprop_output);
+    Connection modulated_link = eprop_input_link;
+    modulated_link.m_target_neuron_idx = 1;
+    modulated_link.m_weight = 0.1;
+    modulated_eprop_network.AddConnection(modulated_link);
+    modulated_eprop_network.SetInputOutputDimensions(1, 1);
+    modulated_eprop_network.SetSpikingInputMode(
+        BINARY_SPIKE_INPUT);
+    modulated_eprop_network.SetSpikingOutputMode(
+        MEMBRANE_POTENTIAL_OUTPUT);
+    modulated_eprop_network.Flush();
+    EPropConfig modulated_config;
+    modulated_config.optimizer = EPROP_SGD;
+    modulated_config.learning_rate = 0.5;
+    modulated_config.update_interval = 1;
+    modulated_config.min_weight = -0.11;
+    modulated_config.max_weight = 0.11;
+    EPropLearner modulated_eprop(modulated_config);
+    modulated_eprop.Initialize(modulated_eprop_network);
+    const EPropStepResult modulated_result =
+        modulated_eprop.TrainStepWithSignals(
+            modulated_eprop_network,
+            {1.0},
+            {-1.0},
+            0.001);
+    Check(
+        modulated_result.update_applied &&
+            modulated_result.updated_connections == 1 &&
+            modulated_eprop_network.m_connections[0].m_weight ==
+                0.11 &&
+            modulated_eprop.ConnectionStates()[0]
+                    .readout_eligibility > 0.0,
+        "custom e-prop learning signals use decoder-aware "
+        "eligibility and enforce weight bounds");
+
+    NeuralNetwork delayed_zero_network;
+    delayed_zero_network.AddNeuron(eprop_input);
+    delayed_zero_network.AddNeuron(eprop_output);
+    Connection delayed_zero_link = modulated_link;
+    delayed_zero_link.m_weight = 0.0;
+    delayed_zero_link.m_synaptic_delay = 0.003;
+    delayed_zero_network.AddConnection(delayed_zero_link);
+    delayed_zero_network.SetInputOutputDimensions(1, 1);
+    delayed_zero_network.SetSpikingInputMode(BINARY_SPIKE_INPUT);
+    delayed_zero_network.SetSpikingOutputMode(
+        MEMBRANE_POTENTIAL_OUTPUT);
+    delayed_zero_network.Flush();
+    EPropConfig delayed_zero_config = modulated_config;
+    delayed_zero_config.min_weight = -1.0;
+    delayed_zero_config.max_weight = 1.0;
+    EPropLearner delayed_zero_eprop(delayed_zero_config);
+    delayed_zero_eprop.Initialize(delayed_zero_network);
+    delayed_zero_eprop.TrainStepWithSignals(
+        delayed_zero_network, {1.0}, {-1.0}, 0.001);
+    delayed_zero_eprop.TrainStepWithSignals(
+        delayed_zero_network, {0.0}, {-1.0}, 0.001);
+    Check(
+        delayed_zero_network.m_connections[0].m_weight == 0.0,
+        "e-prop waits for a delayed zero-weight event");
+    delayed_zero_eprop.TrainStepWithSignals(
+        delayed_zero_network, {0.0}, {-1.0}, 0.001);
+    Check(
+        delayed_zero_network.m_connections[0].m_weight > 0.0 &&
+            delayed_zero_network.m_connections[0]
+                    .m_presynaptic_signal == 1.0,
+        "unweighted delivery traces let e-prop revive a zero-weight "
+        "delayed synapse");
+
+    EPropConfig invalid_eprop_config;
+    invalid_eprop_config.learning_rate = 0.0;
+    EPropLearner invalid_eprop(invalid_eprop_config);
+    CheckThrows<std::invalid_argument>(
+        [&]
+        {
+            invalid_eprop.Initialize(modulated_eprop_network);
+        },
+        "e-prop validates optimizer configuration");
 
     NeuralNetwork trainable;
     input.m_type = INPUT;

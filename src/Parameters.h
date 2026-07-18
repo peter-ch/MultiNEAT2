@@ -383,6 +383,9 @@ public:
     double ActivationFunction_Linear_Prob;
     double ActivationFunction_Relu_Prob;
     double ActivationFunction_Softplus_Prob;
+    double ActivationFunction_SpikingLIF_Prob;
+    double ActivationFunction_SpikingAdaptiveLIF_Prob;
+    double ActivationFunction_SpikingIzhikevich_Prob;
 
     // Probability for a baby's neuron time constant values to be mutated
     double MutateNeuronTimeConstantsProb;
@@ -397,6 +400,65 @@ public:
     // Bias range
     double MinNeuronBias;
     double MaxNeuronBias;
+
+    /////////////////////////////////////
+    // Spiking-neural-network parameters
+    /////////////////////////////////////
+
+    // Probabilities that the corresponding built-in parameter mutation is
+    // selected during reproduction. Zero preserves historical evolution.
+    double MutateNeuronSpikingParametersProb;
+    double MutateLinkSpikingParametersProb;
+
+    // Per-field mutation rate and the maximum fraction of a field's allowed
+    // range used by one perturbation.
+    double SpikingParameterMutationRate;
+    double SpikingParameterMutationPower;
+
+    // Evolvable LIF and adaptive-LIF ranges.
+    double MinSpikingTimeConstant;
+    double MaxSpikingTimeConstant;
+    double MinSpikeThreshold;
+    double MaxSpikeThreshold;
+    double MinResetPotential;
+    double MaxResetPotential;
+    double MinRestingPotential;
+    double MaxRestingPotential;
+    double MinRefractoryPeriod;
+    double MaxRefractoryPeriod;
+    double MinMembraneResistance;
+    double MaxMembraneResistance;
+    double MinAdaptationTimeConstant;
+    double MaxAdaptationTimeConstant;
+    double MinAdaptationIncrement;
+    double MaxAdaptationIncrement;
+    double MinSpikeRateTimeConstant;
+    double MaxSpikeRateTimeConstant;
+
+    // Evolvable Izhikevich a/b/c/d ranges.
+    double MinIzhikevichA;
+    double MaxIzhikevichA;
+    double MinIzhikevichThreshold;
+    double MaxIzhikevichThreshold;
+    double MinIzhikevichB;
+    double MaxIzhikevichB;
+    double MinIzhikevichC;
+    double MaxIzhikevichC;
+    double MinIzhikevichD;
+    double MaxIzhikevichD;
+
+    // Evolvable current-based exponential synapse and STDP ranges.
+    double MinSynapticDelay;
+    double MaxSynapticDelay;
+    double MinSynapticTimeConstant;
+    double MaxSynapticTimeConstant;
+    double InitialSTDPEnabledProb;
+    double MinSTDPPlus;
+    double MaxSTDPPlus;
+    double MinSTDPMinus;
+    double MaxSTDPMinus;
+    double MinSTDPTau;
+    double MaxSTDPTau;
 
     /////////////////////////////////////
     // Speciation parameters
@@ -425,6 +487,11 @@ public:
 
     // Activation function type difference importance
     double ActivationFunctionDiffCoeff;
+
+    // Distance contributed by matching spiking neuron and synapse
+    // parameters. Defaults are zero for compatibility.
+    double SpikingNeuronDiffCoeff;
+    double SpikingLinkDiffCoeff;
 
     // Compatibility treshold
     double CompatTreshold;
@@ -614,6 +681,11 @@ public:
 
     // resets the parameters to built-in defaults
     void Reset();
+
+    // Opt-in preset for evolving mixed spiking topologies. Existing users
+    // retain rate-network defaults until this is called or fields are set
+    // explicitly.
+    void ConfigureSpiking(bool enable_stdp = false);
 
     // Complete, round-trippable persistence used by Python pickling and
     // population checkpoints. Function callbacks are intentionally omitted.

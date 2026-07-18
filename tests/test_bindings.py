@@ -114,6 +114,126 @@ assert network.ActivateBatch([[1.0], [2.0], [-1.0]]) == [
     [-2.0],
 ]
 
+spiking_parameters = neat.Parameters()
+spiking_parameters.ConfigureSpiking(True)
+assert spiking_parameters.ActivationFunction_SpikingLIF_Prob == 0.65
+assert spiking_parameters.InitialSTDPEnabledProb == 0.1
+assert spiking_parameters.Validate() == (True, "")
+spiking_parameters = pickle.loads(pickle.dumps(spiking_parameters))
+assert spiking_parameters.MutateLinkSpikingParametersProb > 0.0
+
+spiking = neat.NeuralNetwork()
+spike_input = neat.Neuron()
+spike_input.m_type = neat.INPUT
+lif_output = neat.Neuron()
+lif_output.m_type = neat.OUTPUT
+lif_output.m_activation_function_type = neat.SPIKING_LIF
+lif_output.m_timeconst = 0.01
+lif_output.m_spike_threshold = 0.5
+lif_output.m_refractory_period = 0.002
+synapse = neat.Connection()
+synapse.m_source_neuron_idx = 0
+synapse.m_target_neuron_idx = 1
+synapse.m_weight = 10.0
+synapse.m_synaptic_delay = 0.003
+synapse.m_synaptic_time_constant = 0.001
+spiking.AddNeuron(spike_input)
+spiking.AddNeuron(lif_output)
+spiking.AddConnection(synapse)
+spiking.SetInputOutputDimensions(1, 1)
+spiking.SetSpikingInputMode(neat.BINARY_SPIKE_INPUT)
+spiking.SetSpikingOutputMode(neat.SPIKE_OUTPUT)
+spiking.SetSpikingTimeStep(0.001)
+spiking.Flush()
+assert spiking.StepSpiking([1.0]) == [0.0]
+assert spiking.StepSpiking([0.0]) == [0.0]
+assert spiking.StepSpiking([0.0]) == [1.0]
+events = spiking.GetSpikeHistory()
+assert len(events) == 2
+assert events[0].input and not events[1].input
+assert abs(events[1].time - 0.003) < 1.0e-12
+assert spiking.OutputRates()[0] > 0.0
+assert spiking.OutputFilteredSpikes()[0] > 0.0
+spiking.SetSpikingOutputMode(neat.MEMBRANE_POTENTIAL_OUTPUT)
+assert len(spiking.OutputDecoded()) == 1
+restored_spiking = pickle.loads(pickle.dumps(spiking))
+assert restored_spiking.Serialize() == spiking.Serialize()
+assert restored_spiking.IsSpiking()
+
+spiking_parameters.DontUseBiasNeuron = True
+spiking_init = neat.GenomeInitStruct()
+spiking_init.NumInputs = 2
+spiking_init.NumOutputs = 1
+spiking_init.OutputActType = neat.SPIKING_ADAPTIVE_LIF
+spiking_genome = neat.Genome(spiking_parameters, spiking_init)
+assert spiking_genome.Validate() == (True, "")
+spiking_phenotype = neat.NeuralNetwork()
+spiking_genome.BuildPhenotype(spiking_phenotype)
+assert spiking_phenotype.IsSpiking()
+spiking_parameters.SpikingParameterMutationRate = 1.0
+spiking_rng = neat.RNG()
+spiking_rng.Seed(55)
+assert spiking_genome.Mutate_NeuronSpikingParameters(
+    spiking_parameters, spiking_rng
+)
+assert spiking_genome.Mutate_LinkSpikingParameters(
+    spiking_parameters, spiking_rng
+)
+
+eprop_network = neat.NeuralNetwork()
+eprop_input = neat.Neuron()
+eprop_input.m_type = neat.INPUT
+eprop_output = neat.Neuron()
+eprop_output.m_type = neat.OUTPUT
+eprop_output.m_activation_function_type = neat.SPIKING_LIF
+eprop_output.m_timeconst = 0.01
+eprop_output.m_spike_threshold = 0.5
+eprop_output.m_refractory_period = 0.0
+eprop_link = neat.Connection()
+eprop_link.m_source_neuron_idx = 0
+eprop_link.m_target_neuron_idx = 1
+eprop_link.m_weight = 0.1
+eprop_link.m_synaptic_time_constant = 0.001
+eprop_network.AddNeuron(eprop_input)
+eprop_network.AddNeuron(eprop_output)
+eprop_network.AddConnection(eprop_link)
+eprop_network.SetInputOutputDimensions(1, 1)
+eprop_network.SetSpikingInputMode(neat.BINARY_SPIKE_INPUT)
+eprop_network.SetSpikingOutputMode(neat.SPIKE_OUTPUT)
+eprop_network.SetSpikingTimeStep(0.001)
+eprop_network.EnableSpikeRecording(False)
+eprop_network.Flush()
+
+eprop_config = neat.EPropConfig()
+eprop_config.learning_rate = 0.2
+eprop_config.update_interval = 20
+eprop_config.gradient_clip_norm = 10.0
+eprop_config.max_weight = 12.0
+eprop_config.surrogate_scale = 5.0
+eprop_config.surrogate_dampening = 0.5
+eprop = neat.EPropLearner(eprop_config)
+eprop.Initialize(eprop_network)
+eprop_inputs = [[1.0]] * 20
+eprop_targets = [[1.0]] * 20
+eprop_losses = []
+for _ in range(30):
+    result = eprop.TrainSequence(
+        eprop_network,
+        eprop_inputs,
+        eprop_targets,
+        0.001,
+        True,
+        True,
+    )
+    eprop_losses.append(result.mean_loss)
+assert eprop_losses[-1] < eprop_losses[0] * 0.25
+assert eprop_network.GetConnectionByIndex(0).m_weight > 0.1
+assert eprop.OptimizerStep() == 30
+restored_eprop = pickle.loads(pickle.dumps(eprop))
+assert restored_eprop.Serialize() == eprop.Serialize()
+assert len(restored_eprop.ConnectionStates()) == 1
+assert len(restored_eprop.FeedbackMatrix()) == 2
+
 trainable = neat.NeuralNetwork()
 input_neuron.m_activation = 0.0
 output_neuron.m_a = 2.0

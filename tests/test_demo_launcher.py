@@ -23,14 +23,14 @@ def check(condition, message):
         raise AssertionError(message)
 
 
-check(len(launcher.DEMOS) == 20, "launcher should expose 20 unique demos")
+check(len(launcher.DEMOS) == 23, "launcher should expose 23 unique demos")
 check(
     len(launcher.DEMO_BY_ID) == len(launcher.DEMOS),
     "launcher demo IDs must be unique",
 )
 check(
     {item.family for item in launcher.DEMOS}
-    == {"Core", "Games", "Box2D", "MuJoCo"},
+    == {"Core", "Spiking", "Games", "Box2D", "MuJoCo"},
     "launcher families are incomplete",
 )
 for demo in launcher.DEMOS:
@@ -100,6 +100,55 @@ xor_command, _ = launcher.build_demo_command(
 )
 check("--no-show" in xor_command, "headless XOR command should suppress its plot")
 
+spiking_command, _ = launcher.build_demo_command(
+    launcher.DEMO_BY_ID["spiking_cartpole"],
+    runtime,
+    launcher.LaunchOptions(mode="run", render=True, max_steps=33),
+)
+check("--animate" in spiking_command, "spiking demo should enable animation")
+check(
+    spiking_command[spiking_command.index("--max-steps") + 1] == "33",
+    "spiking Cart-Pole should receive its control horizon",
+)
+
+physics_spiking_command, physics_spiking_output = launcher.build_demo_command(
+    launcher.DEMO_BY_ID["mujoco_reacher"],
+    runtime,
+    launcher.LaunchOptions(
+        mode="run",
+        spiking=True,
+        output_base=ROOT / "runs",
+    ),
+    timestamp="spikes",
+)
+check(
+    "--spiking" in physics_spiking_command,
+    "physics demos should expose their spiking policy variant",
+)
+check(
+    physics_spiking_output
+    == ROOT / "runs" / "mujoco_reacher-spiking-spikes",
+    "spiking runs should use a distinct output folder",
+)
+spiking_render_modules = launcher.required_modules(
+    launcher.DEMO_BY_ID["mujoco_reacher"],
+    launcher.LaunchOptions(mode="run", spiking=True, render=True),
+)
+check(
+    {"matplotlib", "networkx"}.issubset(spiking_render_modules),
+    "spiking physics rendering dependencies are not preflighted",
+)
+
+xor_spiking_command, _ = launcher.build_demo_command(
+    launcher.DEMO_BY_ID["xor"],
+    runtime,
+    launcher.LaunchOptions(mode="smoke", spiking=True),
+)
+check(
+    "--spiking" in xor_spiking_command and "--smoke" in xor_spiking_command,
+    "XOR spiking smoke command is incomplete",
+)
+
 asteroid_command, _ = launcher.build_demo_command(
     launcher.DEMO_BY_ID["asteroids"],
     runtime,
@@ -108,6 +157,16 @@ asteroid_command, _ = launcher.build_demo_command(
 check(
     "--headless" in asteroid_command,
     "headless Asteroids command should suppress its window",
+)
+asteroid_spiking_command, _ = launcher.build_demo_command(
+    launcher.DEMO_BY_ID["asteroids"],
+    runtime,
+    launcher.LaunchOptions(mode="run", render=True, spiking=True),
+)
+check(
+    "--spiking" in asteroid_spiking_command
+    and "--headless" not in asteroid_spiking_command,
+    "visible Asteroids should launch its live spiking policy panel",
 )
 
 print("Demo launcher tests passed.")

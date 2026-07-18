@@ -14,6 +14,7 @@ When fast mode is off the simulation shows only the best-ever individual being r
 
 from __future__ import annotations
 import argparse
+import json
 import math
 from pathlib import Path
 import random
@@ -31,12 +32,19 @@ import pymultineat as pnt  # noqa: E402
 # Import numba and numpy for optimized routines.
 import numba  # noqa: E402
 import numpy as np  # noqa: E402
+from spiking_neat import (  # noqa: E402
+    SpikingPolicy,
+    SpikingPolicySettings,
+    configure_spiking_genome,
+    configure_spiking_parameters,
+)
 
 # -----------------------------
 # Constants and configuration
 # -----------------------------
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 600
+SPIKING_PANEL_WIDTH = 420
 FPS = 60
 
 # Global flag: when True, training is done in non‐rendered fast mode.
@@ -241,18 +249,38 @@ def spawn_asteroids(ship: Ship) -> List[Asteroid]:
 # Asteroids Simulation Runner
 # -----------------------------
 class AsteroidsSimulation:
-    def __init__(self, genome: pnt.Genome, screen: pygame.Surface) -> None:
+    def __init__(
+        self,
+        genome: pnt.Genome,
+        screen: pygame.Surface,
+        *,
+        spiking: bool = False,
+        spiking_settings: SpikingPolicySettings | None = None,
+        seed: int = 1,
+        screenshot: Path | None = None,
+    ) -> None:
         self.screen = screen
         self.simulation_steps = 0
-        self.max_steps = MAX_TRIAL_TIME * FPS
+        self.max_steps = MAX_TRIAL_TIME
         # Build the neural network phenotype.
         self.nn = pnt.NeuralNetwork()
         genome.BuildPhenotype(self.nn)
+        self.spiking = spiking
+        self.spiking_policy = (
+            SpikingPolicy(self.nn, spiking_settings)
+            if spiking
+            else None
+        )
+        if self.spiking_policy is not None:
+            self.spiking_policy.reset(seed)
+            self.nn.EnableSpikeRecording(not FAST_MODE, 20_000)
         self.ship = Ship(pos=(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2))
         self.asteroids = spawn_asteroids(self.ship)
         self.clock = pygame.time.Clock()
         self.sensor_endpoints: List[pygame.math.Vector2] = []
         self.last_status_print = 0
+        self.screenshot = screenshot
+        self.screenshot_saved = False
 
     def handle_events(self) -> None:
         global FAST_MODE
@@ -301,9 +329,17 @@ class AsteroidsSimulation:
             self.sensor_endpoints = []
 
         inputs = sensor_values.tolist() + [1.0]
-        self.nn.Input(inputs)
-        self.nn.Activate()
-        outputs = self.nn.Output()
+        if self.spiking_policy is None:
+            self.nn.Input(inputs)
+            self.nn.Activate()
+            outputs = self.nn.Output()
+        else:
+            signed_inputs = [
+                2.0 * value - 1.0
+                for value in sensor_values.tolist()
+            ]
+            signed_inputs.append(1.0)
+            outputs = self.spiking_policy.step_unsigned(signed_inputs)
 
         rotation = (outputs[1] - outputs[0]) * ROTATION_MULTIPLIER
 
@@ -352,7 +388,147 @@ class AsteroidsSimulation:
         sim_time = self.simulation_steps / FPS
         time_text = font.render(f"SimTime: {sim_time:.2f}s", True, WHITE)
         self.screen.blit(time_text, (10, 10))
+        if self.spiking:
+            self._draw_spiking_panel()
         pygame.display.flip()
+        if self.screenshot is not None and not self.screenshot_saved:
+            self.screenshot.parent.mkdir(parents=True, exist_ok=True)
+            pygame.image.save(self.screen, str(self.screenshot))
+            self.screenshot_saved = True
+
+    def _draw_spiking_panel(self) -> None:
+        """Draw live phenotype activity and a moving spike raster."""
+
+        left = SCREEN_WIDTH
+        panel = pygame.Rect(
+            left,
+            0,
+            SPIKING_PANEL_WIDTH,
+            SCREEN_HEIGHT,
+        )
+        pygame.draw.rect(self.screen, (10, 18, 34), panel)
+        pygame.draw.line(
+            self.screen,
+            (71, 85, 105),
+            (left, 0),
+            (left, SCREEN_HEIGHT),
+            2,
+        )
+        font = pygame.font.SysFont("Arial", 16)
+        small = pygame.font.SysFont("Arial", 12)
+        self.screen.blit(
+            font.render("Spiking policy", True, (226, 232, 240)),
+            (left + 16, 12),
+        )
+        rates = self.nn.OutputFilteredSpikes()
+        for index, rate in enumerate(rates):
+            y = 45 + index * 28
+            width = int(min(1.0, max(0.0, rate / 200.0)) * 210)
+            pygame.draw.rect(
+                self.screen,
+                (30, 41, 59),
+                (left + 92, y, 210, 16),
+            )
+            pygame.draw.rect(
+                self.screen,
+                (56, 189, 248),
+                (left + 92, y, width, 16),
+            )
+            self.screen.blit(
+                small.render(f"motor {index}", True, (148, 163, 184)),
+                (left + 18, y),
+            )
+            self.screen.blit(
+                small.render(f"{rate:5.1f} Hz", True, (226, 232, 240)),
+                (left + 310, y),
+            )
+
+        neurons = self.nn.m_neurons
+        layers: dict[int, list[int]] = {0: [], 1: [], 2: []}
+        for index, neuron in enumerate(neurons):
+            if index < self.nn.NumInputs():
+                layers[0].append(index)
+            elif index < self.nn.NumInputs() + self.nn.NumOutputs():
+                layers[2].append(index)
+            else:
+                layers[1].append(index)
+        positions: dict[int, tuple[int, int]] = {}
+        layer_x = (left + 35, left + 205, left + 375)
+        for layer, indices in layers.items():
+            for order, index in enumerate(indices):
+                y = 155 + int(
+                    (order + 1) * 190 / (len(indices) + 1)
+                )
+                positions[index] = (layer_x[layer], y)
+        for connection in self.nn.m_connections[:250]:
+            source = positions.get(connection.m_source_neuron_idx)
+            target = positions.get(connection.m_target_neuron_idx)
+            if source is None or target is None:
+                continue
+            color = (
+                (37, 99, 235)
+                if connection.m_weight >= 0.0
+                else (244, 63, 94)
+            )
+            pygame.draw.line(self.screen, color, source, target, 1)
+        for index, position in positions.items():
+            neuron = neurons[index]
+            color = (
+                (250, 204, 21)
+                if neuron.m_spike
+                else (56, 189, 248)
+                if index >= self.nn.NumInputs()
+                else (34, 197, 94)
+            )
+            radius = 6 if neuron.m_spike else 4
+            pygame.draw.circle(self.screen, color, position, radius)
+
+        raster_top = 385
+        raster_height = 190
+        pygame.draw.rect(
+            self.screen,
+            (15, 23, 42),
+            (
+                left + 12,
+                raster_top,
+                SPIKING_PANEL_WIDTH - 24,
+                raster_height,
+            ),
+        )
+        self.screen.blit(
+            small.render(
+                "moving spike raster · last 200 ms",
+                True,
+                (148, 163, 184),
+            ),
+            (left + 18, raster_top + 5),
+        )
+        now = self.nn.SpikingTime()
+        start = max(0.0, now - 0.2)
+        visible = max(1, len(neurons))
+        for event in self.nn.GetSpikeHistory():
+            if event.time < start:
+                continue
+            x = left + 18 + int(
+                (event.time - start) / 0.2 *
+                (SPIKING_PANEL_WIDTH - 42)
+            )
+            y = raster_top + 26 + int(
+                event.neuron_index / visible *
+                (raster_height - 34)
+            )
+            color = (
+                (34, 197, 94)
+                if event.input
+                else (251, 113, 133)
+            )
+            pygame.draw.line(
+                self.screen,
+                color,
+                (x, y - 2),
+                (x, y + 2),
+                1,
+            )
 
     def run(self) -> int:
         running = True
@@ -382,9 +558,25 @@ def main() -> None:
     parser.add_argument("--max-trial-steps", type=int, default=MAX_TRIAL_TIME)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument(
+        "--spiking",
+        action="store_true",
+        help="evolve a Poisson-encoded spiking Asteroids controller",
+    )
+    parser.add_argument(
+        "--spiking-steps",
+        type=int,
+        default=8,
+        help="SNN solver steps per game frame",
+    )
+    parser.add_argument(
         "--headless",
         action="store_true",
         help="run without opening the PyGame window",
+    )
+    parser.add_argument(
+        "--screenshot",
+        type=Path,
+        help="save the first frame of the final best-policy replay",
     )
     parser.add_argument(
         "--smoke",
@@ -397,6 +589,8 @@ def main() -> None:
         args.generations = 1
         args.max_trial_steps = 3
         args.headless = True
+        if args.spiking:
+            args.spiking_steps = 4
 
     MAX_TRIAL_TIME = max(1, args.max_trial_steps)
     if args.headless:
@@ -407,8 +601,20 @@ def main() -> None:
 
     pygame.init()
     flags = pygame.HIDDEN if args.headless else 0
-    screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), flags=flags)
-    pygame.display.set_caption("NEAT Asteroids Experiment")
+    window_width = (
+        SCREEN_WIDTH + SPIKING_PANEL_WIDTH
+        if args.spiking
+        else SCREEN_WIDTH
+    )
+    screen = pygame.display.set_mode(
+        (window_width, SCREEN_HEIGHT),
+        flags=flags,
+    )
+    pygame.display.set_caption(
+        "Spiking NEAT Asteroids"
+        if args.spiking
+        else "NEAT Asteroids Experiment"
+    )
 
     # Setup MultiNEAT parameters.
     params = pnt.Parameters()
@@ -446,6 +652,13 @@ def main() -> None:
     params.MutateLinkTraitsProb = 0.0
     params.AllowLoops = True
     params.AllowClones = True
+    if args.spiking:
+        configure_spiking_parameters(
+            pnt,
+            params,
+            recurrent=True,
+            enable_stdp=False,
+        )
 
     # Genome initialization: NUM_SENSORS (plus bias) inputs and 3 outputs.
     init_struct = pnt.GenomeInitStruct()
@@ -455,10 +668,17 @@ def main() -> None:
     init_struct.SeedType = pnt.GenomeSeedType.PERCEPTRON    
     init_struct.HiddenActType = pnt.UNSIGNED_SIGMOID
     init_struct.OutputActType = pnt.UNSIGNED_SIGMOID
+    if args.spiking:
+        configure_spiking_genome(pnt, init_struct)
 
     genome_prototype = pnt.Genome(params, init_struct)
     seed = args.seed if args.seed is not None else int(time.time())
+    random.seed(seed)
+    np.random.seed(seed)
     pop = pnt.Population(genome_prototype, params, True, 1.0, seed)
+    spiking_settings = SpikingPolicySettings(
+        simulation_steps=args.spiking_steps,
+    )
 
     gen = 0
 
@@ -473,7 +693,13 @@ def main() -> None:
             for species in pop.m_Species:
                 for idx in range(len(species.m_Individuals)):
                     genome = species.m_Individuals[idx]
-                    simulation = AsteroidsSimulation(genome, screen)
+                    simulation = AsteroidsSimulation(
+                        genome,
+                        screen,
+                        spiking=args.spiking,
+                        spiking_settings=spiking_settings,
+                        seed=seed + gen * args.population + idx,
+                    )
                     fitness = simulation.run()
                     # If fast mode is turned off mid-evaluation, break out immediately.
                     if not FAST_MODE:
@@ -511,8 +737,45 @@ def main() -> None:
             # Demo mode: continuously replay the best genome.
             bestGenome = pop.GetBestGenome()
             print("Demo mode: Replaying best individual... (Press F to resume training)", flush=True)
-            simulation = AsteroidsSimulation(bestGenome, screen)
+            simulation = AsteroidsSimulation(
+                bestGenome,
+                screen,
+                spiking=args.spiking,
+                spiking_settings=spiking_settings,
+                seed=seed + gen,
+            )
             simulation.run()
+    if args.generations and (
+        not args.headless or args.screenshot is not None
+    ):
+        FAST_MODE = False
+        print(
+            "Replaying the best individual with live policy visualization...",
+            flush=True,
+        )
+        simulation = AsteroidsSimulation(
+            bestGenome,
+            screen,
+            spiking=args.spiking,
+            spiking_settings=spiking_settings,
+            seed=seed + gen,
+            screenshot=args.screenshot,
+        )
+        simulation.run()
+    print(
+        json.dumps(
+            {
+                "demo": "asteroids",
+                "policy": "spiking" if args.spiking else "rate",
+                "generations": gen,
+                "population": args.population,
+                "best_fitness": bestFitness,
+                "neurons": bestGenome.NumNeurons(),
+                "links": bestGenome.NumLinks(),
+            }
+        ),
+        flush=True,
+    )
     pygame.quit()
 
 if __name__ == "__main__":

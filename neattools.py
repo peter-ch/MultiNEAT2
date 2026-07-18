@@ -15,13 +15,15 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+import csv
 import json
 import math
 from pathlib import Path
-from typing import Any, Iterable, Mapping, MutableMapping, Sequence
+from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
 import warnings
 
 import matplotlib.pyplot as plt
+from matplotlib import animation as mpl_animation
 from matplotlib import lines as mpl_lines
 import networkx as nx
 import numpy as np
@@ -57,6 +59,9 @@ _ACTIVATION_NAMES = {
         "LINEAR",
         "RELU",
         "SOFTPLUS",
+        "SPIKING_LIF",
+        "SPIKING_ADAPTIVE_LIF",
+        "SPIKING_IZHIKEVICH",
     )
     if hasattr(pnt, name)
 }
@@ -128,6 +133,33 @@ def Genome2NX(genome: pnt.Genome) -> nx.DiGraph:
             bias=neuron.m_Bias,
             act_function=activation,
             activation_name=_ACTIVATION_NAMES.get(activation, str(activation)),
+            is_spiking=bool(
+                getattr(pnt, "IsSpikingActivation", lambda _: False)(
+                    activation
+                )
+            ),
+            spike_threshold=getattr(neuron, "m_SpikeThreshold", 1.0),
+            reset_potential=getattr(neuron, "m_ResetPotential", 0.0),
+            resting_potential=getattr(neuron, "m_RestingPotential", 0.0),
+            refractory_period=getattr(neuron, "m_RefractoryPeriod", 0.0),
+            membrane_resistance=getattr(
+                neuron, "m_MembraneResistance", 1.0
+            ),
+            adaptation_time_constant=getattr(
+                neuron, "m_AdaptationTimeConstant", 0.1
+            ),
+            adaptation_increment=getattr(
+                neuron, "m_AdaptationIncrement", 0.0
+            ),
+            rate_time_constant=getattr(
+                neuron, "m_RateTimeConstant", 0.05
+            ),
+            izhikevich=(
+                getattr(neuron, "m_IzhikevichA", 0.02),
+                getattr(neuron, "m_IzhikevichB", 0.2),
+                getattr(neuron, "m_IzhikevichC", -65.0),
+                getattr(neuron, "m_IzhikevichD", 8.0),
+            ),
             traits=_traits(neuron.m_Traits),
         )
     for link in genome.m_LinkGenes:
@@ -137,6 +169,13 @@ def Genome2NX(genome: pnt.Genome) -> nx.DiGraph:
             innovation_id=link.m_InnovationID,
             weight=link.m_Weight,
             is_recurrent=bool(link.m_IsRecurrent),
+            synaptic_delay=getattr(link, "m_SynapticDelay", 0.0),
+            synaptic_time_constant=getattr(
+                link, "m_SynapticTimeConstant", 0.005
+            ),
+            stdp_enabled=bool(getattr(link, "m_STDPEnabled", False)),
+            stdp_plus=getattr(link, "m_STDPPlus", 0.0),
+            stdp_minus=getattr(link, "m_STDPMinus", 0.0),
             traits=_traits(link.m_Traits),
         )
     return graph
@@ -1766,7 +1805,718 @@ def print_genome_summary(genome: pnt.Genome) -> None:
     )
 
 
+def _spike_event_rows(source: Any) -> list[dict[str, Any]]:
+    """Normalize a network, recorder, or event sequence."""
+
+    if isinstance(source, SpikingRecorder):
+        values = source.events
+    elif hasattr(source, "GetSpikeHistory"):
+        values = source.GetSpikeHistory()
+    else:
+        values = source
+    rows = []
+    for event in values:
+        if isinstance(event, Mapping):
+            rows.append(
+                {
+                    "time": float(event["time"]),
+                    "neuron_index": int(event["neuron_index"]),
+                    "amplitude": float(event.get("amplitude", 1.0)),
+                    "input": bool(event.get("input", False)),
+                }
+            )
+        else:
+            rows.append(
+                {
+                    "time": float(event.time),
+                    "neuron_index": int(event.neuron_index),
+                    "amplitude": float(event.amplitude),
+                    "input": bool(event.input),
+                }
+            )
+    return rows
+
+
+class SpikingRecorder:
+    """Record synchronized spike, membrane, rate, output, and weight traces."""
+
+    def __init__(self, network: pnt.NeuralNetwork) -> None:
+        self.network = network
+        self.times: list[float] = []
+        self.membrane: list[list[float]] = []
+        self.filtered_rates: list[list[float]] = []
+        self.spikes: list[list[float]] = []
+        self.outputs: list[list[float]] = []
+        self.weights: list[list[float]] = []
+        self.events: list[dict[str, Any]] = []
+
+    @property
+    def neuron_count(self) -> int:
+        return len(self.network.m_neurons)
+
+    def clear(self, *, reset_network: bool = False) -> None:
+        self.times.clear()
+        self.membrane.clear()
+        self.filtered_rates.clear()
+        self.spikes.clear()
+        self.outputs.clear()
+        self.weights.clear()
+        self.events.clear()
+        if reset_network:
+            self.network.Flush()
+
+    def record(self) -> None:
+        neurons = self.network.m_neurons
+        self.times.append(float(self.network.SpikingTime()))
+        self.membrane.append(
+            [float(neuron.m_membrane_potential) for neuron in neurons]
+        )
+        self.filtered_rates.append(
+            [float(neuron.m_rate_trace) for neuron in neurons]
+        )
+        self.spikes.append(
+            [1.0 if neuron.m_spike else 0.0 for neuron in neurons]
+        )
+        self.outputs.append(
+            [float(value) for value in self.network.OutputDecoded()]
+        )
+        self.weights.append(
+            [float(connection.m_weight) for connection in self.network.m_connections]
+        )
+        self.events = _spike_event_rows(self.network)
+
+    def step(
+        self,
+        inputs: Sequence[float],
+        time_step: float | None = None,
+    ) -> list[float]:
+        output = self.network.StepSpiking(
+            list(inputs), -1.0 if time_step is None else time_step
+        )
+        self.record()
+        return list(output)
+
+    def simulate(
+        self,
+        inputs: Iterable[Sequence[float]],
+        *,
+        time_step: float | None = None,
+        reset: bool = True,
+    ) -> list[list[float]]:
+        if reset:
+            self.clear(reset_network=True)
+        return [self.step(sample, time_step) for sample in inputs]
+
+    def as_arrays(self) -> dict[str, np.ndarray]:
+        return {
+            "time": np.asarray(self.times, dtype=float),
+            "membrane": np.asarray(self.membrane, dtype=float),
+            "filtered_rates": np.asarray(self.filtered_rates, dtype=float),
+            "spikes": np.asarray(self.spikes, dtype=float),
+            "outputs": np.asarray(self.outputs, dtype=float),
+            "weights": np.asarray(self.weights, dtype=float),
+        }
+
+    def save(self, path: str | Path) -> Path:
+        """Save traces as NPZ, JSON, or tidy CSV."""
+
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        suffix = destination.suffix.lower()
+        arrays = self.as_arrays()
+        if suffix == ".npz":
+            np.savez_compressed(destination, **arrays)
+        elif suffix == ".json":
+            payload = {
+                key: value.tolist() for key, value in arrays.items()
+            }
+            payload["events"] = self.events
+            destination.write_text(
+                json.dumps(payload, indent=2),
+                encoding="utf-8",
+            )
+        elif suffix == ".csv":
+            with destination.open("w", newline="", encoding="utf-8") as stream:
+                writer = csv.writer(stream)
+                writer.writerow(
+                    (
+                        "time",
+                        "neuron",
+                        "membrane",
+                        "filtered_rate_hz",
+                        "spike",
+                    )
+                )
+                for sample, time in enumerate(self.times):
+                    for neuron in range(self.neuron_count):
+                        writer.writerow(
+                            (
+                                time,
+                                neuron,
+                                self.membrane[sample][neuron],
+                                self.filtered_rates[sample][neuron],
+                                self.spikes[sample][neuron],
+                            )
+                        )
+        else:
+            raise ValueError("Spiking traces support .npz, .json, and .csv.")
+        return destination
+
+
+def spike_train_statistics(
+    source: Any,
+    *,
+    duration: float | None = None,
+    neuron_count: int | None = None,
+) -> dict[str, Any]:
+    """Calculate firing rates and inter-spike-interval statistics."""
+
+    events = _spike_event_rows(source)
+    if neuron_count is None:
+        if hasattr(source, "m_neurons"):
+            neuron_count = len(source.m_neurons)
+        elif isinstance(source, SpikingRecorder):
+            neuron_count = source.neuron_count
+        else:
+            neuron_count = (
+                1 + max((event["neuron_index"] for event in events), default=-1)
+            )
+    if duration is None:
+        if hasattr(source, "SpikingTime"):
+            duration = float(source.SpikingTime())
+        elif isinstance(source, SpikingRecorder) and source.times:
+            duration = source.times[-1]
+        else:
+            duration = max((event["time"] for event in events), default=0.0)
+    duration = max(float(duration), 0.0)
+    trains: dict[int, list[float]] = {
+        index: [] for index in range(neuron_count)
+    }
+    for event in events:
+        trains.setdefault(event["neuron_index"], []).append(event["time"])
+
+    per_neuron = {}
+    active_rates = []
+    for neuron in range(neuron_count):
+        times = np.asarray(sorted(trains.get(neuron, [])), dtype=float)
+        intervals = np.diff(times)
+        rate = len(times) / duration if duration > 0.0 else 0.0
+        if rate > 0.0:
+            active_rates.append(rate)
+        mean_interval = float(np.mean(intervals)) if len(intervals) else None
+        cv_interval = (
+            float(np.std(intervals) / np.mean(intervals))
+            if len(intervals) > 1 and np.mean(intervals) > 0.0
+            else None
+        )
+        per_neuron[neuron] = {
+            "spike_count": int(len(times)),
+            "firing_rate_hz": rate,
+            "mean_isi_seconds": mean_interval,
+            "isi_cv": cv_interval,
+        }
+    return {
+        "duration_seconds": duration,
+        "total_spikes": len(events),
+        "population_rate_hz": (
+            len(events) / (duration * neuron_count)
+            if duration > 0.0 and neuron_count
+            else 0.0
+        ),
+        "mean_active_rate_hz": (
+            float(np.mean(active_rates)) if active_rates else 0.0
+        ),
+        "active_neurons": len(active_rates),
+        "per_neuron": per_neuron,
+    }
+
+
+def PlotSpikeRaster(
+    source: Any,
+    ax: Any = None,
+    *,
+    window: tuple[float, float] | None = None,
+    neuron_labels: Mapping[int, str] | Sequence[str] | None = None,
+    title: str = "Spike trains",
+    theme: VisualTheme = DEFAULT_THEME,
+    show: bool = True,
+) -> Any:
+    """Plot recorded input and internal spikes on a shared time axis."""
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=(12, 5), constrained_layout=True)
+    events = _spike_event_rows(source)
+    if window is not None:
+        events = [
+            event
+            for event in events
+            if window[0] <= event["time"] <= window[1]
+        ]
+    for is_input, marker, label, color in (
+        (True, "|", "Input spike", theme.input_color),
+        (False, "|", "Neuron spike", theme.output_color),
+    ):
+        selected = [event for event in events if event["input"] == is_input]
+        if selected:
+            ax.scatter(
+                [event["time"] for event in selected],
+                [event["neuron_index"] for event in selected],
+                marker=marker,
+                s=80,
+                linewidths=1.5,
+                color=color,
+                label=label,
+            )
+    indices = sorted({event["neuron_index"] for event in events})
+    if neuron_labels is not None and indices:
+        if isinstance(neuron_labels, Mapping):
+            labels = [neuron_labels.get(index, str(index)) for index in indices]
+        else:
+            labels = [
+                neuron_labels[index]
+                if index < len(neuron_labels)
+                else str(index)
+                for index in indices
+            ]
+        ax.set_yticks(indices, labels)
+    if window is not None:
+        ax.set_xlim(*window)
+    ax.set_title(title, color=theme.foreground)
+    ax.set_xlabel("Time (s)", color=theme.foreground)
+    ax.set_ylabel("Neuron", color=theme.foreground)
+    ax.set_facecolor(theme.background)
+    ax.figure.patch.set_facecolor(theme.background)
+    ax.tick_params(colors=theme.muted)
+    ax.grid(axis="x", color=theme.grid, alpha=0.35)
+    if events:
+        legend = ax.legend(
+            frameon=True,
+            loc="upper right",
+            facecolor=theme.background,
+            edgecolor=theme.grid,
+            framealpha=0.88,
+        )
+        for text in legend.get_texts():
+            text.set_color(theme.foreground)
+    if show:
+        plt.show()
+    return ax
+
+
+def PlotMembraneTraces(
+    recorder: SpikingRecorder,
+    ax: Any = None,
+    *,
+    neurons: Sequence[int] | None = None,
+    window: tuple[float, float] | None = None,
+    title: str = "Membrane potentials",
+    theme: VisualTheme = DEFAULT_THEME,
+    show: bool = True,
+) -> Any:
+    """Plot membrane state captured by :class:`SpikingRecorder`."""
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=(12, 5), constrained_layout=True)
+    selected = list(neurons) if neurons is not None else list(
+        range(recorder.neuron_count)
+    )
+    times = np.asarray(recorder.times, dtype=float)
+    membrane = np.asarray(recorder.membrane, dtype=float)
+    if membrane.size:
+        for order, neuron in enumerate(selected):
+            ax.plot(
+                times,
+                membrane[:, neuron],
+                label=f"neuron {neuron}",
+                color=getattr(
+                    theme,
+                    (
+                        "positive_color"
+                        if order % 3 == 0
+                        else "hidden_color"
+                        if order % 3 == 1
+                        else "output_color"
+                    ),
+                ),
+                alpha=0.9,
+            )
+    if window is not None:
+        ax.set_xlim(*window)
+    ax.set_title(title, color=theme.foreground)
+    ax.set_xlabel("Time (s)", color=theme.foreground)
+    ax.set_ylabel("Potential", color=theme.foreground)
+    ax.set_facecolor(theme.background)
+    ax.figure.patch.set_facecolor(theme.background)
+    ax.tick_params(colors=theme.muted)
+    ax.grid(color=theme.grid, alpha=0.3)
+    if selected:
+        legend = ax.legend(
+            frameon=True,
+            loc="upper right",
+            ncol=2,
+            facecolor=theme.background,
+            edgecolor=theme.grid,
+            framealpha=0.88,
+        )
+        for text in legend.get_texts():
+            text.set_color(theme.foreground)
+    if show:
+        plt.show()
+    return ax
+
+
+def PlotFiringRates(
+    recorder: SpikingRecorder,
+    ax: Any = None,
+    *,
+    neurons: Sequence[int] | None = None,
+    window: tuple[float, float] | None = None,
+    title: str = "Filtered firing rates",
+    theme: VisualTheme = DEFAULT_THEME,
+    show: bool = True,
+) -> Any:
+    """Plot exponentially filtered instantaneous firing rates."""
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=(12, 5), constrained_layout=True)
+    selected = list(neurons) if neurons is not None else list(
+        range(recorder.neuron_count)
+    )
+    values = np.asarray(recorder.filtered_rates, dtype=float)
+    for neuron in selected:
+        if values.size:
+            ax.plot(recorder.times, values[:, neuron], label=f"neuron {neuron}")
+    if window is not None:
+        ax.set_xlim(*window)
+    ax.set_title(title, color=theme.foreground)
+    ax.set_xlabel("Time (s)", color=theme.foreground)
+    ax.set_ylabel("Filtered rate (Hz)", color=theme.foreground)
+    ax.set_facecolor(theme.background)
+    ax.figure.patch.set_facecolor(theme.background)
+    ax.tick_params(colors=theme.muted)
+    ax.grid(color=theme.grid, alpha=0.3)
+    if selected:
+        legend = ax.legend(frameon=False, loc="upper right", ncol=2)
+        for text in legend.get_texts():
+            text.set_color(theme.foreground)
+    if show:
+        plt.show()
+    return ax
+
+
+def _phenotype_positions(network: pnt.NeuralNetwork) -> dict[int, tuple[float, float]]:
+    levels: MutableMapping[float, list[int]] = defaultdict(list)
+    for index, neuron in enumerate(network.m_neurons):
+        level = float(neuron.m_split_y)
+        if neuron.m_type in (INPUT, BIAS):
+            level = 0.0
+        elif neuron.m_type == OUTPUT:
+            level = 1.0
+        levels[level].append(index)
+    positions = {}
+    for level, indices in sorted(levels.items()):
+        for offset, index in enumerate(indices):
+            positions[index] = (
+                (offset + 1.0) / (len(indices) + 1.0),
+                level,
+            )
+    return positions
+
+
+def DrawSpikingNetwork(
+    network: pnt.NeuralNetwork,
+    ax: Any = None,
+    *,
+    title: str | None = None,
+    theme: VisualTheme = DEFAULT_THEME,
+    show: bool = True,
+) -> Any:
+    """Draw a phenotype with live spikes, membrane state, and delays."""
+
+    if ax is None:
+        _, ax = plt.subplots(figsize=(10, 7), constrained_layout=True)
+    graph = nx.DiGraph()
+    for index, neuron in enumerate(network.m_neurons):
+        graph.add_node(
+            index,
+            type=neuron.m_type,
+            spike=bool(neuron.m_spike),
+            membrane=float(neuron.m_membrane_potential),
+            threshold=float(neuron.m_spike_threshold),
+        )
+    for index, connection in enumerate(network.m_connections):
+        graph.add_edge(
+            connection.m_source_neuron_idx,
+            connection.m_target_neuron_idx,
+            index=index,
+            weight=float(connection.m_weight),
+            delay=float(connection.m_synaptic_delay),
+            current=float(connection.m_synaptic_current),
+            stdp=bool(connection.m_stdp_enabled),
+            recurrent=bool(connection.m_recur_flag),
+        )
+    positions = _phenotype_positions(network)
+    maximum_weight = max(
+        (abs(data["weight"]) for _, _, data in graph.edges(data=True)),
+        default=1.0,
+    )
+    for source, target, data in graph.edges(data=True):
+        color, width, alpha = _edge_style(
+            data["weight"], maximum_weight, theme
+        )
+        nx.draw_networkx_edges(
+            graph,
+            positions,
+            edgelist=[(source, target)],
+            width=width,
+            edge_color=color,
+            alpha=alpha,
+            style="dotted" if data["stdp"] else "solid",
+            connectionstyle=(
+                "arc3,rad=0.22"
+                if data["recurrent"] or source == target
+                else "arc3,rad=0.02"
+            ),
+            arrows=True,
+            arrowsize=12,
+            ax=ax,
+        )
+    type_colors = {
+        INPUT: theme.input_color,
+        BIAS: theme.bias_color,
+        HIDDEN: theme.hidden_color,
+        OUTPUT: theme.output_color,
+    }
+    for neuron_type, shape in (
+        (INPUT, "s"),
+        (BIAS, "h"),
+        (HIDDEN, "o"),
+        (OUTPUT, "D"),
+    ):
+        nodes = [
+            index
+            for index, data in graph.nodes(data=True)
+            if data["type"] == neuron_type
+        ]
+        if nodes:
+            nx.draw_networkx_nodes(
+                graph,
+                positions,
+                nodelist=nodes,
+                node_shape=shape,
+                node_color=type_colors[neuron_type],
+                node_size=[
+                    950 if graph.nodes[node]["spike"] else 650 for node in nodes
+                ],
+                edgecolors=[
+                    theme.foreground
+                    if graph.nodes[node]["spike"]
+                    else theme.grid
+                    for node in nodes
+                ],
+                linewidths=[
+                    3.0 if graph.nodes[node]["spike"] else 1.0 for node in nodes
+                ],
+                ax=ax,
+            )
+    labels = {
+        index: (
+            f"{index}\n★"
+            if data["spike"]
+            else f"{index}\n{data['membrane']:.2f}"
+        )
+        for index, data in graph.nodes(data=True)
+    }
+    nx.draw_networkx_labels(
+        graph,
+        positions,
+        labels=labels,
+        font_size=8,
+        font_color=theme.foreground,
+        ax=ax,
+    )
+    ax.set_title(
+        title
+        or (
+            f"Spiking phenotype · t={network.SpikingTime():.3f}s · "
+            f"{sum(neuron.m_spike for neuron in network.m_neurons)} active"
+        ),
+        color=theme.foreground,
+    )
+    ax.set_facecolor(theme.background)
+    ax.figure.patch.set_facecolor(theme.background)
+    ax.axis("off")
+    if show:
+        plt.show()
+    return ax
+
+
+def InteractiveSpikeTrains(
+    source: SpikingRecorder | pnt.NeuralNetwork,
+    *,
+    title: str = "Spiking neural-network activity",
+) -> Any:
+    """Return a Plotly raster with linked membrane/rate traces."""
+
+    try:
+        import plotly.graph_objects as go
+        from plotly.subplots import make_subplots
+    except ImportError as error:
+        raise ImportError(
+            "InteractiveSpikeTrains requires plotly (pip install plotly)."
+        ) from error
+    events = _spike_event_rows(source)
+    figure = make_subplots(
+        rows=2,
+        cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.08,
+        subplot_titles=("Spike raster", "Membrane potential"),
+    )
+    for input_event, name, symbol in (
+        (True, "input", "line-ns"),
+        (False, "neuron", "line-ns-open"),
+    ):
+        selected = [event for event in events if event["input"] == input_event]
+        figure.add_trace(
+            go.Scattergl(
+                x=[event["time"] for event in selected],
+                y=[event["neuron_index"] for event in selected],
+                mode="markers",
+                marker={"symbol": symbol, "size": 10},
+                name=name,
+                customdata=[event["amplitude"] for event in selected],
+                hovertemplate=(
+                    "t=%{x:.6f}s<br>neuron %{y}<br>"
+                    "amplitude %{customdata:.4g}<extra></extra>"
+                ),
+            ),
+            row=1,
+            col=1,
+        )
+    if isinstance(source, SpikingRecorder):
+        membrane = np.asarray(source.membrane, dtype=float)
+        for neuron in range(source.neuron_count):
+            if membrane.size:
+                figure.add_trace(
+                    go.Scattergl(
+                        x=source.times,
+                        y=membrane[:, neuron],
+                        mode="lines",
+                        name=f"neuron {neuron}",
+                        legendgroup=f"neuron-{neuron}",
+                    ),
+                    row=2,
+                    col=1,
+                )
+    figure.update_yaxes(title_text="Neuron", row=1, col=1)
+    figure.update_yaxes(title_text="Potential", row=2, col=1)
+    figure.update_xaxes(title_text="Time (s)", row=2, col=1)
+    figure.update_layout(title=title, template="plotly_dark", hovermode="x")
+    return figure
+
+
+def AnimateSpikingNetwork(
+    network: pnt.NeuralNetwork,
+    input_provider: Callable[[int, float], Sequence[float]] | None = None,
+    *,
+    recorder: SpikingRecorder | None = None,
+    frames: int | Iterable[int] = 500,
+    interval: int = 20,
+    time_step: float | None = None,
+    window_seconds: float = 1.0,
+    trace_neurons: Sequence[int] | None = None,
+    environment_draw: Callable[
+        [Any, int, pnt.NeuralNetwork, SpikingRecorder], None
+    ]
+    | None = None,
+    show: bool = True,
+) -> Any:
+    """Animate live topology, moving spike trains, traces, and an environment.
+
+    ``input_provider(frame, time)`` supplies one input vector per animation
+    frame. ``environment_draw`` can render a synchronized task environment
+    into the fourth panel.
+    """
+
+    if window_seconds <= 0.0:
+        raise ValueError("window_seconds must be positive.")
+    recorder = recorder or SpikingRecorder(network)
+    figure, axes = plt.subplots(
+        2,
+        2,
+        figsize=(14, 8),
+        constrained_layout=True,
+    )
+    network_axis, environment_axis = axes[0]
+    raster_axis, membrane_axis = axes[1]
+    selected = (
+        list(trace_neurons)
+        if trace_neurons is not None
+        else list(
+            range(
+                int(network.NumInputs()),
+                len(network.m_neurons),
+            )
+        )
+    )
+
+    def update(frame: int) -> list[Any]:
+        if input_provider is not None:
+            recorder.step(
+                input_provider(frame, network.SpikingTime()),
+                time_step,
+            )
+        else:
+            recorder.record()
+        current = float(network.SpikingTime())
+        window = (max(0.0, current - window_seconds), current + 1.0e-12)
+        network_axis.clear()
+        raster_axis.clear()
+        membrane_axis.clear()
+        environment_axis.clear()
+        DrawSpikingNetwork(network, ax=network_axis, show=False)
+        PlotSpikeRaster(
+            recorder,
+            ax=raster_axis,
+            window=window,
+            show=False,
+        )
+        PlotMembraneTraces(
+            recorder,
+            ax=membrane_axis,
+            neurons=selected,
+            window=window,
+            show=False,
+        )
+        if environment_draw is None:
+            environment_axis.axis("off")
+        else:
+            environment_draw(
+                environment_axis,
+                int(frame),
+                network,
+                recorder,
+            )
+        return []
+
+    result = mpl_animation.FuncAnimation(
+        figure,
+        update,
+        frames=frames,
+        interval=interval,
+        blit=False,
+        cache_frame_data=False,
+    )
+    # Keep the animation alive for callers that only retain the figure.
+    figure._multineat_animation = result
+    if show:
+        plt.show()
+    return result
+
+
 __all__ = [
+    "AnimateSpikingNetwork",
     "DEFAULT_THEME",
     "DrawEvolution",
     "DrawGenome",
@@ -1778,6 +2528,12 @@ __all__ = [
     "InteractiveEvolution",
     "InteractiveGenome",
     "InteractivePopulation",
+    "InteractiveSpikeTrains",
+    "PlotFiringRates",
+    "PlotMembraneTraces",
+    "PlotSpikeRaster",
+    "DrawSpikingNetwork",
+    "SpikingRecorder",
     "VisualTheme",
     "compare_genomes",
     "compute_node_positions",
@@ -1789,4 +2545,5 @@ __all__ = [
     "population_summary",
     "print_genome_summary",
     "species_summary",
+    "spike_train_statistics",
 ]

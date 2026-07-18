@@ -156,6 +156,62 @@ if hasattr(population, "Validate"):
     check(valid, f"demo evolution produced invalid population: {error}")
 tiny_env.close()
 
+spiking_population = demo.create_population(
+    tiny_shape,
+    tiny_config,
+    population_size=4,
+    seed=23,
+    profile="default",
+    initial_connectivity="full",
+    spiking=True,
+)
+spiking_env = TinyControlEnv()
+spiking_settings = demo.SpikingPolicySettings(
+    simulation_steps=4,
+    time_step=0.001,
+    input_rate_hz=200.0,
+    output_rate_hz=200.0,
+)
+spiking_fitnesses = []
+for species in spiking_population.m_Species:
+    for genome in species.m_Individuals:
+        phenotype = demo.neat.NeuralNetwork()
+        genome.BuildPhenotype(phenotype)
+        check(phenotype.IsSpiking(), "spiking demo built a rate phenotype")
+        policy = demo.SpikingPolicy(phenotype, spiking_settings)
+        check(
+            np.allclose(
+                policy.encode([-1.0, 0.0, 1.0, np.inf]),
+                [0.0, 100.0, 200.0, 100.0],
+            ),
+            "spiking observation-to-rate encoding is wrong",
+        )
+        try:
+            policy.encode([0.0])
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("spiking policy accepted the wrong input size")
+        fitness = demo.evaluate_on_environment(
+            genome,
+            spiking_env,
+            tiny_config,
+            episode_seeds=(3,),
+            max_steps=3,
+            activation_steps=1,
+            spiking_settings=spiking_settings,
+        )
+        check(
+            np.isfinite(fitness),
+            "spiking demo evaluation produced non-finite fitness",
+        )
+        genome.SetFitness(fitness)
+        genome.SetEvaluated()
+        spiking_fitnesses.append(fitness)
+check(len(spiking_fitnesses) == 4, "not every spiking genome was evaluated")
+spiking_population.Epoch()
+spiking_env.close()
+
 wrappers = list((DEMOS / "box2d").glob("*_box2d.py"))
 wrappers += list((DEMOS / "mujoco").glob("*_mujoco.py"))
 check(len(wrappers) == 20, "expected eight Box2D and twelve MuJoCo scripts")

@@ -110,12 +110,58 @@ namespace
     X(ActivationFunction_Linear_Prob)                                       \
     X(ActivationFunction_Relu_Prob)                                         \
     X(ActivationFunction_Softplus_Prob)                                     \
+    X(ActivationFunction_SpikingLIF_Prob)                                   \
+    X(ActivationFunction_SpikingAdaptiveLIF_Prob)                           \
+    X(ActivationFunction_SpikingIzhikevich_Prob)                            \
     X(MutateNeuronTimeConstantsProb)                                        \
     X(MutateNeuronBiasesProb)                                               \
     X(MinNeuronTimeConstant)                                                \
     X(MaxNeuronTimeConstant)                                                \
     X(MinNeuronBias)                                                        \
     X(MaxNeuronBias)                                                        \
+    X(MutateNeuronSpikingParametersProb)                                    \
+    X(MutateLinkSpikingParametersProb)                                      \
+    X(SpikingParameterMutationRate)                                         \
+    X(SpikingParameterMutationPower)                                        \
+    X(MinSpikingTimeConstant)                                               \
+    X(MaxSpikingTimeConstant)                                               \
+    X(MinSpikeThreshold)                                                    \
+    X(MaxSpikeThreshold)                                                    \
+    X(MinResetPotential)                                                    \
+    X(MaxResetPotential)                                                    \
+    X(MinRestingPotential)                                                  \
+    X(MaxRestingPotential)                                                  \
+    X(MinRefractoryPeriod)                                                  \
+    X(MaxRefractoryPeriod)                                                  \
+    X(MinMembraneResistance)                                                \
+    X(MaxMembraneResistance)                                                \
+    X(MinAdaptationTimeConstant)                                            \
+    X(MaxAdaptationTimeConstant)                                            \
+    X(MinAdaptationIncrement)                                               \
+    X(MaxAdaptationIncrement)                                               \
+    X(MinSpikeRateTimeConstant)                                             \
+    X(MaxSpikeRateTimeConstant)                                             \
+    X(MinIzhikevichA)                                                       \
+    X(MaxIzhikevichA)                                                       \
+    X(MinIzhikevichThreshold)                                               \
+    X(MaxIzhikevichThreshold)                                               \
+    X(MinIzhikevichB)                                                       \
+    X(MaxIzhikevichB)                                                       \
+    X(MinIzhikevichC)                                                       \
+    X(MaxIzhikevichC)                                                       \
+    X(MinIzhikevichD)                                                       \
+    X(MaxIzhikevichD)                                                       \
+    X(MinSynapticDelay)                                                     \
+    X(MaxSynapticDelay)                                                     \
+    X(MinSynapticTimeConstant)                                              \
+    X(MaxSynapticTimeConstant)                                              \
+    X(InitialSTDPEnabledProb)                                               \
+    X(MinSTDPPlus)                                                          \
+    X(MaxSTDPPlus)                                                          \
+    X(MinSTDPMinus)                                                         \
+    X(MaxSTDPMinus)                                                         \
+    X(MinSTDPTau)                                                           \
+    X(MaxSTDPTau)                                                           \
     X(DisjointCoeff)                                                        \
     X(ExcessCoeff)                                                          \
     X(ActivationADiffCoeff)                                                 \
@@ -124,6 +170,8 @@ namespace
     X(TimeConstantDiffCoeff)                                                \
     X(BiasDiffCoeff)                                                        \
     X(ActivationFunctionDiffCoeff)                                          \
+    X(SpikingNeuronDiffCoeff)                                               \
+    X(SpikingLinkDiffCoeff)                                                 \
     X(CompatTreshold)                                                       \
     X(MinCompatTreshold)                                                    \
     X(CompatTresholdModifier)                                               \
@@ -411,12 +459,59 @@ void Parameters::Reset()
     ActivationFunction_Linear_Prob = 0.0;
     ActivationFunction_Relu_Prob = 0.0;
     ActivationFunction_Softplus_Prob = 0.0;
+    ActivationFunction_SpikingLIF_Prob = 0.0;
+    ActivationFunction_SpikingAdaptiveLIF_Prob = 0.0;
+    ActivationFunction_SpikingIzhikevich_Prob = 0.0;
     MutateNeuronTimeConstantsProb = 0.0;
     MutateNeuronBiasesProb = 0.0;
     MinNeuronTimeConstant = 0.0;
     MaxNeuronTimeConstant = 0.0;
     MinNeuronBias = 0.0;
     MaxNeuronBias = 0.0;
+
+    MutateNeuronSpikingParametersProb = 0.0;
+    MutateLinkSpikingParametersProb = 0.0;
+    SpikingParameterMutationRate = 0.2;
+    SpikingParameterMutationPower = 0.1;
+    MinSpikingTimeConstant = 0.005;
+    MaxSpikingTimeConstant = 0.05;
+    MinSpikeThreshold = 0.5;
+    MaxSpikeThreshold = 2.0;
+    MinResetPotential = -0.5;
+    MaxResetPotential = 0.5;
+    MinRestingPotential = -0.5;
+    MaxRestingPotential = 0.5;
+    MinRefractoryPeriod = 0.0;
+    MaxRefractoryPeriod = 0.01;
+    MinMembraneResistance = 0.1;
+    MaxMembraneResistance = 2.0;
+    MinAdaptationTimeConstant = 0.02;
+    MaxAdaptationTimeConstant = 1.0;
+    MinAdaptationIncrement = 0.0;
+    MaxAdaptationIncrement = 0.5;
+    MinSpikeRateTimeConstant = 0.01;
+    MaxSpikeRateTimeConstant = 0.2;
+    MinIzhikevichA = 0.01;
+    MaxIzhikevichA = 0.1;
+    MinIzhikevichThreshold = 25.0;
+    MaxIzhikevichThreshold = 35.0;
+    MinIzhikevichB = 0.1;
+    MaxIzhikevichB = 0.3;
+    MinIzhikevichC = -80.0;
+    MaxIzhikevichC = -50.0;
+    MinIzhikevichD = 0.0;
+    MaxIzhikevichD = 10.0;
+    MinSynapticDelay = 0.0;
+    MaxSynapticDelay = 0.02;
+    MinSynapticTimeConstant = 0.001;
+    MaxSynapticTimeConstant = 0.05;
+    InitialSTDPEnabledProb = 0.0;
+    MinSTDPPlus = 0.0;
+    MaxSTDPPlus = 0.05;
+    MinSTDPMinus = 0.0;
+    MaxSTDPMinus = 0.05;
+    MinSTDPTau = 0.005;
+    MaxSTDPTau = 0.1;
 
     DisjointCoeff = 1.0;
     ExcessCoeff = 1.0;
@@ -426,6 +521,8 @@ void Parameters::Reset()
     TimeConstantDiffCoeff = 0.0;
     BiasDiffCoeff = 0.0;
     ActivationFunctionDiffCoeff = 0.0;
+    SpikingNeuronDiffCoeff = 0.0;
+    SpikingLinkDiffCoeff = 0.0;
     CompatTreshold = 3.0;
     MinCompatTreshold = 0.1;
     CompatTresholdModifier = 0.2;
@@ -502,6 +599,36 @@ void Parameters::Reset()
     FitnessRankPressure = 1.5;
     FitnessSigmaScale = 2.0;
     FitnessBoltzmannTemperature = 1.0;
+}
+
+void Parameters::ConfigureSpiking(bool enable_stdp)
+{
+    ActivationFunction_SignedSigmoid_Prob = 0.0;
+    ActivationFunction_UnsignedSigmoid_Prob = 0.0;
+    ActivationFunction_Tanh_Prob = 0.0;
+    ActivationFunction_TanhCubic_Prob = 0.0;
+    ActivationFunction_SignedStep_Prob = 0.0;
+    ActivationFunction_UnsignedStep_Prob = 0.0;
+    ActivationFunction_SignedGauss_Prob = 0.0;
+    ActivationFunction_UnsignedGauss_Prob = 0.0;
+    ActivationFunction_Abs_Prob = 0.0;
+    ActivationFunction_SignedSine_Prob = 0.0;
+    ActivationFunction_UnsignedSine_Prob = 0.0;
+    ActivationFunction_Linear_Prob = 0.0;
+    ActivationFunction_Relu_Prob = 0.0;
+    ActivationFunction_Softplus_Prob = 0.0;
+    ActivationFunction_SpikingLIF_Prob = 0.65;
+    ActivationFunction_SpikingAdaptiveLIF_Prob = 0.25;
+    ActivationFunction_SpikingIzhikevich_Prob = 0.10;
+
+    MutateNeuronActivationTypeProb = 0.05;
+    MutateNeuronSpikingParametersProb = 0.25;
+    MutateLinkSpikingParametersProb = 0.15;
+    RecurrentProb = std::max(RecurrentProb, 0.2);
+    AllowLoops = true;
+    InitialSTDPEnabledProb = enable_stdp ? 0.1 : 0.0;
+    SpikingNeuronDiffCoeff = 0.1;
+    SpikingLinkDiffCoeff = 0.1;
 }
 
 int Parameters::Load(std::ifstream& input)
@@ -772,7 +899,20 @@ bool Parameters::Validate(std::string* error) const
          ActivationFunction_Linear_Prob},
         {"ActivationFunction_Relu_Prob", ActivationFunction_Relu_Prob},
         {"ActivationFunction_Softplus_Prob",
-         ActivationFunction_Softplus_Prob}};
+         ActivationFunction_Softplus_Prob},
+        {"ActivationFunction_SpikingLIF_Prob",
+         ActivationFunction_SpikingLIF_Prob},
+        {"ActivationFunction_SpikingAdaptiveLIF_Prob",
+         ActivationFunction_SpikingAdaptiveLIF_Prob},
+        {"ActivationFunction_SpikingIzhikevich_Prob",
+         ActivationFunction_SpikingIzhikevich_Prob},
+        {"MutateNeuronSpikingParametersProb",
+         MutateNeuronSpikingParametersProb},
+        {"MutateLinkSpikingParametersProb",
+         MutateLinkSpikingParametersProb},
+        {"SpikingParameterMutationRate",
+         SpikingParameterMutationRate},
+        {"InitialSTDPEnabledProb", InitialSTDPEnabledProb}};
     for (const auto& item : probabilities)
     {
         if (!probability(item.first, item.second))
@@ -802,6 +942,76 @@ bool Parameters::Validate(std::string* error) const
     {
         return false;
     }
+    const std::pair<const char*, std::pair<double, double>>
+        spiking_ranges[] = {
+            {"spiking time-constant range",
+             {MinSpikingTimeConstant, MaxSpikingTimeConstant}},
+            {"spike-threshold range",
+             {MinSpikeThreshold, MaxSpikeThreshold}},
+            {"reset-potential range",
+             {MinResetPotential, MaxResetPotential}},
+            {"resting-potential range",
+             {MinRestingPotential, MaxRestingPotential}},
+            {"refractory-period range",
+             {MinRefractoryPeriod, MaxRefractoryPeriod}},
+            {"membrane-resistance range",
+             {MinMembraneResistance, MaxMembraneResistance}},
+            {"adaptation time-constant range",
+             {MinAdaptationTimeConstant,
+              MaxAdaptationTimeConstant}},
+            {"adaptation-increment range",
+             {MinAdaptationIncrement, MaxAdaptationIncrement}},
+            {"spike-rate time-constant range",
+             {MinSpikeRateTimeConstant,
+              MaxSpikeRateTimeConstant}},
+            {"Izhikevich a range",
+             {MinIzhikevichA, MaxIzhikevichA}},
+            {"Izhikevich threshold range",
+             {MinIzhikevichThreshold,
+              MaxIzhikevichThreshold}},
+            {"Izhikevich b range",
+             {MinIzhikevichB, MaxIzhikevichB}},
+            {"Izhikevich c range",
+             {MinIzhikevichC, MaxIzhikevichC}},
+            {"Izhikevich d range",
+             {MinIzhikevichD, MaxIzhikevichD}},
+            {"synaptic-delay range",
+             {MinSynapticDelay, MaxSynapticDelay}},
+            {"synaptic time-constant range",
+             {MinSynapticTimeConstant,
+              MaxSynapticTimeConstant}},
+            {"STDP potentiation range",
+             {MinSTDPPlus, MaxSTDPPlus}},
+            {"STDP depression range",
+             {MinSTDPMinus, MaxSTDPMinus}},
+            {"STDP trace time-constant range",
+             {MinSTDPTau, MaxSTDPTau}}};
+    for (const auto& range : spiking_ranges)
+    {
+        if (!finite_range(
+                range.first,
+                range.second.first,
+                range.second.second))
+        {
+            return false;
+        }
+    }
+    if (MinSpikingTimeConstant <= 0.0 ||
+        MinSynapticTimeConstant <= 0.0 ||
+        MinAdaptationTimeConstant <= 0.0 ||
+        MinSpikeRateTimeConstant <= 0.0 ||
+        MinSTDPTau <= 0.0 ||
+        MinRefractoryPeriod < 0.0 ||
+        MinMembraneResistance <= 0.0 ||
+        MinSynapticDelay < 0.0 ||
+        MinSTDPPlus < 0.0 ||
+        MinSTDPMinus < 0.0)
+    {
+        return fail(
+            "spiking time constants and resistance must be positive; "
+            "delays, refractory periods, and STDP amplitudes cannot be "
+            "negative");
+    }
 
     const std::pair<const char*, double> non_negative[] = {
         {"YoungAgeFitnessBoost", YoungAgeFitnessBoost},
@@ -824,6 +1034,8 @@ bool Parameters::Validate(std::string* error) const
         {"TimeConstantDiffCoeff", TimeConstantDiffCoeff},
         {"BiasDiffCoeff", BiasDiffCoeff},
         {"ActivationFunctionDiffCoeff", ActivationFunctionDiffCoeff},
+        {"SpikingNeuronDiffCoeff", SpikingNeuronDiffCoeff},
+        {"SpikingLinkDiffCoeff", SpikingLinkDiffCoeff},
         {"CompatTreshold", CompatTreshold},
         {"MinCompatTreshold", MinCompatTreshold},
         {"CompatTresholdModifier", CompatTresholdModifier},
@@ -832,7 +1044,9 @@ bool Parameters::Validate(std::string* error) const
         {"NoveltySearch_Pmin_min", NoveltySearch_Pmin_min},
         {"DivisionThreshold", DivisionThreshold},
         {"VarianceThreshold", VarianceThreshold},
-        {"BandThreshold", BandThreshold}};
+        {"BandThreshold", BandThreshold},
+        {"SpikingParameterMutationPower",
+         SpikingParameterMutationPower}};
     for (const auto& item : non_negative)
     {
         if (!std::isfinite(item.second) || item.second < 0.0)
@@ -936,7 +1150,10 @@ bool Parameters::Validate(std::string* error) const
         ActivationFunction_UnsignedSine_Prob +
         ActivationFunction_Linear_Prob +
         ActivationFunction_Relu_Prob +
-        ActivationFunction_Softplus_Prob;
+        ActivationFunction_Softplus_Prob +
+        ActivationFunction_SpikingLIF_Prob +
+        ActivationFunction_SpikingAdaptiveLIF_Prob +
+        ActivationFunction_SpikingIzhikevich_Prob;
     if ((MutateAddNeuronProb > 0.0 ||
          MutateNeuronActivationTypeProb > 0.0) &&
         activation_total <= 0.0)

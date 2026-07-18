@@ -1387,6 +1387,7 @@ namespace NEAT
         {
             ADD_NODE = 0, ADD_LINK, REMOVE_NODE, REMOVE_LINK, CHANGE_ACTIVATION_FUNCTION,
             MUTATE_WEIGHTS, MUTATE_ACTIVATION_A, MUTATE_ACTIVATION_B, MUTATE_TIMECONSTS, MUTATE_BIASES,
+            MUTATE_NEURON_SPIKING, MUTATE_LINK_SPIKING,
             MUTATE_NEURON_TRAITS, MUTATE_LINK_TRAITS, MUTATE_GENOME_TRAITS
         };
         std::vector<double> t_mut_probs;
@@ -1420,6 +1421,14 @@ namespace NEAT
 
         // MUTATE_BIASES;
         t_mut_probs.push_back(a_Parameters.MutateNeuronBiasesProb);
+
+        // MUTATE_NEURON_SPIKING;
+        t_mut_probs.push_back(
+            a_Parameters.MutateNeuronSpikingParametersProb);
+
+        // MUTATE_LINK_SPIKING;
+        t_mut_probs.push_back(
+            a_Parameters.MutateLinkSpikingParametersProb);
 
         // MUTATE_NEURON_TRAITS;
         t_mut_probs.push_back(a_Parameters.MutateNeuronTraitsProb);
@@ -1558,6 +1567,18 @@ namespace NEAT
 
             case MUTATE_BIASES:
                 t_mutation_success = t_baby.Mutate_NeuronBiases(a_Parameters, a_RNG);
+                break;
+
+            case MUTATE_NEURON_SPIKING:
+                t_mutation_success =
+                    t_baby.Mutate_NeuronSpikingParameters(
+                        a_Parameters, a_RNG);
+                break;
+
+            case MUTATE_LINK_SPIKING:
+                t_mutation_success =
+                    t_baby.Mutate_LinkSpikingParameters(
+                        a_Parameters, a_RNG);
                 break;
 
             case MUTATE_NEURON_TRAITS:

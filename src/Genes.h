@@ -45,8 +45,21 @@ namespace NEAT
         UNSIGNED_SINE,
         LINEAR,
         RELU,
-        SOFTPLUS
+        SOFTPLUS,
+        // Stateful activation modes advanced by NeuralNetwork::StepSpiking.
+        // They are appended to preserve the numeric values of every
+        // historical activation function.
+        SPIKING_LIF,
+        SPIKING_ADAPTIVE_LIF,
+        SPIKING_IZHIKEVICH
     };
+
+    inline bool IsSpikingActivation(ActivationFunction function)
+    {
+        return function == SPIKING_LIF ||
+               function == SPIKING_ADAPTIVE_LIF ||
+               function == SPIKING_IZHIKEVICH;
+    }
 
     //////////////////////////////////
     // Base Gene class
@@ -504,6 +517,17 @@ namespace NEAT
         int m_InnovationID;
         double m_Weight;
         bool m_IsRecurrent;
+        // Spiking synapse parameters. They are inert during the historical
+        // rate-network activation paths.
+        double m_SynapticDelay;
+        double m_SynapticTimeConstant;
+        bool m_STDPEnabled;
+        double m_STDPPlus;
+        double m_STDPMinus;
+        double m_STDPTauPlus;
+        double m_STDPTauMinus;
+        double m_STDPMinWeight;
+        double m_STDPMaxWeight;
 
         LinkGene()
         {
@@ -512,6 +536,15 @@ namespace NEAT
             m_InnovationID = 0;
             m_Weight = 0.0;
             m_IsRecurrent = false;
+            m_SynapticDelay = 0.0;
+            m_SynapticTimeConstant = 0.005;
+            m_STDPEnabled = false;
+            m_STDPPlus = 0.01;
+            m_STDPMinus = 0.012;
+            m_STDPTauPlus = 0.02;
+            m_STDPTauMinus = 0.02;
+            m_STDPMinWeight = -8.0;
+            m_STDPMaxWeight = 8.0;
         }
 
         LinkGene(int a_InID, int a_OutID, int a_InnovID, double a_Wgt, bool a_Recurrent=false)
@@ -521,6 +554,15 @@ namespace NEAT
             m_InnovationID = a_InnovID;
             m_Weight = a_Wgt;
             m_IsRecurrent = a_Recurrent;
+            m_SynapticDelay = 0.0;
+            m_SynapticTimeConstant = 0.005;
+            m_STDPEnabled = false;
+            m_STDPPlus = 0.01;
+            m_STDPMinus = 0.012;
+            m_STDPTauPlus = 0.02;
+            m_STDPTauMinus = 0.02;
+            m_STDPMinWeight = -8.0;
+            m_STDPMaxWeight = 8.0;
         }
 
         LinkGene& operator=(const LinkGene&) = default;
@@ -552,7 +594,17 @@ namespace NEAT
             return (lhs.m_FromNeuronID == rhs.m_FromNeuronID &&
                     lhs.m_ToNeuronID == rhs.m_ToNeuronID &&
                     lhs.m_Weight == rhs.m_Weight &&
-                    lhs.m_IsRecurrent == rhs.m_IsRecurrent);
+                    lhs.m_IsRecurrent == rhs.m_IsRecurrent &&
+                    lhs.m_SynapticDelay == rhs.m_SynapticDelay &&
+                    lhs.m_SynapticTimeConstant ==
+                        rhs.m_SynapticTimeConstant &&
+                    lhs.m_STDPEnabled == rhs.m_STDPEnabled &&
+                    lhs.m_STDPPlus == rhs.m_STDPPlus &&
+                    lhs.m_STDPMinus == rhs.m_STDPMinus &&
+                    lhs.m_STDPTauPlus == rhs.m_STDPTauPlus &&
+                    lhs.m_STDPTauMinus == rhs.m_STDPTauMinus &&
+                    lhs.m_STDPMinWeight == rhs.m_STDPMinWeight &&
+                    lhs.m_STDPMaxWeight == rhs.m_STDPMaxWeight);
         }
     };
 
@@ -570,6 +622,22 @@ namespace NEAT
         double m_TimeConstant;
         double m_Bias;
         ActivationFunction m_ActFunction;
+        // Parameters shared by the spiking activation modes. LIF uses the
+        // threshold/reset/rest/refractory/resistance values. Adaptive LIF
+        // additionally uses the adaptation values. Izhikevich uses its
+        // canonical a/b/c/d parameterization.
+        double m_SpikeThreshold;
+        double m_ResetPotential;
+        double m_RestingPotential;
+        double m_RefractoryPeriod;
+        double m_MembraneResistance;
+        double m_AdaptationTimeConstant;
+        double m_AdaptationIncrement;
+        double m_RateTimeConstant;
+        double m_IzhikevichA;
+        double m_IzhikevichB;
+        double m_IzhikevichC;
+        double m_IzhikevichD;
 
         NeuronGene()
         {
@@ -583,6 +651,7 @@ namespace NEAT
             m_TimeConstant = 0.0;
             m_Bias = 0.0;
             m_ActFunction = UNSIGNED_SIGMOID;
+            InitSpikingDefaults();
         }
 
         NeuronGene(NeuronType a_type, int a_id, double a_splity)
@@ -597,6 +666,7 @@ namespace NEAT
             m_TimeConstant = 0.0;
             m_Bias = 0.0;
             m_ActFunction = UNSIGNED_SIGMOID;
+            InitSpikingDefaults();
         }
 
         friend bool operator==(const NeuronGene &lhs, const NeuronGene &rhs)
@@ -610,7 +680,23 @@ namespace NEAT
                     lhs.m_B == rhs.m_B &&
                     lhs.m_TimeConstant == rhs.m_TimeConstant &&
                     lhs.m_Bias == rhs.m_Bias &&
-                    lhs.m_ActFunction == rhs.m_ActFunction);
+                    lhs.m_ActFunction == rhs.m_ActFunction &&
+                    lhs.m_SpikeThreshold == rhs.m_SpikeThreshold &&
+                    lhs.m_ResetPotential == rhs.m_ResetPotential &&
+                    lhs.m_RestingPotential == rhs.m_RestingPotential &&
+                    lhs.m_RefractoryPeriod == rhs.m_RefractoryPeriod &&
+                    lhs.m_MembraneResistance ==
+                        rhs.m_MembraneResistance &&
+                    lhs.m_AdaptationTimeConstant ==
+                        rhs.m_AdaptationTimeConstant &&
+                    lhs.m_AdaptationIncrement ==
+                        rhs.m_AdaptationIncrement &&
+                    lhs.m_RateTimeConstant ==
+                        rhs.m_RateTimeConstant &&
+                    lhs.m_IzhikevichA == rhs.m_IzhikevichA &&
+                    lhs.m_IzhikevichB == rhs.m_IzhikevichB &&
+                    lhs.m_IzhikevichC == rhs.m_IzhikevichC &&
+                    lhs.m_IzhikevichD == rhs.m_IzhikevichD);
         }
 
         NeuronGene& operator=(const NeuronGene&) = default;
@@ -626,6 +712,22 @@ namespace NEAT
             m_TimeConstant = a_TimeConstant;
             m_Bias = a_Bias;
             m_ActFunction = a_ActFunc;
+        }
+
+        void InitSpikingDefaults()
+        {
+            m_SpikeThreshold = 1.0;
+            m_ResetPotential = 0.0;
+            m_RestingPotential = 0.0;
+            m_RefractoryPeriod = 0.002;
+            m_MembraneResistance = 1.0;
+            m_AdaptationTimeConstant = 0.1;
+            m_AdaptationIncrement = 0.1;
+            m_RateTimeConstant = 0.05;
+            m_IzhikevichA = 0.02;
+            m_IzhikevichB = 0.2;
+            m_IzhikevichC = -65.0;
+            m_IzhikevichD = 8.0;
         }
     };
 

@@ -22,6 +22,7 @@ namespace py = pybind11;
 #include "PhenotypeBehavior.h" 
 #include "Population.h"        
 #include "Species.h"           
+#include "SpikingLearning.h"
 #include "Random.h"            
 #include "Substrate.h"         
 #include "Traits.h"            
@@ -82,7 +83,72 @@ PYBIND11_MODULE(pymultineat, m) {
         .value("LINEAR", NEAT::LINEAR)
         .value("RELU", NEAT::RELU)
         .value("SOFTPLUS", NEAT::SOFTPLUS)
+        .value("SPIKING_LIF", NEAT::SPIKING_LIF)
+        .value(
+            "SPIKING_ADAPTIVE_LIF",
+            NEAT::SPIKING_ADAPTIVE_LIF)
+        .value(
+            "SPIKING_IZHIKEVICH",
+            NEAT::SPIKING_IZHIKEVICH)
         .export_values();
+
+    py::enum_<NEAT::SpikingInputMode>(m, "SpikingInputMode")
+        .value("CURRENT_INPUT", NEAT::CURRENT_INPUT)
+        .value("BINARY_SPIKE_INPUT", NEAT::BINARY_SPIKE_INPUT)
+        .value("POISSON_RATE_INPUT", NEAT::POISSON_RATE_INPUT)
+        .export_values();
+
+    py::enum_<NEAT::SpikingOutputMode>(m, "SpikingOutputMode")
+        .value("SPIKE_OUTPUT", NEAT::SPIKE_OUTPUT)
+        .value("FIRING_RATE_OUTPUT", NEAT::FIRING_RATE_OUTPUT)
+        .value(
+            "FILTERED_SPIKE_OUTPUT",
+            NEAT::FILTERED_SPIKE_OUTPUT)
+        .value(
+            "MEMBRANE_POTENTIAL_OUTPUT",
+            NEAT::MEMBRANE_POTENTIAL_OUTPUT)
+        .export_values();
+
+    py::enum_<NEAT::EPropOptimizer>(m, "EPropOptimizer")
+        .value("EPROP_ADAMW", NEAT::EPROP_ADAMW)
+        .value("EPROP_SGD", NEAT::EPROP_SGD)
+        .export_values();
+
+    py::enum_<NEAT::EPropFeedbackMode>(
+        m, "EPropFeedbackMode")
+        .value(
+            "EPROP_RANDOM_FEEDBACK",
+            NEAT::EPROP_RANDOM_FEEDBACK)
+        .value(
+            "EPROP_SYMMETRIC_FEEDBACK",
+            NEAT::EPROP_SYMMETRIC_FEEDBACK)
+        .value(
+            "EPROP_UNIFORM_FEEDBACK",
+            NEAT::EPROP_UNIFORM_FEEDBACK)
+        .export_values();
+
+    py::enum_<NEAT::EPropSurrogate>(m, "EPropSurrogate")
+        .value(
+            "EPROP_FAST_SIGMOID",
+            NEAT::EPROP_FAST_SIGMOID)
+        .value(
+            "EPROP_TRIANGULAR",
+            NEAT::EPROP_TRIANGULAR)
+        .value("EPROP_ARCTAN", NEAT::EPROP_ARCTAN)
+        .export_values();
+
+    py::enum_<NEAT::EPropLoss>(m, "EPropLoss")
+        .value(
+            "EPROP_MEAN_SQUARED_ERROR",
+            NEAT::EPROP_MEAN_SQUARED_ERROR)
+        .value(
+            "EPROP_HUBER_LOSS",
+            NEAT::EPROP_HUBER_LOSS)
+        .export_values();
+    m.def(
+        "IsSpikingActivation",
+        &NEAT::IsSpikingActivation,
+        py::arg("activation"));
 
     py::enum_<NEAT::GenomeSeedType>(m, "GenomeSeedType")
         .value("PERCEPTRON", NEAT::PERCEPTRON)
@@ -254,7 +320,24 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite("m_ToNeuronID", &NEAT::LinkGene::m_ToNeuronID)
         .def_readwrite("m_InnovationID", &NEAT::LinkGene::m_InnovationID)
         .def_readwrite("m_Weight", &NEAT::LinkGene::m_Weight)
-        .def_readwrite("m_IsRecurrent", &NEAT::LinkGene::m_IsRecurrent);
+        .def_readwrite("m_IsRecurrent", &NEAT::LinkGene::m_IsRecurrent)
+        .def_readwrite(
+            "m_SynapticDelay", &NEAT::LinkGene::m_SynapticDelay)
+        .def_readwrite(
+            "m_SynapticTimeConstant",
+            &NEAT::LinkGene::m_SynapticTimeConstant)
+        .def_readwrite(
+            "m_STDPEnabled", &NEAT::LinkGene::m_STDPEnabled)
+        .def_readwrite("m_STDPPlus", &NEAT::LinkGene::m_STDPPlus)
+        .def_readwrite("m_STDPMinus", &NEAT::LinkGene::m_STDPMinus)
+        .def_readwrite(
+            "m_STDPTauPlus", &NEAT::LinkGene::m_STDPTauPlus)
+        .def_readwrite(
+            "m_STDPTauMinus", &NEAT::LinkGene::m_STDPTauMinus)
+        .def_readwrite(
+            "m_STDPMinWeight", &NEAT::LinkGene::m_STDPMinWeight)
+        .def_readwrite(
+            "m_STDPMaxWeight", &NEAT::LinkGene::m_STDPMaxWeight);
 
     py::class_<NEAT::NeuronGene, NEAT::Gene>(m, "NeuronGene")
         .def(py::init<>())
@@ -273,7 +356,35 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite("m_B", &NEAT::NeuronGene::m_B)
         .def_readwrite("m_TimeConstant", &NEAT::NeuronGene::m_TimeConstant)
         .def_readwrite("m_Bias", &NEAT::NeuronGene::m_Bias)
-        .def_readwrite("m_ActFunction", &NEAT::NeuronGene::m_ActFunction);
+        .def_readwrite("m_ActFunction", &NEAT::NeuronGene::m_ActFunction)
+        .def_readwrite(
+            "m_SpikeThreshold", &NEAT::NeuronGene::m_SpikeThreshold)
+        .def_readwrite(
+            "m_ResetPotential", &NEAT::NeuronGene::m_ResetPotential)
+        .def_readwrite(
+            "m_RestingPotential", &NEAT::NeuronGene::m_RestingPotential)
+        .def_readwrite(
+            "m_RefractoryPeriod", &NEAT::NeuronGene::m_RefractoryPeriod)
+        .def_readwrite(
+            "m_MembraneResistance",
+            &NEAT::NeuronGene::m_MembraneResistance)
+        .def_readwrite(
+            "m_AdaptationTimeConstant",
+            &NEAT::NeuronGene::m_AdaptationTimeConstant)
+        .def_readwrite(
+            "m_AdaptationIncrement",
+            &NEAT::NeuronGene::m_AdaptationIncrement)
+        .def_readwrite(
+            "m_RateTimeConstant",
+            &NEAT::NeuronGene::m_RateTimeConstant)
+        .def_readwrite(
+            "m_IzhikevichA", &NEAT::NeuronGene::m_IzhikevichA)
+        .def_readwrite(
+            "m_IzhikevichB", &NEAT::NeuronGene::m_IzhikevichB)
+        .def_readwrite(
+            "m_IzhikevichC", &NEAT::NeuronGene::m_IzhikevichC)
+        .def_readwrite(
+            "m_IzhikevichD", &NEAT::NeuronGene::m_IzhikevichD);
 
 
     // ========================
@@ -334,11 +445,20 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("Mutate_LinkWeights", &NEAT::Genome::Mutate_LinkWeights)
         .def("Randomize_LinkWeights", &NEAT::Genome::Randomize_LinkWeights)
         .def("Randomize_Traits", &NEAT::Genome::Randomize_Traits)
+        .def(
+            "Randomize_SpikingParameters",
+            &NEAT::Genome::Randomize_SpikingParameters)
         .def("Mutate_NeuronActivations_A", &NEAT::Genome::Mutate_NeuronActivations_A)
         .def("Mutate_NeuronActivations_B", &NEAT::Genome::Mutate_NeuronActivations_B)
         .def("Mutate_NeuronActivation_Type", &NEAT::Genome::Mutate_NeuronActivation_Type)
         .def("Mutate_NeuronTimeConstants", &NEAT::Genome::Mutate_NeuronTimeConstants)
         .def("Mutate_NeuronBiases", &NEAT::Genome::Mutate_NeuronBiases)
+        .def(
+            "Mutate_NeuronSpikingParameters",
+            &NEAT::Genome::Mutate_NeuronSpikingParameters)
+        .def(
+            "Mutate_LinkSpikingParameters",
+            &NEAT::Genome::Mutate_LinkSpikingParameters)
         .def("Mutate_NeuronTraits", &NEAT::Genome::Mutate_NeuronTraits)
         .def("Mutate_LinkTraits", &NEAT::Genome::Mutate_LinkTraits)
         .def("Mutate_GenomeTraits", &NEAT::Genome::Mutate_GenomeTraits)
@@ -437,6 +557,27 @@ PYBIND11_MODULE(pymultineat, m) {
     // Bindings for NeuralNetwork (and its inner classes)
     // ========================
 
+    py::class_<NEAT::SpikeEvent>(m, "SpikeEvent")
+        .def(py::init<>())
+        .def_readwrite("time", &NEAT::SpikeEvent::time)
+        .def_readwrite(
+            "neuron_index", &NEAT::SpikeEvent::neuron_index)
+        .def_readwrite("amplitude", &NEAT::SpikeEvent::amplitude)
+        .def_readwrite("input", &NEAT::SpikeEvent::input);
+
+    py::class_<NEAT::PendingSynapticEvent>(
+        m, "PendingSynapticEvent")
+        .def(py::init<>())
+        .def_readwrite(
+            "delivery_time",
+            &NEAT::PendingSynapticEvent::delivery_time)
+        .def_readwrite(
+            "amplitude",
+            &NEAT::PendingSynapticEvent::amplitude)
+        .def_readwrite(
+            "source_amplitude",
+            &NEAT::PendingSynapticEvent::source_amplitude);
+
     py::class_<NEAT::Connection>(m, "Connection")
         .def(py::init<>())
         .def_readwrite("m_source_neuron_idx", &NEAT::Connection::m_source_neuron_idx)
@@ -447,7 +588,45 @@ PYBIND11_MODULE(pymultineat, m) {
                        &NEAT::Connection::m_source_activation)
         .def_readwrite("m_recur_flag", &NEAT::Connection::m_recur_flag)
         .def_readwrite("m_hebb_rate", &NEAT::Connection::m_hebb_rate)
-        .def_readwrite("m_hebb_pre_rate", &NEAT::Connection::m_hebb_pre_rate);
+        .def_readwrite("m_hebb_pre_rate", &NEAT::Connection::m_hebb_pre_rate)
+        .def_readwrite(
+            "m_synaptic_delay",
+            &NEAT::Connection::m_synaptic_delay)
+        .def_readwrite(
+            "m_synaptic_time_constant",
+            &NEAT::Connection::m_synaptic_time_constant)
+        .def_readwrite(
+            "m_presynaptic_signal",
+            &NEAT::Connection::m_presynaptic_signal)
+        .def_readwrite(
+            "m_synaptic_current",
+            &NEAT::Connection::m_synaptic_current)
+        .def_readwrite(
+            "m_stdp_enabled", &NEAT::Connection::m_stdp_enabled)
+        .def_readwrite("m_stdp_plus", &NEAT::Connection::m_stdp_plus)
+        .def_readwrite(
+            "m_stdp_minus", &NEAT::Connection::m_stdp_minus)
+        .def_readwrite(
+            "m_stdp_tau_plus",
+            &NEAT::Connection::m_stdp_tau_plus)
+        .def_readwrite(
+            "m_stdp_tau_minus",
+            &NEAT::Connection::m_stdp_tau_minus)
+        .def_readwrite(
+            "m_stdp_pre_trace",
+            &NEAT::Connection::m_stdp_pre_trace)
+        .def_readwrite(
+            "m_stdp_post_trace",
+            &NEAT::Connection::m_stdp_post_trace)
+        .def_readwrite(
+            "m_stdp_min_weight",
+            &NEAT::Connection::m_stdp_min_weight)
+        .def_readwrite(
+            "m_stdp_max_weight",
+            &NEAT::Connection::m_stdp_max_weight)
+        .def_readwrite(
+            "m_pending_events",
+            &NEAT::Connection::m_pending_events);
 
     py::class_<NEAT::Neuron>(m, "Neuron")
         .def(py::init<>())
@@ -469,7 +648,180 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite("m_substrate_coords", &NEAT::Neuron::m_substrate_coords)
         .def_readwrite("m_split_y", &NEAT::Neuron::m_split_y)
         .def_readwrite("m_type", &NEAT::Neuron::m_type)
-        .def_readwrite("m_sensitivity_matrix", &NEAT::Neuron::m_sensitivity_matrix);
+        .def_readwrite("m_sensitivity_matrix", &NEAT::Neuron::m_sensitivity_matrix)
+        .def_readwrite(
+            "m_spike_threshold", &NEAT::Neuron::m_spike_threshold)
+        .def_readwrite(
+            "m_reset_potential", &NEAT::Neuron::m_reset_potential)
+        .def_readwrite(
+            "m_resting_potential", &NEAT::Neuron::m_resting_potential)
+        .def_readwrite(
+            "m_refractory_period", &NEAT::Neuron::m_refractory_period)
+        .def_readwrite(
+            "m_refractory_remaining",
+            &NEAT::Neuron::m_refractory_remaining)
+        .def_readwrite(
+            "m_membrane_resistance",
+            &NEAT::Neuron::m_membrane_resistance)
+        .def_readwrite(
+            "m_adaptation_time_constant",
+            &NEAT::Neuron::m_adaptation_time_constant)
+        .def_readwrite(
+            "m_adaptation_increment",
+            &NEAT::Neuron::m_adaptation_increment)
+        .def_readwrite(
+            "m_adaptation", &NEAT::Neuron::m_adaptation)
+        .def_readwrite(
+            "m_izhikevich_a", &NEAT::Neuron::m_izhikevich_a)
+        .def_readwrite(
+            "m_izhikevich_b", &NEAT::Neuron::m_izhikevich_b)
+        .def_readwrite(
+            "m_izhikevich_c", &NEAT::Neuron::m_izhikevich_c)
+        .def_readwrite(
+            "m_izhikevich_d", &NEAT::Neuron::m_izhikevich_d)
+        .def_readwrite(
+            "m_izhikevich_recovery",
+            &NEAT::Neuron::m_izhikevich_recovery)
+        .def_readwrite("m_spike", &NEAT::Neuron::m_spike)
+        .def_readwrite(
+            "m_spike_count", &NEAT::Neuron::m_spike_count)
+        .def_readwrite(
+            "m_last_spike_time", &NEAT::Neuron::m_last_spike_time)
+        .def_readwrite(
+            "m_rate_trace", &NEAT::Neuron::m_rate_trace)
+        .def_readwrite(
+            "m_rate_time_constant",
+            &NEAT::Neuron::m_rate_time_constant);
+
+    py::class_<NEAT::EPropConfig>(m, "EPropConfig")
+        .def(py::init<>())
+        .def_readwrite(
+            "learning_rate",
+            &NEAT::EPropConfig::learning_rate)
+        .def_readwrite(
+            "optimizer",
+            &NEAT::EPropConfig::optimizer)
+        .def_readwrite(
+            "feedback_mode",
+            &NEAT::EPropConfig::feedback_mode)
+        .def_readwrite(
+            "surrogate",
+            &NEAT::EPropConfig::surrogate)
+        .def_readwrite("loss", &NEAT::EPropConfig::loss)
+        .def_readwrite(
+            "surrogate_scale",
+            &NEAT::EPropConfig::surrogate_scale)
+        .def_readwrite(
+            "surrogate_dampening",
+            &NEAT::EPropConfig::surrogate_dampening)
+        .def_readwrite(
+            "gradient_clip_norm",
+            &NEAT::EPropConfig::gradient_clip_norm)
+        .def_readwrite(
+            "weight_decay",
+            &NEAT::EPropConfig::weight_decay)
+        .def_readwrite(
+            "adam_beta1",
+            &NEAT::EPropConfig::adam_beta1)
+        .def_readwrite(
+            "adam_beta2",
+            &NEAT::EPropConfig::adam_beta2)
+        .def_readwrite(
+            "adam_epsilon",
+            &NEAT::EPropConfig::adam_epsilon)
+        .def_readwrite(
+            "huber_delta",
+            &NEAT::EPropConfig::huber_delta)
+        .def_readwrite(
+            "min_weight",
+            &NEAT::EPropConfig::min_weight)
+        .def_readwrite(
+            "max_weight",
+            &NEAT::EPropConfig::max_weight)
+        .def_readwrite(
+            "update_interval",
+            &NEAT::EPropConfig::update_interval)
+        .def_readwrite(
+            "random_seed",
+            &NEAT::EPropConfig::random_seed)
+        .def_readwrite(
+            "train_input_connections",
+            &NEAT::EPropConfig::train_input_connections)
+        .def_readwrite(
+            "train_hidden_connections",
+            &NEAT::EPropConfig::train_hidden_connections)
+        .def_readwrite(
+            "train_output_connections",
+            &NEAT::EPropConfig::train_output_connections)
+        .def_readwrite(
+            "train_recurrent_connections",
+            &NEAT::EPropConfig::train_recurrent_connections)
+        .def_readwrite(
+            "allow_stdp",
+            &NEAT::EPropConfig::allow_stdp);
+
+    py::class_<NEAT::EPropConnectionState>(
+        m, "EPropConnectionState")
+        .def(py::init<>())
+        .def_readonly(
+            "synaptic_trace",
+            &NEAT::EPropConnectionState::synaptic_trace)
+        .def_readonly(
+            "voltage_eligibility",
+            &NEAT::EPropConnectionState::voltage_eligibility)
+        .def_readonly(
+            "adaptation_eligibility",
+            &NEAT::EPropConnectionState::
+                adaptation_eligibility)
+        .def_readonly(
+            "readout_eligibility",
+            &NEAT::EPropConnectionState::readout_eligibility)
+        .def_readonly(
+            "gradient",
+            &NEAT::EPropConnectionState::gradient)
+        .def_readonly(
+            "first_moment",
+            &NEAT::EPropConnectionState::first_moment)
+        .def_readonly(
+            "second_moment",
+            &NEAT::EPropConnectionState::second_moment);
+
+    py::class_<NEAT::EPropStepResult>(
+        m, "EPropStepResult")
+        .def(py::init<>())
+        .def_readonly(
+            "outputs", &NEAT::EPropStepResult::outputs)
+        .def_readonly("loss", &NEAT::EPropStepResult::loss)
+        .def_readonly(
+            "gradient_norm",
+            &NEAT::EPropStepResult::gradient_norm)
+        .def_readonly(
+            "updated_connections",
+            &NEAT::EPropStepResult::updated_connections)
+        .def_readonly(
+            "update_applied",
+            &NEAT::EPropStepResult::update_applied);
+
+    py::class_<NEAT::EPropSequenceResult>(
+        m, "EPropSequenceResult")
+        .def(py::init<>())
+        .def_readonly(
+            "outputs",
+            &NEAT::EPropSequenceResult::outputs)
+        .def_readonly(
+            "losses", &NEAT::EPropSequenceResult::losses)
+        .def_readonly(
+            "mean_loss",
+            &NEAT::EPropSequenceResult::mean_loss)
+        .def_readonly(
+            "final_gradient_norm",
+            &NEAT::EPropSequenceResult::final_gradient_norm)
+        .def_readonly(
+            "optimizer_updates",
+            &NEAT::EPropSequenceResult::optimizer_updates)
+        .def_readonly(
+            "updated_connections",
+            &NEAT::EPropSequenceResult::updated_connections);
 
         py::class_<NEAT::NeuralNetwork>(m, "NeuralNetwork")
         .def(py::init<bool>(), py::arg("a_Minimal"))
@@ -527,6 +879,66 @@ PYBIND11_MODULE(pymultineat, m) {
             py::arg("steps") = 1,
             py::arg("use_internal_bias") = false)
         .def(
+            "StepSpiking",
+            &NEAT::NeuralNetwork::StepSpiking,
+            py::arg("inputs"),
+            py::arg("time_step") = -1.0)
+        .def(
+            "SimulateSpiking",
+            &NEAT::NeuralNetwork::SimulateSpiking,
+            py::arg("inputs"),
+            py::arg("time_step") = -1.0,
+            py::arg("reset") = false)
+        .def("OutputSpikes", &NEAT::NeuralNetwork::OutputSpikes)
+        .def("OutputRates", &NEAT::NeuralNetwork::OutputRates)
+        .def(
+            "OutputFilteredSpikes",
+            &NEAT::NeuralNetwork::OutputFilteredSpikes)
+        .def(
+            "OutputMembranePotentials",
+            &NEAT::NeuralNetwork::OutputMembranePotentials)
+        .def(
+            "OutputDecoded",
+            &NEAT::NeuralNetwork::OutputDecoded)
+        .def("IsSpiking", &NEAT::NeuralNetwork::IsSpiking)
+        .def("SpikingTime", &NEAT::NeuralNetwork::SpikingTime)
+        .def(
+            "SpikingTimeStep",
+            &NEAT::NeuralNetwork::SpikingTimeStep)
+        .def(
+            "SetSpikingTimeStep",
+            &NEAT::NeuralNetwork::SetSpikingTimeStep)
+        .def(
+            "SetSpikingInputMode",
+            &NEAT::NeuralNetwork::SetSpikingInputMode)
+        .def(
+            "GetSpikingInputMode",
+            &NEAT::NeuralNetwork::GetSpikingInputMode)
+        .def(
+            "SetSpikingOutputMode",
+            &NEAT::NeuralNetwork::SetSpikingOutputMode)
+        .def(
+            "GetSpikingOutputMode",
+            &NEAT::NeuralNetwork::GetSpikingOutputMode)
+        .def(
+            "SeedSpiking",
+            &NEAT::NeuralNetwork::SeedSpiking)
+        .def(
+            "EnableSpikeRecording",
+            &NEAT::NeuralNetwork::EnableSpikeRecording,
+            py::arg("enabled"),
+            py::arg("max_events") = 100000)
+        .def(
+            "GetSpikeHistory",
+            [](const NEAT::NeuralNetwork& network)
+            {
+                return network.GetSpikeHistory();
+            })
+        .def(
+            "ClearSpikeHistory",
+            &NEAT::NeuralNetwork::ClearSpikeHistory)
+        .def("EnableSTDP", &NEAT::NeuralNetwork::EnableSTDP)
+        .def(
             "SparseRTRLStateSize",
             &NEAT::NeuralNetwork::SparseRTRLStateSize)
         .def("AddNeuron", &NEAT::NeuralNetwork::AddNeuron)
@@ -562,6 +974,93 @@ PYBIND11_MODULE(pymultineat, m) {
             }
         ));
 
+        py::class_<NEAT::EPropLearner>(m, "EPropLearner")
+        .def(py::init<>())
+        .def(
+            py::init<const NEAT::EPropConfig&>(),
+            py::arg("config"))
+        .def(
+            "Initialize",
+            &NEAT::EPropLearner::Initialize,
+            py::arg("network"))
+        .def(
+            "RefreshFeedback",
+            &NEAT::EPropLearner::RefreshFeedback,
+            py::arg("network"))
+        .def(
+            "IsInitialized",
+            &NEAT::EPropLearner::IsInitialized)
+        .def(
+            "ResetEligibility",
+            &NEAT::EPropLearner::ResetEligibility)
+        .def(
+            "ResetOptimizer",
+            &NEAT::EPropLearner::ResetOptimizer)
+        .def(
+            "ZeroGradients",
+            &NEAT::EPropLearner::ZeroGradients)
+        .def(
+            "TrainStep",
+            &NEAT::EPropLearner::TrainStep,
+            py::arg("network"),
+            py::arg("inputs"),
+            py::arg("targets"),
+            py::arg("time_step") = -1.0)
+        .def(
+            "TrainStepWithSignals",
+            &NEAT::EPropLearner::TrainStepWithSignals,
+            py::arg("network"),
+            py::arg("inputs"),
+            py::arg("learning_signals"),
+            py::arg("time_step") = -1.0)
+        .def(
+            "TrainSequence",
+            &NEAT::EPropLearner::TrainSequence,
+            py::arg("network"),
+            py::arg("inputs"),
+            py::arg("targets"),
+            py::arg("time_step") = -1.0,
+            py::arg("reset_network") = true,
+            py::arg("apply_final_update") = true)
+        .def(
+            "AccumulateLearningSignals",
+            &NEAT::EPropLearner::AccumulateLearningSignals,
+            py::arg("network"),
+            py::arg("learning_signals"),
+            py::arg("time_step") = -1.0)
+        .def(
+            "ApplyGradients",
+            &NEAT::EPropLearner::ApplyGradients,
+            py::arg("network"))
+        .def(
+            "ConnectionStates",
+            &NEAT::EPropLearner::ConnectionStates)
+        .def(
+            "FeedbackMatrix",
+            &NEAT::EPropLearner::FeedbackMatrix)
+        .def(
+            "OptimizerStep",
+            &NEAT::EPropLearner::OptimizerStep)
+        .def(
+            "AccumulatedSteps",
+            &NEAT::EPropLearner::AccumulatedSteps)
+        .def("Serialize", &NEAT::EPropLearner::Serialize)
+        .def_static(
+            "Deserialize",
+            &NEAT::EPropLearner::Deserialize)
+        .def_readwrite(
+            "m_config",
+            &NEAT::EPropLearner::m_config)
+        .def(py::pickle(
+            [](const NEAT::EPropLearner& learner)
+            {
+                return learner.Serialize();
+            },
+            [](const std::string& state)
+            {
+                return NEAT::EPropLearner::Deserialize(state);
+            }));
+
         py::class_<NEAT::Parameters>(m, "Parameters")
             .def(py::init<>())
             // Methods
@@ -570,6 +1069,10 @@ PYBIND11_MODULE(pymultineat, m) {
             .def("Save", (void (NEAT::Parameters::*)(const char*)) &NEAT::Parameters::Save, py::arg("filename"))
             .def("SaveToStream", (void (NEAT::Parameters::*)(FILE*)) &NEAT::Parameters::Save, py::arg("fstream"))
             .def("Reset", &NEAT::Parameters::Reset)
+            .def(
+                "ConfigureSpiking",
+                &NEAT::Parameters::ConfigureSpiking,
+                py::arg("enable_stdp") = false)
             .def("Serialize", &NEAT::Parameters::Serialize)
             .def_static("Deserialize", &NEAT::Parameters::Deserialize)
             .def("Validate",
@@ -683,12 +1186,58 @@ PYBIND11_MODULE(pymultineat, m) {
             .def_readwrite("ActivationFunction_Linear_Prob", &NEAT::Parameters::ActivationFunction_Linear_Prob)
             .def_readwrite("ActivationFunction_Relu_Prob", &NEAT::Parameters::ActivationFunction_Relu_Prob)
             .def_readwrite("ActivationFunction_Softplus_Prob", &NEAT::Parameters::ActivationFunction_Softplus_Prob)
+            .def_readwrite("ActivationFunction_SpikingLIF_Prob", &NEAT::Parameters::ActivationFunction_SpikingLIF_Prob)
+            .def_readwrite("ActivationFunction_SpikingAdaptiveLIF_Prob", &NEAT::Parameters::ActivationFunction_SpikingAdaptiveLIF_Prob)
+            .def_readwrite("ActivationFunction_SpikingIzhikevich_Prob", &NEAT::Parameters::ActivationFunction_SpikingIzhikevich_Prob)
             .def_readwrite("MutateNeuronTimeConstantsProb", &NEAT::Parameters::MutateNeuronTimeConstantsProb)
             .def_readwrite("MutateNeuronBiasesProb", &NEAT::Parameters::MutateNeuronBiasesProb)
             .def_readwrite("MinNeuronTimeConstant", &NEAT::Parameters::MinNeuronTimeConstant)
             .def_readwrite("MaxNeuronTimeConstant", &NEAT::Parameters::MaxNeuronTimeConstant)
             .def_readwrite("MinNeuronBias", &NEAT::Parameters::MinNeuronBias)
             .def_readwrite("MaxNeuronBias", &NEAT::Parameters::MaxNeuronBias)
+            .def_readwrite("MutateNeuronSpikingParametersProb", &NEAT::Parameters::MutateNeuronSpikingParametersProb)
+            .def_readwrite("MutateLinkSpikingParametersProb", &NEAT::Parameters::MutateLinkSpikingParametersProb)
+            .def_readwrite("SpikingParameterMutationRate", &NEAT::Parameters::SpikingParameterMutationRate)
+            .def_readwrite("SpikingParameterMutationPower", &NEAT::Parameters::SpikingParameterMutationPower)
+            .def_readwrite("MinSpikingTimeConstant", &NEAT::Parameters::MinSpikingTimeConstant)
+            .def_readwrite("MaxSpikingTimeConstant", &NEAT::Parameters::MaxSpikingTimeConstant)
+            .def_readwrite("MinSpikeThreshold", &NEAT::Parameters::MinSpikeThreshold)
+            .def_readwrite("MaxSpikeThreshold", &NEAT::Parameters::MaxSpikeThreshold)
+            .def_readwrite("MinResetPotential", &NEAT::Parameters::MinResetPotential)
+            .def_readwrite("MaxResetPotential", &NEAT::Parameters::MaxResetPotential)
+            .def_readwrite("MinRestingPotential", &NEAT::Parameters::MinRestingPotential)
+            .def_readwrite("MaxRestingPotential", &NEAT::Parameters::MaxRestingPotential)
+            .def_readwrite("MinRefractoryPeriod", &NEAT::Parameters::MinRefractoryPeriod)
+            .def_readwrite("MaxRefractoryPeriod", &NEAT::Parameters::MaxRefractoryPeriod)
+            .def_readwrite("MinMembraneResistance", &NEAT::Parameters::MinMembraneResistance)
+            .def_readwrite("MaxMembraneResistance", &NEAT::Parameters::MaxMembraneResistance)
+            .def_readwrite("MinAdaptationTimeConstant", &NEAT::Parameters::MinAdaptationTimeConstant)
+            .def_readwrite("MaxAdaptationTimeConstant", &NEAT::Parameters::MaxAdaptationTimeConstant)
+            .def_readwrite("MinAdaptationIncrement", &NEAT::Parameters::MinAdaptationIncrement)
+            .def_readwrite("MaxAdaptationIncrement", &NEAT::Parameters::MaxAdaptationIncrement)
+            .def_readwrite("MinSpikeRateTimeConstant", &NEAT::Parameters::MinSpikeRateTimeConstant)
+            .def_readwrite("MaxSpikeRateTimeConstant", &NEAT::Parameters::MaxSpikeRateTimeConstant)
+            .def_readwrite("MinIzhikevichA", &NEAT::Parameters::MinIzhikevichA)
+            .def_readwrite("MaxIzhikevichA", &NEAT::Parameters::MaxIzhikevichA)
+            .def_readwrite("MinIzhikevichThreshold", &NEAT::Parameters::MinIzhikevichThreshold)
+            .def_readwrite("MaxIzhikevichThreshold", &NEAT::Parameters::MaxIzhikevichThreshold)
+            .def_readwrite("MinIzhikevichB", &NEAT::Parameters::MinIzhikevichB)
+            .def_readwrite("MaxIzhikevichB", &NEAT::Parameters::MaxIzhikevichB)
+            .def_readwrite("MinIzhikevichC", &NEAT::Parameters::MinIzhikevichC)
+            .def_readwrite("MaxIzhikevichC", &NEAT::Parameters::MaxIzhikevichC)
+            .def_readwrite("MinIzhikevichD", &NEAT::Parameters::MinIzhikevichD)
+            .def_readwrite("MaxIzhikevichD", &NEAT::Parameters::MaxIzhikevichD)
+            .def_readwrite("MinSynapticDelay", &NEAT::Parameters::MinSynapticDelay)
+            .def_readwrite("MaxSynapticDelay", &NEAT::Parameters::MaxSynapticDelay)
+            .def_readwrite("MinSynapticTimeConstant", &NEAT::Parameters::MinSynapticTimeConstant)
+            .def_readwrite("MaxSynapticTimeConstant", &NEAT::Parameters::MaxSynapticTimeConstant)
+            .def_readwrite("InitialSTDPEnabledProb", &NEAT::Parameters::InitialSTDPEnabledProb)
+            .def_readwrite("MinSTDPPlus", &NEAT::Parameters::MinSTDPPlus)
+            .def_readwrite("MaxSTDPPlus", &NEAT::Parameters::MaxSTDPPlus)
+            .def_readwrite("MinSTDPMinus", &NEAT::Parameters::MinSTDPMinus)
+            .def_readwrite("MaxSTDPMinus", &NEAT::Parameters::MaxSTDPMinus)
+            .def_readwrite("MinSTDPTau", &NEAT::Parameters::MinSTDPTau)
+            .def_readwrite("MaxSTDPTau", &NEAT::Parameters::MaxSTDPTau)
             // Speciation parameters
             .def_readwrite("DisjointCoeff", &NEAT::Parameters::DisjointCoeff)
             .def_readwrite("ExcessCoeff", &NEAT::Parameters::ExcessCoeff)
@@ -698,6 +1247,8 @@ PYBIND11_MODULE(pymultineat, m) {
             .def_readwrite("TimeConstantDiffCoeff", &NEAT::Parameters::TimeConstantDiffCoeff)
             .def_readwrite("BiasDiffCoeff", &NEAT::Parameters::BiasDiffCoeff)
             .def_readwrite("ActivationFunctionDiffCoeff", &NEAT::Parameters::ActivationFunctionDiffCoeff)
+            .def_readwrite("SpikingNeuronDiffCoeff", &NEAT::Parameters::SpikingNeuronDiffCoeff)
+            .def_readwrite("SpikingLinkDiffCoeff", &NEAT::Parameters::SpikingLinkDiffCoeff)
             .def_readwrite("CompatTreshold", &NEAT::Parameters::CompatTreshold)
             .def_readwrite("MinCompatTreshold", &NEAT::Parameters::MinCompatTreshold)
             .def_readwrite("CompatTresholdModifier", &NEAT::Parameters::CompatTresholdModifier)

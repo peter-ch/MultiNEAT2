@@ -66,6 +66,45 @@ DEMOS: tuple[DemoSpec, ...] = (
         1,
     ),
     DemoSpec(
+        "spiking_pattern",
+        "Temporal spike detector",
+        "Spiking",
+        "demos/spiking_pattern.py",
+        "Synchronous spike patterns",
+        "Evolve mixed LIF/adaptive-LIF networks and inspect live spike trains.",
+        ("matplotlib", "networkx", "numpy"),
+        "requirements-visualization.txt",
+        120,
+        80,
+        80,
+    ),
+    DemoSpec(
+        "spiking_cartpole",
+        "Spiking Cart-Pole",
+        "Spiking",
+        "demos/spiking_cartpole.py",
+        "Built-in Cart-Pole",
+        "Evolve a Poisson-encoded spiking controller with synchronized physics and network animation.",
+        ("matplotlib", "networkx", "numpy"),
+        "requirements-visualization.txt",
+        140,
+        100,
+        600,
+    ),
+    DemoSpec(
+        "spiking_eprop",
+        "Online e-prop learning",
+        "Spiking",
+        "demos/spiking_eprop.py",
+        "Supervised spike response",
+        "Train adaptive spiking networks online with eligibility traces, surrogate gradients, and AdamW.",
+        ("matplotlib", "networkx", "numpy"),
+        "requirements-visualization.txt",
+        1,
+        60,
+        20,
+    ),
+    DemoSpec(
         "asteroids",
         "Asteroids navigation",
         "Games",
@@ -363,6 +402,7 @@ class LaunchOptions:
     workers: int = 1
     seed: int = 42
     profile: str = "ranked"
+    spiking: bool = False
     render: bool = False
     plot: bool = False
     record_video: bool = False
@@ -518,11 +558,24 @@ def probe_modules(
 
 def required_modules(spec: DemoSpec, options: LaunchOptions) -> tuple[str, ...]:
     modules = list(spec.modules)
-    if options.mode == "run" and options.plot:
+    needs_spiking_rendering = (
+        options.spiking
+        and options.render
+        and supports_spiking_variant(spec)
+        and spec.family in {"Box2D", "MuJoCo"}
+    )
+    if options.mode == "run" and (options.plot or needs_spiking_rendering):
         modules.extend(("matplotlib", "networkx"))
     if options.mode == "run" and options.record_video:
         modules.extend(("imageio", "imageio_ffmpeg"))
     return tuple(dict.fromkeys(modules))
+
+
+def supports_spiking_variant(spec: DemoSpec) -> bool:
+    return spec.family in {"Box2D", "MuJoCo"} or spec.id in {
+        "xor",
+        "asteroids",
+    }
 
 
 def build_demo_command(
@@ -538,6 +591,8 @@ def build_demo_command(
         str(ROOT / spec.script),
     ]
     physics = spec.family in {"Box2D", "MuJoCo"}
+    if options.spiking and supports_spiking_variant(spec):
+        command.append("--spiking")
     if options.mode == "smoke":
         command.append("--smoke")
         return command, None
@@ -552,6 +607,55 @@ def build_demo_command(
                 str(options.generations),
                 "--population",
                 str(options.population),
+                "--seed",
+                str(options.seed),
+            ]
+        )
+        if not options.render:
+            command.append("--no-show")
+        return command, None
+
+    if spec.id == "spiking_pattern":
+        command.extend(
+            [
+                "--generations",
+                str(options.generations),
+                "--population",
+                str(options.population),
+                "--seed",
+                str(options.seed),
+            ]
+        )
+        if options.render:
+            command.append("--animate")
+        else:
+            command.append("--no-show")
+        return command, None
+
+    if spec.id == "spiking_cartpole":
+        command.extend(
+            [
+                "--generations",
+                str(options.generations),
+                "--population",
+                str(options.population),
+                "--max-steps",
+                str(options.max_steps),
+                "--seed",
+                str(options.seed),
+            ]
+        )
+        if options.render:
+            command.append("--animate")
+        else:
+            command.append("--no-show")
+        return command, None
+
+    if spec.id == "spiking_eprop":
+        command.extend(
+            [
+                "--epochs",
+                str(options.generations),
                 "--seed",
                 str(options.seed),
             ]
@@ -578,7 +682,12 @@ def build_demo_command(
         return command, None
 
     stamp = timestamp or time.strftime("%Y%m%d-%H%M%S")
-    output = options.output_base / f"{spec.id}-{stamp}"
+    output_name = (
+        f"{spec.id}-spiking"
+        if options.spiking and supports_spiking_variant(spec)
+        else spec.id
+    )
+    output = options.output_base / f"{output_name}-{stamp}"
     command.extend(
         [
             "--generations",
@@ -815,6 +924,7 @@ def run_gui() -> int:
                 value=max(1, min(8, (os.cpu_count() or 2) - 1))
             )
             self.seed_var = tk.IntVar(value=42)
+            self.spiking_var = tk.BooleanVar(value=False)
             self.render_var = tk.BooleanVar(value=False)
             self.plot_var = tk.BooleanVar(value=True)
             self.video_var = tk.BooleanVar(value=False)
@@ -850,7 +960,14 @@ def run_gui() -> int:
             family = ttk.Combobox(
                 filters,
                 textvariable=self.family_var,
-                values=("All", "Core", "Games", "Box2D", "MuJoCo"),
+                values=(
+                    "All",
+                    "Core",
+                    "Spiking",
+                    "Games",
+                    "Box2D",
+                    "MuJoCo",
+                ),
                 state="readonly",
                 width=10,
             )
@@ -952,6 +1069,12 @@ def run_gui() -> int:
                 toggles, text="Open rendering windows", variable=self.render_var
             )
             self.render_check.pack(side="left", padx=(0, 16))
+            self.spiking_check = ttk.Checkbutton(
+                toggles,
+                text="Spiking policy variant",
+                variable=self.spiking_var,
+            )
+            self.spiking_check.pack(side="left", padx=(0, 16))
             self.plot_check = ttk.Checkbutton(
                 toggles, text="Save summary plot", variable=self.plot_var
             )
@@ -1076,6 +1199,7 @@ def run_gui() -> int:
                 workers=max(1, self.workers_var.get()),
                 seed=max(0, self.seed_var.get()),
                 profile=self.profile_var.get(),
+                spiking=self.spiking_var.get(),
                 render=self.render_var.get(),
                 plot=self.plot_var.get(),
                 record_video=self.video_var.get(),
@@ -1092,6 +1216,12 @@ def run_gui() -> int:
             self.steps_var.set(spec.max_steps)
             self.episodes_var.set(spec.episodes)
             physics = spec.family in {"Box2D", "MuJoCo"}
+            spiking_variant = supports_spiking_variant(spec)
+            self.spiking_check.configure(
+                state="normal" if spiking_variant else "disabled"
+            )
+            if not spiking_variant:
+                self.spiking_var.set(False)
             self.plot_check.configure(state="normal" if physics else "disabled")
             self.video_check.configure(state="normal" if physics else "disabled")
             if not physics:

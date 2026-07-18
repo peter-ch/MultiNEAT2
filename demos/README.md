@@ -11,6 +11,66 @@ immediately, offers safe smoke/inspect/full-run modes, and shows live output.
 Package installation stays outside the launcher. The commands below remain
 available for automation and advanced use.
 
+## Spiking examples
+
+Three self-contained examples exercise spiking evolution, online learning, and
+the live visualization suite without Box2D or MuJoCo:
+
+| Script | Task |
+| --- | --- |
+| `spiking_pattern.py` | Evolve a mixed LIF/adaptive-LIF network that separates synchronous from alternating spike trains |
+| `spiking_cartpole.py` | Evolve a Poisson-encoded spiking Cart-Pole controller in a built-in physics environment |
+| `spiking_eprop.py` | Train an adaptive spiking circuit online with e-prop, surrogate gradients, and AdamW |
+
+All three have bounded smoke modes and visualization output:
+
+```sh
+python demos/spiking_pattern.py --smoke
+python demos/spiking_pattern.py --generations 80 --animate
+python demos/spiking_cartpole.py --smoke
+python demos/spiking_cartpole.py --generations 100 --animate
+python demos/spiking_eprop.py --smoke
+python demos/spiking_eprop.py --epochs 60
+```
+
+The animation shows the live phenotype, a moving spike raster, membrane
+traces, and the task environment on the same clock. See
+[`docs/SPIKING.md`](../docs/SPIKING.md) for the solver and evolution API.
+
+## Spiking variants of the existing demos
+
+XOR, Asteroids, and every Box2D and MuJoCo controller also have an opt-in
+spiking variant. The original rate-network behavior remains the default;
+add `--spiking` to evolve an adaptive-LIF/LIF policy through the same NEAT
+engine:
+
+```sh
+python demos/xor.py --spiking --generations 100
+python demos/asteroid_nav.py --spiking --generations 25
+python demos/box2d/lunar_lander_box2d.py \
+  --spiking --generations 300 --plot --record-video
+python demos/mujoco/inverted_pendulum_mujoco.py --smoke --spiking
+```
+
+The shared policy maps normalized observations to deterministic seeded
+Poisson rates, advances the SNN for several solver steps per environment
+action, and decodes filtered output firing rates back into the existing
+action adapters. Use `--spiking-steps`, `--spiking-time-step`,
+`--spiking-input-rate`, and `--spiking-output-rate` to tune that temporal
+interface for the Gymnasium tasks.
+
+Spiking physics plots combine the environment replay, fitness history,
+evolved phenotype, and spike raster. They also save the aligned recording as
+`spiking_trace.npz`; recorded environment videos get a matching
+`*-spikes.npz` trace. Spiking Asteroids adds a live side panel with output-rate
+meters, active topology, and a moving 200 ms raster, then automatically
+replays the best policy after a finite visible run. `--screenshot FILE` saves
+the first replay frame. Spiking XOR produces a four-panel phenotype, raster,
+membrane, and response view.
+
+The graphical launcher exposes all these modes through its **Spiking policy
+variant** switch.
+
 The Box2D and MuJoCo examples use one shared, tested trainer:
 `demos/gymnasium_neat.py`. Every task-specific file is directly runnable and
 accepts the same command-line options.
@@ -119,4 +179,5 @@ List, inspect, or smoke-test a whole family:
 python demos/run_gymnasium_suite.py
 python demos/run_gymnasium_suite.py --family box2d --inspect
 python demos/run_gymnasium_suite.py --family mujoco --smoke
+python demos/run_gymnasium_suite.py --family box2d --smoke --spiking
 ```

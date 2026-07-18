@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 
-project(MultiNEAT VERSION 2.1.0 LANGUAGES CXX)
+project(MultiNEAT VERSION 2.3.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -22,6 +22,7 @@ set(MULTINEAT_CORE_SOURCES
     src/Population.cpp
     src/Random.cpp
     src/Species.cpp
+    src/SpikingLearning.cpp
     src/Substrate.cpp
     src/Traits.cpp
     src/Utils.cpp
@@ -39,6 +40,7 @@ set(MULTINEAT_PUBLIC_HEADERS
     src/Population.h
     src/Random.h
     src/Species.h
+    src/SpikingLearning.h
     src/Substrate.h
     src/Traits.h
     src/Utils.h
@@ -231,6 +233,26 @@ if(BUILD_TESTING)
                     "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_demo_launcher.py"
             )
         endif()
+
+        if(MSVC)
+            add_test(
+                NAME multineat_spiking_demos
+                CONFIGURATIONS Release RelWithDebInfo MinSizeRel
+                COMMAND
+                    "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_spiking_demos.py"
+            )
+        else()
+            add_test(
+                NAME multineat_spiking_demos
+                COMMAND
+                    "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_spiking_demos.py"
+            )
+        endif()
+        set_tests_properties(multineat_spiking_demos PROPERTIES
+            ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:pymultineat>"
+        )
     endif()
 endif()
 

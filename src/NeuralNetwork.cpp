@@ -257,6 +257,12 @@ namespace NEAT
 
     void NeuralNetwork::InitRTRLMatrix()
     {
+        if (IsSpiking())
+        {
+            throw std::invalid_argument(
+                "RTRL is not defined for non-differentiable spiking "
+                "activations; use evolution or STDP");
+        }
         m_sparse_rtrl_sensitivities.clear();
         for (auto &neuron : m_neurons)
         {
@@ -272,6 +278,12 @@ namespace NEAT
     void NeuralNetwork::InitSparseRTRLMatrix()
     {
         ValidateNetworkTopology(*this);
+        if (IsSpiking())
+        {
+            throw std::invalid_argument(
+                "RTRL is not defined for non-differentiable spiking "
+                "activations; use evolution or STDP");
+        }
         for (auto& neuron : m_neurons)
             neuron.m_sensitivity_matrix.clear();
         m_sparse_rtrl_sensitivities.assign(
@@ -283,6 +295,16 @@ namespace NEAT
 
     void NeuralNetwork::ActivateFast()
     {
+        if (IsSpiking())
+        {
+            ValidateNetworkTopology(*this);
+            std::vector<double> inputs;
+            inputs.reserve(m_num_inputs);
+            for (unsigned int i = 0; i < m_num_inputs; ++i)
+                inputs.push_back(m_neurons[i].m_activation);
+            StepSpiking(inputs);
+            return;
+        }
         // The phenotype builder guarantees valid endpoint indexes. This is the
         // intentionally unchecked hot path; Activate() remains the validating
         // entry point for networks assembled through public vectors.
@@ -312,6 +334,12 @@ namespace NEAT
     void NeuralNetwork::ActivateUseInternalBias()
     {
         ValidateNetworkTopology(*this);
+        if (IsSpiking())
+        {
+            throw std::invalid_argument(
+                "Use StepSpiking for spiking networks; neuron bias is "
+                "already included as tonic current");
+        }
         for (auto &conn : m_connections)
         {
             conn.m_source_activation =
@@ -334,6 +362,12 @@ namespace NEAT
     void NeuralNetwork::ActivateLeaky(double a_dtime)
     {
         ValidateNetworkTopology(*this);
+        if (IsSpiking())
+        {
+            throw std::invalid_argument(
+                "Use StepSpiking to advance stateful spiking "
+                "activations");
+        }
         if (!std::isfinite(a_dtime) || a_dtime < 0.0)
         {
             throw std::invalid_argument(
@@ -378,9 +412,34 @@ namespace NEAT
         {
             neuron.m_activation = 0;
             neuron.m_activesum = 0;
-            neuron.m_membrane_potential = 0;
+            neuron.m_membrane_potential =
+                neuron.m_activation_function_type ==
+                        SPIKING_IZHIKEVICH
+                    ? neuron.m_izhikevich_c
+                    : neuron.m_resting_potential;
             neuron.m_last_input = 0;
+            neuron.m_refractory_remaining = 0.0;
+            neuron.m_adaptation = 0.0;
+            neuron.m_izhikevich_recovery =
+                neuron.m_izhikevich_b *
+                neuron.m_membrane_potential;
+            neuron.m_spike = false;
+            neuron.m_spike_count = 0;
+            neuron.m_last_spike_time = -1.0;
+            neuron.m_rate_trace = 0.0;
         }
+        for (auto& connection : m_connections)
+        {
+            connection.m_signal = 0.0;
+            connection.m_source_activation = 0.0;
+            connection.m_synaptic_current = 0.0;
+            connection.m_presynaptic_signal = 0.0;
+            connection.m_stdp_pre_trace = 0.0;
+            connection.m_stdp_post_trace = 0.0;
+            connection.m_pending_events.clear();
+        }
+        m_spiking_time = 0.0;
+        m_spike_history.clear();
     }
 
     void NeuralNetwork::FlushCube()
@@ -423,8 +482,21 @@ namespace NEAT
     {
         if (!fast)
             ValidateNetworkTopology(*this);
-        for (unsigned int step = 0; step < steps; ++step)
-            ActivateFast();
+        if (IsSpiking())
+        {
+            ValidateNetworkTopology(*this);
+            std::vector<double> inputs;
+            inputs.reserve(m_num_inputs);
+            for (unsigned int i = 0; i < m_num_inputs; ++i)
+                inputs.push_back(m_neurons[i].m_activation);
+            for (unsigned int step = 0; step < steps; ++step)
+                StepSpiking(inputs);
+        }
+        else
+        {
+            for (unsigned int step = 0; step < steps; ++step)
+                ActivateFast();
+        }
     }
 
     std::vector<std::vector<double>> NeuralNetwork::ActivateBatch(
@@ -433,6 +505,12 @@ namespace NEAT
         bool use_internal_bias)
     {
         ValidateNetworkTopology(*this);
+        if (IsSpiking())
+        {
+            throw std::invalid_argument(
+                "ActivateBatch is for independent rate-network samples; "
+                "use SimulateSpiking for temporal spiking inputs");
+        }
         std::vector<std::vector<double>> outputs;
         outputs.reserve(inputs.size());
         for (const auto& sample : inputs)
@@ -455,6 +533,588 @@ namespace NEAT
             }
             outputs.push_back(std::move(output));
         }
+        return outputs;
+    }
+
+    bool NeuralNetwork::IsSpiking() const
+    {
+        return std::any_of(
+            m_neurons.begin(),
+            m_neurons.end(),
+            [](const Neuron& neuron)
+            {
+                return IsSpikingActivation(
+                    neuron.m_activation_function_type);
+            });
+    }
+
+    void NeuralNetwork::SetSpikingTimeStep(double time_step)
+    {
+        if (!std::isfinite(time_step) || time_step <= 0.0)
+        {
+            throw std::invalid_argument(
+                "Spiking time step must be finite and positive");
+        }
+        m_spiking_time_step = time_step;
+    }
+
+    void NeuralNetwork::SetSpikingInputMode(SpikingInputMode mode)
+    {
+        if (mode < CURRENT_INPUT || mode > POISSON_RATE_INPUT)
+            throw std::invalid_argument("Unsupported spiking input mode");
+        m_spiking_input_mode = mode;
+    }
+
+    void NeuralNetwork::SetSpikingOutputMode(SpikingOutputMode mode)
+    {
+        if (mode < SPIKE_OUTPUT ||
+            mode > MEMBRANE_POTENTIAL_OUTPUT)
+        {
+            throw std::invalid_argument(
+                "Unsupported spiking output mode");
+        }
+        m_spiking_output_mode = mode;
+    }
+
+    void NeuralNetwork::SeedSpiking(std::uint64_t seed)
+    {
+        // Xorshift generators cannot advance from an all-zero state.
+        m_spiking_rng_state =
+            seed == 0 ? UINT64_C(0x9e3779b97f4a7c15) : seed;
+    }
+
+    void NeuralNetwork::EnableSpikeRecording(
+        bool enabled,
+        std::size_t max_events)
+    {
+        m_record_spikes = enabled;
+        m_max_recorded_spikes = max_events;
+        if (!enabled)
+            m_spike_history.clear();
+        else if (max_events > 0 &&
+                 m_spike_history.size() > max_events)
+        {
+            m_spike_history.erase(
+                m_spike_history.begin(),
+                m_spike_history.end() -
+                    static_cast<std::ptrdiff_t>(max_events));
+        }
+    }
+
+    void NeuralNetwork::EnableSTDP(bool enabled)
+    {
+        for (auto& connection : m_connections)
+            connection.m_stdp_enabled = enabled;
+    }
+
+    std::vector<double> NeuralNetwork::OutputSpikes() const
+    {
+        if (m_num_inputs + m_num_outputs > m_neurons.size())
+            throw std::runtime_error("Invalid network output dimensions");
+        std::vector<double> result;
+        result.reserve(m_num_outputs);
+        for (unsigned int i = 0; i < m_num_outputs; ++i)
+        {
+            result.push_back(
+                m_neurons[m_num_inputs + i].m_spike ? 1.0 : 0.0);
+        }
+        return result;
+    }
+
+    std::vector<double> NeuralNetwork::OutputRates() const
+    {
+        if (m_num_inputs + m_num_outputs > m_neurons.size())
+            throw std::runtime_error("Invalid network output dimensions");
+        std::vector<double> result;
+        result.reserve(m_num_outputs);
+        for (unsigned int i = 0; i < m_num_outputs; ++i)
+        {
+            const Neuron& neuron = m_neurons[m_num_inputs + i];
+            result.push_back(
+                m_spiking_time > 0.0
+                    ? static_cast<double>(neuron.m_spike_count) /
+                          m_spiking_time
+                    : 0.0);
+        }
+        return result;
+    }
+
+    std::vector<double> NeuralNetwork::OutputFilteredSpikes() const
+    {
+        if (m_num_inputs + m_num_outputs > m_neurons.size())
+            throw std::runtime_error("Invalid network output dimensions");
+        std::vector<double> result;
+        result.reserve(m_num_outputs);
+        for (unsigned int i = 0; i < m_num_outputs; ++i)
+            result.push_back(
+                m_neurons[m_num_inputs + i].m_rate_trace);
+        return result;
+    }
+
+    std::vector<double> NeuralNetwork::OutputMembranePotentials() const
+    {
+        if (m_num_inputs + m_num_outputs > m_neurons.size())
+            throw std::runtime_error("Invalid network output dimensions");
+        std::vector<double> result;
+        result.reserve(m_num_outputs);
+        for (unsigned int i = 0; i < m_num_outputs; ++i)
+        {
+            result.push_back(
+                m_neurons[m_num_inputs + i].m_membrane_potential);
+        }
+        return result;
+    }
+
+    std::vector<double> NeuralNetwork::OutputDecoded() const
+    {
+        switch (m_spiking_output_mode)
+        {
+        case SPIKE_OUTPUT:
+            return OutputSpikes();
+        case FIRING_RATE_OUTPUT:
+            return OutputRates();
+        case FILTERED_SPIKE_OUTPUT:
+            return OutputFilteredSpikes();
+        case MEMBRANE_POTENTIAL_OUTPUT:
+            return OutputMembranePotentials();
+        default:
+            throw std::logic_error("Invalid spiking output mode");
+        }
+    }
+
+    std::vector<double> NeuralNetwork::StepSpiking(
+        const std::vector<double>& inputs,
+        double time_step)
+    {
+        ValidateNetworkTopology(*this);
+        if (inputs.size() != m_num_inputs)
+        {
+            throw std::invalid_argument(
+                "Spiking input count must match exactly");
+        }
+        const double dt =
+            time_step < 0.0 ? m_spiking_time_step : time_step;
+        if (!std::isfinite(dt) || dt <= 0.0)
+        {
+            throw std::invalid_argument(
+                "Spiking time step must be finite and positive");
+        }
+
+        const double step_start = m_spiking_time;
+        const double step_end = step_start + dt;
+        std::vector<bool> source_spikes(m_neurons.size(), false);
+        std::vector<double> source_amplitudes(
+            m_neurons.size(), 1.0);
+
+        const auto random_unit = [this]()
+        {
+            std::uint64_t x = m_spiking_rng_state;
+            x ^= x >> 12U;
+            x ^= x << 25U;
+            x ^= x >> 27U;
+            m_spiking_rng_state = x;
+            const std::uint64_t value =
+                x * UINT64_C(2685821657736338717);
+            return static_cast<double>(value >> 11U) *
+                   (1.0 / 9007199254740992.0);
+        };
+        const auto record =
+            [this](const SpikeEvent& event)
+        {
+            if (!m_record_spikes)
+                return;
+            m_spike_history.push_back(event);
+            if (m_max_recorded_spikes > 0 &&
+                m_spike_history.size() > m_max_recorded_spikes)
+            {
+                const std::size_t excess =
+                    m_spike_history.size() -
+                    m_max_recorded_spikes;
+                m_spike_history.erase(
+                    m_spike_history.begin(),
+                    m_spike_history.begin() +
+                        static_cast<std::ptrdiff_t>(excess));
+            }
+        };
+
+        for (std::size_t i = 0; i < m_neurons.size(); ++i)
+        {
+            Neuron& neuron = m_neurons[i];
+            neuron.m_activesum = 0.0;
+            if (i < m_num_inputs)
+            {
+                const double value = inputs[i];
+                if (!std::isfinite(value))
+                {
+                    throw std::invalid_argument(
+                        "Spiking inputs must be finite");
+                }
+                bool spike = false;
+                double amplitude = 1.0;
+                switch (m_spiking_input_mode)
+                {
+                case CURRENT_INPUT:
+                    neuron.m_activation = value;
+                    break;
+                case BINARY_SPIKE_INPUT:
+                    spike = value > 0.0;
+                    amplitude = value;
+                    neuron.m_activation = spike ? amplitude : 0.0;
+                    break;
+                case POISSON_RATE_INPUT:
+                {
+                    if (value < 0.0)
+                    {
+                        throw std::invalid_argument(
+                            "Poisson input rates cannot be negative");
+                    }
+                    const double probability =
+                        -std::expm1(-value * dt);
+                    spike = random_unit() < probability;
+                    neuron.m_activation = spike ? 1.0 : 0.0;
+                    break;
+                }
+                default:
+                    throw std::logic_error(
+                        "Invalid spiking input mode");
+                }
+                neuron.m_spike = spike;
+                source_spikes[i] = spike;
+                source_amplitudes[i] = amplitude;
+                if (spike)
+                {
+                    ++neuron.m_spike_count;
+                    neuron.m_last_spike_time = step_start;
+                    record(SpikeEvent{
+                        step_start,
+                        static_cast<int>(i),
+                        amplitude,
+                        true});
+                }
+            }
+            else
+            {
+                // Non-input spikes were produced at the end of the previous
+                // synchronous step and are transmitted now.
+                source_spikes[i] = neuron.m_spike;
+                source_amplitudes[i] = 1.0;
+            }
+        }
+
+        const double delivery_epsilon =
+            std::numeric_limits<double>::epsilon() *
+            std::max(1.0, std::abs(step_end)) * 8.0;
+        for (auto& connection : m_connections)
+        {
+            if (!std::isfinite(connection.m_synaptic_delay) ||
+                connection.m_synaptic_delay < 0.0 ||
+                !std::isfinite(connection.m_synaptic_time_constant) ||
+                connection.m_synaptic_time_constant <= 0.0 ||
+                !std::isfinite(connection.m_weight))
+            {
+                throw std::domain_error(
+                    "Spiking synapses require a non-negative finite delay "
+                    "a positive finite time constant, and a finite weight");
+            }
+            connection.m_synaptic_current *=
+                std::exp(-dt /
+                         connection.m_synaptic_time_constant);
+            connection.m_signal = 0.0;
+            connection.m_presynaptic_signal = 0.0;
+
+            const std::size_t source =
+                static_cast<std::size_t>(
+                    connection.m_source_neuron_idx);
+            const Neuron& source_neuron = m_neurons[source];
+            const bool event_source =
+                IsSpikingActivation(
+                    source_neuron.m_activation_function_type) ||
+                (source < m_num_inputs &&
+                 m_spiking_input_mode != CURRENT_INPUT);
+            if (event_source && source_spikes[source])
+            {
+                PendingSynapticEvent event;
+                event.delivery_time =
+                    step_start + connection.m_synaptic_delay;
+                event.amplitude =
+                    source_amplitudes[source] *
+                    connection.m_weight;
+                event.source_amplitude =
+                    source_amplitudes[source];
+                connection.m_pending_events.push_back(event);
+            }
+
+            auto pending = connection.m_pending_events.begin();
+            while (pending != connection.m_pending_events.end())
+            {
+                if (!std::isfinite(pending->delivery_time) ||
+                    !std::isfinite(pending->amplitude) ||
+                    !std::isfinite(
+                        pending->source_amplitude))
+                {
+                    throw std::domain_error(
+                        "Pending synaptic events must be finite");
+                }
+                if (pending->delivery_time <=
+                    step_end + delivery_epsilon)
+                {
+                    connection.m_synaptic_current +=
+                        pending->amplitude;
+                    connection.m_signal += pending->amplitude;
+                    connection.m_presynaptic_signal +=
+                        pending->source_amplitude;
+                    pending =
+                        connection.m_pending_events.erase(pending);
+                }
+                else
+                {
+                    ++pending;
+                }
+            }
+
+            Neuron& target = m_neurons[
+                static_cast<std::size_t>(
+                    connection.m_target_neuron_idx)];
+            target.m_activesum +=
+                connection.m_synaptic_current;
+            if (!event_source)
+            {
+                const double analog =
+                    source_neuron.m_activation *
+                    connection.m_weight;
+                connection.m_signal += analog;
+                connection.m_presynaptic_signal =
+                    source_neuron.m_activation;
+                target.m_activesum += analog;
+            }
+        }
+
+        for (std::size_t i = m_num_inputs;
+             i < m_neurons.size();
+             ++i)
+        {
+            Neuron& neuron = m_neurons[i];
+            const double current =
+                neuron.m_activesum + neuron.m_bias;
+            if (!std::isfinite(current))
+            {
+                throw std::domain_error(
+                    "Spiking neuron input current must remain finite");
+            }
+            neuron.m_last_input = current;
+            neuron.m_spike = false;
+            neuron.m_activation = 0.0;
+            if (!std::isfinite(neuron.m_rate_time_constant) ||
+                neuron.m_rate_time_constant <= 0.0)
+            {
+                throw std::domain_error(
+                    "Spike-rate filters require a positive finite "
+                    "time constant");
+            }
+            neuron.m_rate_trace *=
+                std::exp(-dt / neuron.m_rate_time_constant);
+
+            if (!IsSpikingActivation(
+                    neuron.m_activation_function_type))
+            {
+                neuron.m_activation =
+                    EvaluateActivation(neuron, current);
+                neuron.m_activesum = 0.0;
+                continue;
+            }
+
+            if (neuron.m_activation_function_type ==
+                SPIKING_IZHIKEVICH)
+            {
+                const double dt_ms = dt * 1000.0;
+                double& voltage = neuron.m_membrane_potential;
+                double& recovery = neuron.m_izhikevich_recovery;
+                if (!std::isfinite(voltage) ||
+                    !std::isfinite(recovery) ||
+                    !std::isfinite(neuron.m_spike_threshold) ||
+                    !std::isfinite(neuron.m_izhikevich_a) ||
+                    !std::isfinite(neuron.m_izhikevich_b) ||
+                    !std::isfinite(neuron.m_izhikevich_c) ||
+                    !std::isfinite(neuron.m_izhikevich_d))
+                {
+                    throw std::domain_error(
+                        "Izhikevich state must be finite");
+                }
+                const auto derivative =
+                    [&](double v)
+                {
+                    return 0.04 * v * v + 5.0 * v +
+                           140.0 - recovery + current;
+                };
+                voltage +=
+                    0.5 * dt_ms * derivative(voltage);
+                voltage +=
+                    0.5 * dt_ms * derivative(voltage);
+                recovery +=
+                    dt_ms * neuron.m_izhikevich_a *
+                    (neuron.m_izhikevich_b * voltage -
+                     recovery);
+                if (voltage >= neuron.m_spike_threshold)
+                {
+                    neuron.m_spike = true;
+                    voltage = neuron.m_izhikevich_c;
+                    recovery += neuron.m_izhikevich_d;
+                }
+            }
+            else
+            {
+                if (!std::isfinite(neuron.m_timeconst) ||
+                    neuron.m_timeconst <= 0.0 ||
+                    !std::isfinite(neuron.m_spike_threshold) ||
+                    !std::isfinite(neuron.m_reset_potential) ||
+                    !std::isfinite(neuron.m_resting_potential) ||
+                    !std::isfinite(neuron.m_refractory_period) ||
+                    neuron.m_refractory_period < 0.0 ||
+                    !std::isfinite(neuron.m_membrane_resistance))
+                {
+                    throw std::domain_error(
+                        "LIF neurons require finite parameters and a "
+                        "positive membrane time constant");
+                }
+                if (neuron.m_activation_function_type ==
+                    SPIKING_ADAPTIVE_LIF)
+                {
+                    if (!std::isfinite(
+                            neuron.m_adaptation_time_constant) ||
+                        neuron.m_adaptation_time_constant <= 0.0 ||
+                        !std::isfinite(
+                            neuron.m_adaptation_increment))
+                    {
+                        throw std::domain_error(
+                            "Adaptive LIF neurons require finite "
+                            "adaptation parameters");
+                    }
+                    neuron.m_adaptation *= std::exp(
+                        -dt /
+                        neuron.m_adaptation_time_constant);
+                }
+                else
+                {
+                    neuron.m_adaptation = 0.0;
+                }
+
+                if (neuron.m_refractory_remaining > 0.0)
+                {
+                    neuron.m_refractory_remaining =
+                        std::max(
+                            0.0,
+                            neuron.m_refractory_remaining - dt);
+                    neuron.m_membrane_potential =
+                        neuron.m_reset_potential;
+                }
+                else
+                {
+                    neuron.m_membrane_potential +=
+                        (dt / neuron.m_timeconst) *
+                        (neuron.m_resting_potential -
+                         neuron.m_membrane_potential +
+                         neuron.m_membrane_resistance * current -
+                         neuron.m_adaptation);
+                    if (neuron.m_membrane_potential >=
+                        neuron.m_spike_threshold)
+                    {
+                        neuron.m_spike = true;
+                        neuron.m_membrane_potential =
+                            neuron.m_reset_potential;
+                        neuron.m_refractory_remaining =
+                            neuron.m_refractory_period;
+                        if (neuron.m_activation_function_type ==
+                            SPIKING_ADAPTIVE_LIF)
+                        {
+                            neuron.m_adaptation +=
+                                neuron.m_adaptation_increment;
+                        }
+                    }
+                }
+            }
+
+            if (neuron.m_spike)
+            {
+                neuron.m_activation = 1.0;
+                ++neuron.m_spike_count;
+                neuron.m_last_spike_time = step_end;
+                neuron.m_rate_trace +=
+                    1.0 / neuron.m_rate_time_constant;
+                record(SpikeEvent{
+                    step_end,
+                    static_cast<int>(i),
+                    1.0,
+                    false});
+            }
+            neuron.m_activesum = 0.0;
+        }
+
+        for (auto& connection : m_connections)
+        {
+            if (!connection.m_stdp_enabled)
+                continue;
+            if (!std::isfinite(connection.m_stdp_tau_plus) ||
+                connection.m_stdp_tau_plus <= 0.0 ||
+                !std::isfinite(connection.m_stdp_tau_minus) ||
+                connection.m_stdp_tau_minus <= 0.0 ||
+                !std::isfinite(connection.m_stdp_plus) ||
+                connection.m_stdp_plus < 0.0 ||
+                !std::isfinite(connection.m_stdp_minus) ||
+                connection.m_stdp_minus < 0.0 ||
+                !std::isfinite(connection.m_stdp_min_weight) ||
+                !std::isfinite(connection.m_stdp_max_weight) ||
+                connection.m_stdp_min_weight >
+                    connection.m_stdp_max_weight)
+            {
+                throw std::domain_error(
+                    "STDP requires positive trace time constants and "
+                    "ordered finite weight bounds");
+            }
+            connection.m_stdp_pre_trace *=
+                std::exp(-dt / connection.m_stdp_tau_plus);
+            connection.m_stdp_post_trace *=
+                std::exp(-dt / connection.m_stdp_tau_minus);
+            const bool pre =
+                m_neurons[static_cast<std::size_t>(
+                    connection.m_source_neuron_idx)].m_spike;
+            const bool post =
+                m_neurons[static_cast<std::size_t>(
+                    connection.m_target_neuron_idx)].m_spike;
+            if (pre)
+            {
+                connection.m_weight -=
+                    connection.m_stdp_minus *
+                    connection.m_stdp_post_trace;
+                connection.m_stdp_pre_trace += 1.0;
+            }
+            if (post)
+            {
+                connection.m_weight +=
+                    connection.m_stdp_plus *
+                    connection.m_stdp_pre_trace;
+                connection.m_stdp_post_trace += 1.0;
+            }
+            Clamp(
+                connection.m_weight,
+                connection.m_stdp_min_weight,
+                connection.m_stdp_max_weight);
+        }
+
+        m_spiking_time = step_end;
+        return OutputDecoded();
+    }
+
+    std::vector<std::vector<double>> NeuralNetwork::SimulateSpiking(
+        const std::vector<std::vector<double>>& inputs,
+        double time_step,
+        bool reset)
+    {
+        if (reset)
+            Flush();
+        std::vector<std::vector<double>> outputs;
+        outputs.reserve(inputs.size());
+        for (const auto& sample : inputs)
+            outputs.push_back(StepSpiking(sample, time_step));
         return outputs;
     }
 
@@ -926,6 +1586,16 @@ namespace NEAT
         ValidateNetworkTopology(*this);
         fprintf(a_file, "NNstart\n");
         fprintf(a_file, "%u %u\n", m_num_inputs, m_num_outputs);
+        fprintf(
+            a_file,
+            "spiking_state %3.18f %3.18f %d %d %d %zu %llu\n",
+            m_spiking_time,
+            m_spiking_time_step,
+            static_cast<int>(m_spiking_input_mode),
+            static_cast<int>(m_spiking_output_mode),
+            static_cast<int>(m_record_spikes),
+            m_max_recorded_spikes,
+            static_cast<unsigned long long>(m_spiking_rng_state));
         for (const auto &neuron : m_neurons)
         {
             fprintf(a_file, "neuron %d %3.18f %3.18f %3.18f %3.18f %d %3.18f\n",
@@ -933,6 +1603,33 @@ namespace NEAT
                     neuron.m_b, neuron.m_timeconst, neuron.m_bias,
                     static_cast<int>(neuron.m_activation_function_type),
                     neuron.m_split_y);
+            fprintf(
+                a_file,
+                "spiking_neuron %3.18f %3.18f %3.18f %3.18f "
+                "%3.18f %3.18f %3.18f %3.18f %3.18f %3.18f "
+                "%3.18f %3.18f %3.18f %3.18f %3.18f %d %llu "
+                "%3.18f %3.18f %3.18f\n",
+                neuron.m_spike_threshold,
+                neuron.m_reset_potential,
+                neuron.m_resting_potential,
+                neuron.m_refractory_period,
+                neuron.m_refractory_remaining,
+                neuron.m_membrane_resistance,
+                neuron.m_adaptation_time_constant,
+                neuron.m_adaptation_increment,
+                neuron.m_adaptation,
+                neuron.m_izhikevich_a,
+                neuron.m_izhikevich_b,
+                neuron.m_izhikevich_c,
+                neuron.m_izhikevich_d,
+                neuron.m_izhikevich_recovery,
+                neuron.m_rate_trace,
+                static_cast<int>(neuron.m_spike),
+                static_cast<unsigned long long>(
+                    neuron.m_spike_count),
+                neuron.m_last_spike_time,
+                neuron.m_rate_time_constant,
+                neuron.m_membrane_potential);
         }
         for (const auto &conn : m_connections)
         {
@@ -941,6 +1638,23 @@ namespace NEAT
                     conn.m_target_neuron_idx, conn.m_weight,
                     static_cast<int>(conn.m_recur_flag),
                     conn.m_hebb_rate, conn.m_hebb_pre_rate);
+            fprintf(
+                a_file,
+                "spiking_connection %3.18f %3.18f %3.18f %d "
+                "%3.18f %3.18f %3.18f %3.18f %3.18f %3.18f "
+                "%3.18f %3.18f\n",
+                conn.m_synaptic_delay,
+                conn.m_synaptic_time_constant,
+                conn.m_synaptic_current,
+                static_cast<int>(conn.m_stdp_enabled),
+                conn.m_stdp_plus,
+                conn.m_stdp_minus,
+                conn.m_stdp_tau_plus,
+                conn.m_stdp_tau_minus,
+                conn.m_stdp_pre_trace,
+                conn.m_stdp_post_trace,
+                conn.m_stdp_min_weight,
+                conn.m_stdp_max_weight);
         }
         fprintf(a_file, "NNend\n\n");
     }
@@ -952,9 +1666,32 @@ namespace NEAT
         if (a_DataFile.eof()) return false;
         Clear();
         a_DataFile >> m_num_inputs >> m_num_outputs;
+        int last_neuron = -1;
+        int last_connection = -1;
         while (a_DataFile >> t_str && t_str != "NNend")
         {
-            if (t_str == "neuron")
+            if (t_str == "spiking_state")
+            {
+                int input_mode = 0;
+                int output_mode = 0;
+                int record = 0;
+                unsigned long long rng_state = 0;
+                a_DataFile >> m_spiking_time
+                           >> m_spiking_time_step
+                           >> input_mode
+                           >> output_mode
+                           >> record
+                           >> m_max_recorded_spikes
+                           >> rng_state;
+                m_spiking_input_mode =
+                    static_cast<SpikingInputMode>(input_mode);
+                m_spiking_output_mode =
+                    static_cast<SpikingOutputMode>(output_mode);
+                m_record_spikes = record != 0;
+                m_spiking_rng_state =
+                    static_cast<std::uint64_t>(rng_state);
+            }
+            else if (t_str == "neuron")
             {
                 Neuron t_n;
                 int t_type, t_aftype;
@@ -964,6 +1701,44 @@ namespace NEAT
                 t_n.m_type = static_cast<NeuronType>(t_type);
                 t_n.m_activation_function_type = static_cast<ActivationFunction>(t_aftype);
                 m_neurons.push_back(t_n);
+                last_neuron =
+                    static_cast<int>(m_neurons.size()) - 1;
+            }
+            else if (t_str == "spiking_neuron")
+            {
+                if (last_neuron < 0)
+                {
+                    Clear();
+                    return false;
+                }
+                Neuron& neuron =
+                    m_neurons[static_cast<std::size_t>(
+                        last_neuron)];
+                int spike = 0;
+                unsigned long long spike_count = 0;
+                a_DataFile >> neuron.m_spike_threshold
+                           >> neuron.m_reset_potential
+                           >> neuron.m_resting_potential
+                           >> neuron.m_refractory_period
+                           >> neuron.m_refractory_remaining
+                           >> neuron.m_membrane_resistance
+                           >> neuron.m_adaptation_time_constant
+                           >> neuron.m_adaptation_increment
+                           >> neuron.m_adaptation
+                           >> neuron.m_izhikevich_a
+                           >> neuron.m_izhikevich_b
+                           >> neuron.m_izhikevich_c
+                           >> neuron.m_izhikevich_d
+                           >> neuron.m_izhikevich_recovery
+                           >> neuron.m_rate_trace
+                           >> spike
+                           >> spike_count
+                           >> neuron.m_last_spike_time
+                           >> neuron.m_rate_time_constant
+                           >> neuron.m_membrane_potential;
+                neuron.m_spike = spike != 0;
+                neuron.m_spike_count =
+                    static_cast<std::uint64_t>(spike_count);
             }
             else if (t_str == "connection")
             {
@@ -972,6 +1747,33 @@ namespace NEAT
                 a_DataFile >> t_c.m_source_neuron_idx >> t_c.m_target_neuron_idx >> t_c.m_weight >> t_isrecur >> t_c.m_hebb_rate >> t_c.m_hebb_pre_rate;
                 t_c.m_recur_flag = static_cast<bool>(t_isrecur);
                 m_connections.push_back(t_c);
+                last_connection =
+                    static_cast<int>(m_connections.size()) - 1;
+            }
+            else if (t_str == "spiking_connection")
+            {
+                if (last_connection < 0)
+                {
+                    Clear();
+                    return false;
+                }
+                Connection& connection =
+                    m_connections[static_cast<std::size_t>(
+                        last_connection)];
+                int stdp = 0;
+                a_DataFile >> connection.m_synaptic_delay
+                           >> connection.m_synaptic_time_constant
+                           >> connection.m_synaptic_current
+                           >> stdp
+                           >> connection.m_stdp_plus
+                           >> connection.m_stdp_minus
+                           >> connection.m_stdp_tau_plus
+                           >> connection.m_stdp_tau_minus
+                           >> connection.m_stdp_pre_trace
+                           >> connection.m_stdp_post_trace
+                           >> connection.m_stdp_min_weight
+                           >> connection.m_stdp_max_weight;
+                connection.m_stdp_enabled = stdp != 0;
             }
         }
         if (!a_DataFile || t_str != "NNend")
@@ -1007,9 +1809,15 @@ namespace NEAT
         std::ostringstream output;
         output << std::setprecision(
             std::numeric_limits<double>::max_digits10);
-        output << "NeuralNetworkFormat 4\n";
+        output << "NeuralNetworkFormat 6\n";
         output << "State " << m_num_inputs << ' ' << m_num_outputs << ' '
-               << m_total_error << '\n';
+               << m_total_error << ' ' << m_spiking_time << ' '
+               << m_spiking_time_step << ' '
+               << static_cast<int>(m_spiking_input_mode) << ' '
+               << static_cast<int>(m_spiking_output_mode) << ' '
+               << static_cast<int>(m_record_spikes) << ' '
+               << m_max_recorded_spikes << ' '
+               << m_spiking_rng_state << '\n';
         output << "TotalWeightChange " << m_total_weight_change.size();
         for (double value : m_total_weight_change)
             output << ' ' << value;
@@ -1026,7 +1834,26 @@ namespace NEAT
                    << ' ' << neuron.m_x << ' ' << neuron.m_y << ' '
                    << neuron.m_z << ' ' << neuron.m_sx << ' ' << neuron.m_sy
                    << ' ' << neuron.m_sz << ' ' << neuron.m_split_y << ' '
-                   << static_cast<int>(neuron.m_type) << '\n';
+                   << static_cast<int>(neuron.m_type) << ' '
+                   << neuron.m_spike_threshold << ' '
+                   << neuron.m_reset_potential << ' '
+                   << neuron.m_resting_potential << ' '
+                   << neuron.m_refractory_period << ' '
+                   << neuron.m_refractory_remaining << ' '
+                   << neuron.m_membrane_resistance << ' '
+                   << neuron.m_adaptation_time_constant << ' '
+                   << neuron.m_adaptation_increment << ' '
+                   << neuron.m_adaptation << ' '
+                   << neuron.m_izhikevich_a << ' '
+                   << neuron.m_izhikevich_b << ' '
+                   << neuron.m_izhikevich_c << ' '
+                   << neuron.m_izhikevich_d << ' '
+                   << neuron.m_izhikevich_recovery << ' '
+                   << static_cast<int>(neuron.m_spike) << ' '
+                   << neuron.m_spike_count << ' '
+                   << neuron.m_last_spike_time << ' '
+                   << neuron.m_rate_trace << ' '
+                   << neuron.m_rate_time_constant << '\n';
             output << "SubstrateCoordinates "
                    << neuron.m_substrate_coords.size();
             for (double coordinate : neuron.m_substrate_coords)
@@ -1051,7 +1878,29 @@ namespace NEAT
                    << connection.m_source_activation << ' '
                    << static_cast<int>(connection.m_recur_flag) << ' '
                    << connection.m_hebb_rate << ' '
-                   << connection.m_hebb_pre_rate << '\n';
+                   << connection.m_hebb_pre_rate << ' '
+                   << connection.m_synaptic_delay << ' '
+                   << connection.m_synaptic_time_constant << ' '
+                   << connection.m_synaptic_current << ' '
+                   << connection.m_presynaptic_signal << ' '
+                   << static_cast<int>(connection.m_stdp_enabled) << ' '
+                   << connection.m_stdp_plus << ' '
+                   << connection.m_stdp_minus << ' '
+                   << connection.m_stdp_tau_plus << ' '
+                   << connection.m_stdp_tau_minus << ' '
+                   << connection.m_stdp_pre_trace << ' '
+                   << connection.m_stdp_post_trace << ' '
+                   << connection.m_stdp_min_weight << ' '
+                   << connection.m_stdp_max_weight << '\n';
+            output << "PendingEvents "
+                   << connection.m_pending_events.size();
+            for (const auto& event : connection.m_pending_events)
+            {
+                output << ' ' << event.delivery_time << ' '
+                       << event.amplitude << ' '
+                       << event.source_amplitude;
+            }
+            output << '\n';
         }
         output << "SparseRTRL "
                << m_sparse_rtrl_sensitivities.size() << '\n';
@@ -1061,6 +1910,13 @@ namespace NEAT
             for (double value : row)
                 output << ' ' << value;
             output << '\n';
+        }
+        output << "SpikeHistory " << m_spike_history.size() << '\n';
+        for (const auto& event : m_spike_history)
+        {
+            output << "SpikeEvent " << event.time << ' '
+                   << event.neuron_index << ' ' << event.amplitude << ' '
+                   << static_cast<int>(event.input) << '\n';
         }
         output << "NeuralNetworkEnd\n";
         return output.str();
@@ -1122,7 +1978,7 @@ namespace NEAT
 
         int version = 0;
         input >> version;
-        if (version < 2 || version > 4)
+        if (version < 2 || version > 6)
             throw std::runtime_error(
                 "NeuralNetwork::Deserialize: unsupported format.");
         input >> token;
@@ -1131,6 +1987,33 @@ namespace NEAT
                 "NeuralNetwork::Deserialize: missing State marker.");
         input >> network.m_num_inputs >> network.m_num_outputs
               >> network.m_total_error;
+        if (version >= 5)
+        {
+            int input_mode = 0;
+            int output_mode = 0;
+            int record_spikes = 0;
+            input >> network.m_spiking_time
+                  >> network.m_spiking_time_step
+                  >> input_mode
+                  >> output_mode
+                  >> record_spikes
+                  >> network.m_max_recorded_spikes
+                  >> network.m_spiking_rng_state;
+            network.m_spiking_input_mode =
+                static_cast<SpikingInputMode>(input_mode);
+            network.m_spiking_output_mode =
+                static_cast<SpikingOutputMode>(output_mode);
+            network.m_record_spikes = record_spikes != 0;
+            if (network.m_spiking_input_mode < CURRENT_INPUT ||
+                network.m_spiking_input_mode > POISSON_RATE_INPUT ||
+                network.m_spiking_output_mode < SPIKE_OUTPUT ||
+                network.m_spiking_output_mode >
+                    MEMBRANE_POTENTIAL_OUTPUT)
+            {
+                throw std::runtime_error(
+                    "NeuralNetwork::Deserialize: invalid spiking mode.");
+            }
+        }
 
         std::size_t count = 0;
         input >> token >> count;
@@ -1166,6 +2049,30 @@ namespace NEAT
             neuron.m_activation_function_type =
                 static_cast<ActivationFunction>(activation);
             neuron.m_type = static_cast<NeuronType>(type);
+            if (version >= 5)
+            {
+                int spike = 0;
+                input >> neuron.m_spike_threshold
+                      >> neuron.m_reset_potential
+                      >> neuron.m_resting_potential
+                      >> neuron.m_refractory_period
+                      >> neuron.m_refractory_remaining
+                      >> neuron.m_membrane_resistance
+                      >> neuron.m_adaptation_time_constant
+                      >> neuron.m_adaptation_increment
+                      >> neuron.m_adaptation
+                      >> neuron.m_izhikevich_a
+                      >> neuron.m_izhikevich_b
+                      >> neuron.m_izhikevich_c
+                      >> neuron.m_izhikevich_d
+                      >> neuron.m_izhikevich_recovery
+                      >> spike
+                      >> neuron.m_spike_count
+                      >> neuron.m_last_spike_time
+                      >> neuron.m_rate_trace
+                      >> neuron.m_rate_time_constant;
+                neuron.m_spike = spike != 0;
+            }
 
             std::size_t coordinates = 0;
             input >> token >> coordinates;
@@ -1217,6 +2124,49 @@ namespace NEAT
             input >> recurrent >> connection.m_hebb_rate
                   >> connection.m_hebb_pre_rate;
             connection.m_recur_flag = recurrent != 0;
+            if (version >= 5)
+            {
+                int stdp = 0;
+                input >> connection.m_synaptic_delay
+                      >> connection.m_synaptic_time_constant
+                      >> connection.m_synaptic_current;
+                if (version >= 6)
+                    input >> connection.m_presynaptic_signal;
+                input >> stdp
+                      >> connection.m_stdp_plus
+                      >> connection.m_stdp_minus
+                      >> connection.m_stdp_tau_plus
+                      >> connection.m_stdp_tau_minus
+                      >> connection.m_stdp_pre_trace
+                      >> connection.m_stdp_post_trace
+                      >> connection.m_stdp_min_weight
+                      >> connection.m_stdp_max_weight;
+                connection.m_stdp_enabled = stdp != 0;
+                std::size_t pending_count = 0;
+                input >> token >> pending_count;
+                if (token != "PendingEvents")
+                {
+                    throw std::runtime_error(
+                        "NeuralNetwork::Deserialize: missing pending "
+                        "synaptic events.");
+                }
+                connection.m_pending_events.resize(pending_count);
+                for (auto& event : connection.m_pending_events)
+                {
+                    input >> event.delivery_time >> event.amplitude;
+                    if (version >= 6)
+                    {
+                        input >> event.source_amplitude;
+                    }
+                    else if (std::abs(connection.m_weight) >
+                             std::numeric_limits<double>::epsilon())
+                    {
+                        event.source_amplitude =
+                            event.amplitude /
+                            connection.m_weight;
+                    }
+                }
+            }
             network.m_connections.push_back(connection);
         }
         if (version >= 4)
@@ -1252,6 +2202,30 @@ namespace NEAT
             {
                 throw std::runtime_error(
                     "NeuralNetwork::Deserialize: invalid sparse RTRL state.");
+            }
+        }
+        if (version >= 5)
+        {
+            std::size_t event_count = 0;
+            input >> token >> event_count;
+            if (token != "SpikeHistory")
+            {
+                throw std::runtime_error(
+                    "NeuralNetwork::Deserialize: missing spike history.");
+            }
+            network.m_spike_history.resize(event_count);
+            for (auto& event : network.m_spike_history)
+            {
+                int is_input = 0;
+                input >> token >> event.time >> event.neuron_index
+                      >> event.amplitude >> is_input;
+                if (token != "SpikeEvent")
+                {
+                    throw std::runtime_error(
+                        "NeuralNetwork::Deserialize: malformed spike "
+                        "history.");
+                }
+                event.input = is_input != 0;
             }
         }
         input >> token;

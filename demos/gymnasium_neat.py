@@ -21,6 +21,13 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
+from spiking_neat import (
+    SpikingPolicy,
+    SpikingPolicySettings,
+    configure_spiking_genome,
+    configure_spiking_parameters,
+)
+
 # Running ``python demos/...`` places the script directory, rather than the
 # repository root, first on sys.path.  Add the root so an in-tree extension
 # build/copy and ``neattools.py`` are discoverable without installation.
@@ -534,9 +541,12 @@ def _network_action(
     encoder: ObservationEncoder,
     adapter: ActionAdapter,
     activation_steps: int,
+    spiking_policy: SpikingPolicy | None = None,
 ) -> Any:
     inputs = encoder.encode(observation).tolist()
     inputs.append(1.0)
+    if spiking_policy is not None:
+        return adapter.convert(spiking_policy.step_signed(inputs))
     network.Input(inputs)
     if hasattr(network, "ActivateSteps"):
         network.ActivateSteps(activation_steps, True)
@@ -553,6 +563,7 @@ def evaluate_on_environment(
     episode_seeds: Sequence[int],
     max_steps: int,
     activation_steps: int = 2,
+    spiking_settings: SpikingPolicySettings | None = None,
 ) -> float:
     """Evaluate a genome using an already-created environment."""
 
@@ -564,10 +575,18 @@ def evaluate_on_environment(
     adapter = ActionAdapter(env.action_space)
     network = neat.NeuralNetwork()
     genome.BuildPhenotype(network)
+    spiking_policy = (
+        SpikingPolicy(network, spiking_settings)
+        if spiking_settings is not None
+        else None
+    )
     rewards = []
 
     for episode_seed in episode_seeds:
-        network.Flush()
+        if spiking_policy is None:
+            network.Flush()
+        else:
+            spiking_policy.reset(int(episode_seed))
         observation, _ = env.reset(seed=int(episode_seed))
         if hasattr(env.action_space, "seed"):
             env.action_space.seed(int(episode_seed))
@@ -579,6 +598,7 @@ def evaluate_on_environment(
                 encoder,
                 adapter,
                 activation_steps,
+                spiking_policy,
             )
             observation, reward, terminated, truncated, _ = env.step(action)
             numeric_reward = float(reward)
@@ -598,20 +618,24 @@ _WORKER_ENV = None
 _WORKER_CONFIG = None
 _WORKER_MAX_STEPS = 0
 _WORKER_ACTIVATION_STEPS = 1
+_WORKER_SPIKING_SETTINGS = None
 
 
 def _initialize_worker(
     config: TaskConfig,
     max_steps: int,
     activation_steps: int,
+    spiking_settings: SpikingPolicySettings | None,
 ) -> None:
     global _WORKER_ENV
     global _WORKER_CONFIG
     global _WORKER_MAX_STEPS
     global _WORKER_ACTIVATION_STEPS
+    global _WORKER_SPIKING_SETTINGS
     _WORKER_CONFIG = config
     _WORKER_MAX_STEPS = max_steps
     _WORKER_ACTIVATION_STEPS = activation_steps
+    _WORKER_SPIKING_SETTINGS = spiking_settings
     _WORKER_ENV = make_environment(config)
 
 
@@ -624,6 +648,7 @@ def _worker_evaluate(payload: tuple[Any, Sequence[int]]) -> float:
         episode_seeds,
         _WORKER_MAX_STEPS,
         _WORKER_ACTIVATION_STEPS,
+        _WORKER_SPIKING_SETTINGS,
     )
 
 
@@ -631,6 +656,7 @@ def configure_parameters(
     population_size: int,
     recurrent: bool,
     profile: str,
+    spiking: bool = False,
 ) -> Any:
     """Return modern but conservative parameters for control problems."""
 
@@ -689,6 +715,14 @@ def configure_parameters(
     params.ActivationFunction_Tanh_Prob = 1.0
     params.MutateNeuronActivationTypeProb = 0.02
 
+    if spiking:
+        configure_spiking_parameters(
+            neat,
+            params,
+            recurrent=recurrent,
+            enable_stdp=False,
+        )
+
     # These operators are additive in MultiNEAT2. Attribute checks retain
     # compatibility with binaries built from older MultiNEAT releases.
     if profile == "ranked" and hasattr(params, "ParentSelectionMode"):
@@ -730,9 +764,15 @@ def create_population(
     seed: int,
     profile: str,
     initial_connectivity: str,
+    spiking: bool = False,
 ) -> Any:
     recurrent = config.recurrent or profile == "exploratory"
-    params = configure_parameters(population_size, recurrent, profile)
+    params = configure_parameters(
+        population_size,
+        recurrent,
+        profile,
+        spiking,
+    )
     initial = neat.GenomeInitStruct()
     initial.NumInputs = shape.input_size + 1
     initial.NumOutputs = shape.output_size
@@ -741,6 +781,8 @@ def create_population(
     initial.SeedType = neat.GenomeSeedType.PERCEPTRON
     initial.HiddenActType = neat.TANH
     initial.OutputActType = neat.TANH
+    if spiking:
+        configure_spiking_genome(neat, initial)
     use_sparse_seed = shape.output_size > 1 and (
         initial_connectivity == "sparse"
         or (initial_connectivity == "auto" and config.sparse_seed)
@@ -764,6 +806,11 @@ class TrainOptions:
     activation_steps: int
     profile: str
     initial_connectivity: str
+    spiking: bool = False
+    spiking_steps: int = 8
+    spiking_time_step: float = 0.001
+    spiking_input_rate: float = 200.0
+    spiking_output_rate: float = 200.0
     output_dir: Path | None = None
     checkpoint_every: int = 0
     resume: Path | None = None
@@ -780,6 +827,17 @@ class TrainResult:
     best_fitness: float
     best_genome: Any
     history: list[dict[str, Any]]
+
+
+def _spiking_settings(options: TrainOptions) -> SpikingPolicySettings | None:
+    if not options.spiking:
+        return None
+    return SpikingPolicySettings(
+        simulation_steps=options.spiking_steps,
+        time_step=options.spiking_time_step,
+        input_rate_hz=options.spiking_input_rate,
+        output_rate_hz=options.spiking_output_rate,
+    )
 
 
 def _genomes(population: Any) -> list[Any]:
@@ -880,6 +938,8 @@ def _render_or_record(
     generation: int,
     record: bool,
 ) -> float:
+    if options.spiking and not record:
+        return _show_spiking_rollout(genome, config, options)
     render_mode = "rgb_array" if record else "human"
     env = make_environment(config, render_mode)
     if record:
@@ -904,7 +964,24 @@ def _render_or_record(
         adapter = ActionAdapter(env.action_space)
         network = neat.NeuralNetwork()
         genome.BuildPhenotype(network)
-        network.Flush()
+        recorder = None
+        if options.spiking:
+            from neattools import SpikingRecorder
+
+            recorder = SpikingRecorder(network)
+            spiking_policy = SpikingPolicy(
+                network,
+                _spiking_settings(options),
+                recorder=recorder,
+            )
+        else:
+            spiking_policy = None
+        if spiking_policy is None:
+            network.Flush()
+        else:
+            spiking_policy.reset(
+                options.seed + generation * options.episodes
+            )
         writer = None
         total_reward = 0.0
         try:
@@ -927,6 +1004,7 @@ def _render_or_record(
                     encoder,
                     adapter,
                     options.activation_steps,
+                    spiking_policy,
                 )
                 observation, reward, terminated, truncated, _ = env.step(action)
                 total_reward += float(reward)
@@ -935,6 +1013,8 @@ def _render_or_record(
                     writer.append_data(np.asarray(frame))
                 if terminated or truncated:
                     break
+            if recorder is not None:
+                recorder.save(video_dir / f"{config.key}-spikes.npz")
             return total_reward
         except Exception as error:
             raise RuntimeError(f"Could not record {path}: {error}") from error
@@ -950,14 +1030,130 @@ def _render_or_record(
             [options.seed + generation * options.episodes],
             options.max_steps,
             options.activation_steps,
+            _spiking_settings(options),
         )
     finally:
         env.close()
 
 
+def _record_spiking_rollout(
+    genome: Any,
+    config: TaskConfig,
+    options: TrainOptions,
+    *,
+    max_steps: int | None = None,
+) -> tuple[Any, Any, Any | None, float]:
+    """Replay one policy with aligned environment and SNN recording."""
+
+    from neattools import SpikingRecorder
+
+    env = make_environment(config, "rgb_array")
+    try:
+        encoder = ObservationEncoder(
+            env.observation_space,
+            config.image_size,
+            config.crop_bottom,
+        )
+        adapter = ActionAdapter(env.action_space)
+        network = neat.NeuralNetwork()
+        genome.BuildPhenotype(network)
+        recorder = SpikingRecorder(network)
+        settings = _spiking_settings(options)
+        if settings is None:
+            raise ValueError("spiking replay requires spiking options")
+        policy = SpikingPolicy(network, settings, recorder=recorder)
+        policy.reset(options.seed)
+        observation, _ = env.reset(seed=options.seed)
+        final_frame = env.render()
+        total_reward = 0.0
+        horizon = min(
+            options.max_steps,
+            max_steps if max_steps is not None else options.max_steps,
+        )
+        for _ in range(horizon):
+            inputs = encoder.encode(observation).tolist()
+            inputs.append(1.0)
+            action = adapter.convert(policy.step_signed(inputs))
+            observation, reward, terminated, truncated, _ = env.step(action)
+            total_reward += float(reward)
+            frame = env.render()
+            if frame is not None:
+                final_frame = np.asarray(frame)
+            if terminated or truncated:
+                break
+        return network, recorder, final_frame, total_reward
+    finally:
+        env.close()
+
+
+def _show_spiking_rollout(
+    genome: Any,
+    config: TaskConfig,
+    options: TrainOptions,
+) -> float:
+    """Show environment, phenotype, raster, and membranes for one replay."""
+
+    try:
+        import matplotlib.pyplot as plt
+        from neattools import (
+            DrawSpikingNetwork,
+            PlotMembraneTraces,
+            PlotSpikeRaster,
+        )
+    except ImportError as error:
+        raise RuntimeError(
+            "spiking rendering requires requirements-visualization.txt"
+        ) from error
+
+    network, recorder, frame, reward = _record_spiking_rollout(
+        genome,
+        config,
+        options,
+    )
+    figure, axes = plt.subplots(
+        2,
+        2,
+        figsize=(15, 10),
+        constrained_layout=True,
+    )
+    if frame is not None:
+        axes[0, 0].imshow(frame)
+    axes[0, 0].set_title(f"{config.env_id} · reward={reward:.3g}")
+    axes[0, 0].axis("off")
+    DrawSpikingNetwork(
+        network,
+        ax=axes[0, 1],
+        title="Live spiking phenotype",
+        show=False,
+    )
+    PlotSpikeRaster(
+        recorder,
+        ax=axes[1, 0],
+        title="Policy spike trains",
+        show=False,
+    )
+    output_neurons = list(
+        range(
+            network.NumInputs(),
+            network.NumInputs() + network.NumOutputs(),
+        )
+    )
+    PlotMembraneTraces(
+        recorder,
+        ax=axes[1, 1],
+        neurons=output_neurons,
+        title="Output membrane potentials",
+        show=False,
+    )
+    plt.show()
+    return reward
+
+
 def _save_plot(
     result: TrainResult,
     output_dir: Path,
+    config: TaskConfig,
+    options: TrainOptions,
 ) -> None:
     try:
         import matplotlib
@@ -969,13 +1165,29 @@ def _save_plot(
         demos_dir = Path(__file__).resolve().parent
         if str(demos_dir.parent) not in sys.path:
             sys.path.insert(0, str(demos_dir.parent))
-        from neattools import DrawGenome
+        from neattools import DrawGenome, DrawSpikingNetwork, PlotSpikeRaster
     except ImportError as error:
         raise RuntimeError(
             "--plot requires requirements-visualization.txt"
         ) from error
 
-    figure, (fitness_axis, genome_axis) = plt.subplots(1, 2, figsize=(14, 6))
+    if options.spiking:
+        figure, axes = plt.subplots(
+            2,
+            2,
+            figsize=(16, 11),
+            constrained_layout=True,
+        )
+        fitness_axis = axes[0, 0]
+        environment_axis = axes[0, 1]
+        genome_axis = axes[1, 0]
+        raster_axis = axes[1, 1]
+    else:
+        figure, (fitness_axis, genome_axis) = plt.subplots(
+            1,
+            2,
+            figsize=(14, 6),
+        )
     background = "#0f172a"
     panel = "#111827"
     foreground = "#e5e7eb"
@@ -1018,15 +1230,46 @@ def _save_plot(
         )
         padding = max(1.0, abs(max(values) - min(values)) * 0.2)
         fitness_axis.set_ylim(min(values) - padding, max(values) + padding)
-    DrawGenome(
-        result.best_genome,
-        ax=genome_axis,
-        layout="topology",
-        with_edge_labels=False,
-        show=False,
-    )
-    genome_axis.set_title("Best evolved topology")
-    figure.tight_layout()
+    if options.spiking:
+        network, recorder, final_frame, replay_reward = (
+            _record_spiking_rollout(
+                result.best_genome,
+                config,
+                options,
+                max_steps=min(options.max_steps, 250),
+            )
+        )
+        if final_frame is not None:
+            environment_axis.imshow(final_frame)
+        environment_axis.set_title(
+            f"{config.env_id} replay · reward={replay_reward:.3g}",
+            color=foreground,
+        )
+        environment_axis.set_facecolor(panel)
+        environment_axis.axis("off")
+        DrawSpikingNetwork(
+            network,
+            ax=genome_axis,
+            title="Best evolved spiking phenotype",
+            show=False,
+        )
+        PlotSpikeRaster(
+            recorder,
+            ax=raster_axis,
+            title="Policy spike trains",
+            show=False,
+        )
+        recorder.save(output_dir / "spiking_trace.npz")
+    else:
+        DrawGenome(
+            result.best_genome,
+            ax=genome_axis,
+            layout="topology",
+            with_edge_labels=False,
+            show=False,
+        )
+        genome_axis.set_title("Best evolved topology")
+        figure.tight_layout()
     figure.savefig(output_dir / "summary.png", dpi=160)
     plt.close(figure)
 
@@ -1043,6 +1286,8 @@ def train(options: TrainOptions) -> TrainResult:
         raise ValueError("max_steps and episodes must be >= 1")
     if options.activation_steps < 1:
         raise ValueError("activation_steps must be >= 1")
+    if options.spiking:
+        _spiking_settings(options).validate()
     if (options.plot or options.record_video) and options.output_dir is None:
         raise ValueError("--plot and --record-video require --output-dir")
 
@@ -1060,6 +1305,12 @@ def train(options: TrainOptions) -> TrainResult:
             raise ValueError(
                 "Checkpoint policy dimensions do not match the selected task"
             )
+        resumed_network = neat.NeuralNetwork()
+        best.BuildPhenotype(resumed_network)
+        if bool(resumed_network.IsSpiking()) != options.spiking:
+            raise ValueError(
+                "Checkpoint policy type does not match --spiking selection"
+            )
     else:
         population = create_population(
             shape,
@@ -1068,6 +1319,7 @@ def train(options: TrainOptions) -> TrainResult:
             options.seed,
             options.profile,
             options.initial_connectivity,
+            options.spiking,
         )
 
     start_generation = int(population.GetGeneration())
@@ -1078,7 +1330,12 @@ def train(options: TrainOptions) -> TrainResult:
         pool = context.Pool(
             options.workers,
             initializer=_initialize_worker,
-            initargs=(config, options.max_steps, options.activation_steps),
+            initargs=(
+                config,
+                options.max_steps,
+                options.activation_steps,
+                _spiking_settings(options),
+            ),
         )
     else:
         serial_env = make_environment(config)
@@ -1111,6 +1368,7 @@ def train(options: TrainOptions) -> TrainResult:
                         episode_seeds,
                         options.max_steps,
                         options.activation_steps,
+                        _spiking_settings(options),
                     )
                     for genome in genomes
                 ]
@@ -1140,6 +1398,7 @@ def train(options: TrainOptions) -> TrainResult:
                 "species": len(population.m_Species),
                 "genomes": len(genomes),
                 "elapsed_seconds": elapsed,
+                "spiking": options.spiking,
             }
             history.append(row)
             _append_metrics(options.output_dir, row)
@@ -1202,11 +1461,21 @@ def train(options: TrainOptions) -> TrainResult:
     if options.plot:
         if options.output_dir is None:
             raise ValueError("--plot requires --output-dir")
-        _save_plot(result, options.output_dir)
+        _save_plot(
+            result,
+            options.output_dir,
+            config,
+            options,
+        )
     return result
 
 
-def smoke_task(task_key: str, seed: int = 7, quiet: bool = False) -> TrainResult:
+def smoke_task(
+    task_key: str,
+    seed: int = 7,
+    quiet: bool = False,
+    spiking: bool = False,
+) -> TrainResult:
     """Run a tiny real environment/evolution integration test."""
 
     return train(
@@ -1221,6 +1490,8 @@ def smoke_task(task_key: str, seed: int = 7, quiet: bool = False) -> TrainResult
             activation_steps=1,
             profile="default",
             initial_connectivity="sparse",
+            spiking=spiking,
+            spiking_steps=4,
             quiet=quiet,
         )
     )
@@ -1284,6 +1555,35 @@ def _parser(default_task: str | None) -> argparse.ArgumentParser:
         help="network propagation steps per environment step",
     )
     parser.add_argument(
+        "--spiking",
+        action="store_true",
+        help="evolve a Poisson-encoded spiking policy variant",
+    )
+    parser.add_argument(
+        "--spiking-steps",
+        type=int,
+        default=8,
+        help="SNN solver steps per environment action",
+    )
+    parser.add_argument(
+        "--spiking-time-step",
+        type=float,
+        default=0.001,
+        help="SNN solver time step in seconds",
+    )
+    parser.add_argument(
+        "--spiking-input-rate",
+        type=float,
+        default=200.0,
+        help="maximum Poisson observation rate in hertz",
+    )
+    parser.add_argument(
+        "--spiking-output-rate",
+        type=float,
+        default=200.0,
+        help="filtered output rate mapped to a full action",
+    )
+    parser.add_argument(
         "--profile",
         choices=("default", "ranked", "exploratory"),
         default="ranked",
@@ -1333,7 +1633,12 @@ def main(default_task: str | None = None) -> int:
             )
             return 0
         if args.smoke:
-            result = smoke_task(args.task, args.seed, args.quiet)
+            result = smoke_task(
+                args.task,
+                args.seed,
+                args.quiet,
+                args.spiking,
+            )
         else:
             generations = (
                 args.generations
@@ -1367,6 +1672,11 @@ def main(default_task: str | None = None) -> int:
                     activation_steps=args.activation_steps,
                     profile=args.profile,
                     initial_connectivity=args.initial_connectivity,
+                    spiking=args.spiking,
+                    spiking_steps=args.spiking_steps,
+                    spiking_time_step=args.spiking_time_step,
+                    spiking_input_rate=args.spiking_input_rate,
+                    spiking_output_rate=args.spiking_output_rate,
                     output_dir=args.output_dir,
                     checkpoint_every=args.checkpoint_every,
                     resume=args.resume,
@@ -1378,7 +1688,8 @@ def main(default_task: str | None = None) -> int:
             )
         print(
             f"completed task={result.task} generations={result.generations} "
-            f"best_fitness={result.best_fitness:.6g}",
+            f"best_fitness={result.best_fitness:.6g} "
+            f"policy={'spiking' if args.spiking else 'rate'}",
             flush=True,
         )
         return 0

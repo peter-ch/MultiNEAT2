@@ -4,7 +4,10 @@ MultiNEAT2 is a C++17 implementation of NEAT (NeuroEvolution of
 Augmenting Topologies) with optional Python bindings. It includes
 speciation, structural and trait mutation, recurrent networks, phased
 search, novelty search, HyperNEAT substrates, and ES-HyperNEAT phenotype
-generation.
+generation. It also includes evolvable mixed spiking networks with LIF,
+adaptive LIF, and Izhikevich neurons, delayed exponential synapses, Poisson
+encoding, multiple output decoders, bounded online STDP, and opt-in e-prop
+learning with surrogate gradients and AdamW.
 
 This repository continues the original MultiNEAT codebase while retaining
 its established C++ and Python names wherever possible. Compatibility
@@ -13,7 +16,7 @@ spellings such as `SetInputOutputDimentions`, `GetConnectionLenght`, and
 
 The additions are source- and checkpoint-compatible. As with any C++ library
 whose public value types gain fields, applications linking a precompiled
-MultiNEAT binary must rebuild when upgrading to 2.1.
+MultiNEAT binary must rebuild when upgrading to 2.3.
 
 ## Build
 
@@ -103,6 +106,82 @@ Run the self-contained XOR example with:
 ```sh
 python demos/xor.py
 ```
+
+## Spiking neural networks
+
+Spiking support is additive: rate and spiking neurons may coexist in one
+evolved phenotype, while all historical activation APIs and defaults retain
+their behavior.
+
+```python
+params = neat.Parameters()
+params.ConfigureSpiking(enable_stdp=True)
+params.DontUseBiasNeuron = True
+
+initial = neat.GenomeInitStruct()
+initial.NumInputs = 2
+initial.NumOutputs = 1
+initial.OutputActType = neat.SPIKING_LIF
+
+genome = neat.Genome(params, initial)
+network = neat.NeuralNetwork()
+genome.BuildPhenotype(network)
+network.SetSpikingInputMode(neat.BINARY_SPIKE_INPUT)
+network.SetSpikingOutputMode(neat.FILTERED_SPIKE_OUTPUT)
+
+for step in range(100):
+    rate = network.StepSpiking([step % 20 == 0, step % 30 == 0], 0.001)
+```
+
+Task-directed online learning is opt-in and does not affect evolved phenotypes
+unless invoked:
+
+```python
+config = neat.EPropConfig()
+config.learning_rate = 0.001
+config.update_interval = 32
+
+learner = neat.EPropLearner(config)
+learner.Initialize(network)
+result = learner.TrainSequence(network, inputs, targets, 0.001)
+```
+
+The solver provides current, binary-spike, and deterministic Poisson-rate
+inputs; spike, cumulative-rate, filtered-rate, and membrane outputs; delayed
+exponential synapses; per-link STDP; spike recording; batch simulation; and
+complete live-state persistence. Dedicated genetic operators evolve every
+neuron and synapse parameter and include them in speciation.
+
+`neattools.py` includes live network rendering, moving spike rasters,
+membrane/rate plots, recording export, statistics, and synchronized
+environment animation. Three dedicated examples are included:
+
+```sh
+python demos/spiking_pattern.py --smoke
+python demos/spiking_cartpole.py --smoke
+python demos/spiking_eprop.py --smoke
+```
+
+The historical XOR and Asteroids demos and every Box2D/MuJoCo task also
+accept `--spiking`. They retain the same environments and NEAT workflow while
+using seeded Poisson observation encoding, adaptive-LIF/LIF phenotypes, and
+filtered firing-rate action decoding:
+
+```sh
+python demos/xor.py --smoke --spiking
+python demos/asteroid_nav.py --spiking --generations 25
+python demos/box2d/lunar_lander_box2d.py --smoke --spiking
+python demos/mujoco/inverted_pendulum_mujoco.py --spiking --plot
+```
+
+Their visualizations combine the demo environment with live or recorded
+topology activity, moving spike trains, membrane state, fitness, and decoded
+actions. The graphical launcher exposes the same variants with its spiking
+policy switch.
+
+See [docs/SPIKING.md](docs/SPIKING.md) for the model equations, API,
+learning and evolution controls, persistence format, visualization suite, and full
+examples.
 
 For the easiest path, launch every example from the graphical menu:
 

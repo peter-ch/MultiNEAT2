@@ -463,6 +463,8 @@ Population::Population(const Genome& a_Seed, const Parameters& a_Parameters,
                 m_Genomes[i].Mutate_NeuronActivation_Type(a_Parameters, m_RNG);
                 m_Genomes[i].Mutate_NeuronTimeConstants(a_Parameters, m_RNG);
                 m_Genomes[i].Mutate_NeuronBiases(a_Parameters, m_RNG);
+                m_Genomes[i].Randomize_SpikingParameters(
+                    a_Parameters, m_RNG);
                     
                 // check in the population if there is a clone of that genome
                 is_invalid = false;

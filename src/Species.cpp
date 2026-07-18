@@ -51,28 +51,40 @@ namespace NEAT
         return (ls.second > rs.second);
     }
 
+    bool GenomesAreClones(
+        Genome& lhs,
+        Genome& rhs,
+        Parameters& parameters)
+    {
+        if (lhs.IsIdenticalTo(rhs))
+            return true;
+        return parameters.MinDeltaCompatEqualGenomes > 0.0 &&
+               lhs.CompatibilityDistance(rhs, parameters) <=
+                   parameters.MinDeltaCompatEqualGenomes;
+    }
+
 
     // initializes a species with a representative genome and an ID number
     Species::Species(const Genome& a_Genome, const Parameters&, int a_ID)
+        : m_ID(a_ID),
+          m_BestSpecies(false),
+          m_WorstSpecies(false),
+          m_AgeGenerations(0),
+          m_AgeEvaluations(0),
+          m_OffspringRqd(0.0),
+          m_BestFitness(
+              a_Genome.IsEvaluated()
+                  ? a_Genome.GetFitness()
+                  : std::numeric_limits<double>::lowest()),
+          m_BestGenome(a_Genome),
+          m_GensNoImprovement(0),
+          m_EvalsNoImprovement(0),
+          m_R(0),
+          m_G(0),
+          m_B(0),
+          m_AverageFitness(0.0),
+          m_Individuals{a_Genome}
     {
-        m_ID = a_ID;
-
-        // copy the initializing genome locally.
-        m_BestGenome = a_Genome;
-
-        // add the first and only one individual
-        m_Individuals.push_back(a_Genome);
-
-        m_AgeGenerations = 0;
-        m_AgeEvaluations = 0;
-        m_GensNoImprovement = 0;
-        m_EvalsNoImprovement = 0;
-        m_OffspringRqd = 0;
-        m_BestFitness = a_Genome.GetFitness();
-        m_BestSpecies = false;
-        m_WorstSpecies = false;
-        m_AverageFitness = 0;
-
         // Derive a stable display color from the species ID. A process-global
         // RNG made independent populations and resumed checkpoints influence
         // one another and was not thread-safe.
@@ -160,7 +172,7 @@ namespace NEAT
 
             if (t_num_parents >= static_cast<int>(t_Evaluated.size()))
             {
-                t_num_parents = static_cast<int>(t_Evaluated.size()) - 1;
+                t_num_parents = static_cast<int>(t_Evaluated.size());
             }
             if (t_num_parents < 1)
             {
@@ -372,8 +384,14 @@ namespace NEAT
             // update the best fitness and stagnation counter
             if (t_fitness > m_BestFitness)
             {
+                if (m_BestFitness == std::numeric_limits<double>::lowest() ||
+                    t_fitness - m_BestFitness >=
+                        a_Parameters.StagnationDelta)
+                {
+                    m_GensNoImprovement = 0;
+                }
                 m_BestFitness = t_fitness;
-                m_GensNoImprovement = 0;
+                m_BestGenome = m_Individuals[i];
             }
 
             t_fitness += a_FitnessOffset;
@@ -515,7 +533,9 @@ namespace NEAT
                             {
                                 /// Find different species via roulette over average fitness as probability
                                 std::vector<double> probs;
-                                double allp = 0;
+                                std::vector<bool> eligible;
+                                double minimum = 0.0;
+                                bool have_eligible = false;
                                 for (std::size_t i = 0;
                                      i < a_Pop.m_Species.size();
                                      ++i)
@@ -523,15 +543,47 @@ namespace NEAT
                                     if ((a_Pop.m_Species[i].m_ID == m_ID))
                                     {
                                         probs.push_back(0.0);
+                                        eligible.push_back(false);
                                     }
                                     else
                                     {
-                                        probs.push_back(a_Pop.m_Species[i].GetLeader().GetAdjFitness()); // use the best's adj fitness to ensure positive
+                                        const double fitness =
+                                            a_Pop.m_Species[i].GetLeader().GetAdjFitness();
+                                        probs.push_back(fitness);
+                                        eligible.push_back(true);
+                                        minimum = have_eligible
+                                            ? std::min(minimum, fitness)
+                                            : fitness;
+                                        have_eligible = true;
                                     }
-                                    allp += probs[probs.size() - 1];
                                 }
-                                if (allp > 0)
+                                if (have_eligible)
                                 {
+                                    if (minimum < 0.0)
+                                    {
+                                        for (std::size_t i = 0;
+                                             i < probs.size(); ++i)
+                                        {
+                                            if (eligible[i])
+                                                probs[i] -= minimum;
+                                        }
+                                    }
+                                    bool any_positive = false;
+                                    for (std::size_t i = 0;
+                                         i < probs.size(); ++i)
+                                    {
+                                        any_positive =
+                                            any_positive ||
+                                            (eligible[i] && probs[i] > 0.0);
+                                    }
+                                    if (!any_positive)
+                                    {
+                                        for (std::size_t i = 0;
+                                             i < probs.size(); ++i)
+                                        {
+                                            probs[i] = eligible[i] ? 1.0 : 0.0;
+                                        }
+                                    }
                                     int t_diffspec = a_RNG.Roulette(probs);
                                     t_mom = GetIndividual(a_Parameters, a_RNG);
                                     t_dad = a_Pop.m_Species[t_diffspec].GetIndividual(a_Parameters, a_RNG);
@@ -587,6 +639,11 @@ namespace NEAT
                         MutateGenome(
                             false, a_Pop, t_baby, a_Parameters, a_RNG);
                     }
+                    // Structural mutations can append an older innovation
+                    // reused from the database. Canonical ordering keeps
+                    // exact clone checks and archives independent of mutation
+                    // history.
+                    t_baby.SortGenes();
 
                     // Check if this baby is already present somewhere in the offspring
                     // we don't want that
@@ -598,7 +655,10 @@ namespace NEAT
                         {
                             for (unsigned int j = 0; j < a_Pop.m_TempSpecies[i].m_Individuals.size(); j++)
                             {
-                                if (t_baby.IsIdenticalTo(a_Pop.m_TempSpecies[i].m_Individuals[j]))
+                                if (GenomesAreClones(
+                                        t_baby,
+                                        a_Pop.m_TempSpecies[i].m_Individuals[j],
+                                        a_Parameters))
                                 {
                                     t_baby_exists_in_pop = true;
                                     break;
@@ -612,7 +672,10 @@ namespace NEAT
                     {
                         for (unsigned int i = 0; i < a_Pop.m_GenomeArchive.size(); i++)
                         {
-                            if (t_baby.IsIdenticalTo(a_Pop.m_GenomeArchive[i]))
+                            if (GenomesAreClones(
+                                    t_baby,
+                                    a_Pop.m_GenomeArchive[i],
+                                    a_Parameters))
                             {
                                 t_baby_exists_in_pop = true;
                                 break;
@@ -791,7 +854,9 @@ namespace NEAT
                     {
                         // Find different species via roulette over average fitness as probability
                         std::vector<double> probs;
-                        double allp = 0;
+                        std::vector<bool> eligible;
+                        double minimum = 0.0;
+                        bool have_eligible = false;
                         for (std::size_t i = 0;
                              i < a_Pop.m_Species.size();
                              ++i)
@@ -799,15 +864,50 @@ namespace NEAT
                             if ((a_Pop.m_Species[i].m_ID == m_ID) || (a_Pop.m_Species[i].NumEvaluated() == 0))
                             {
                                 probs.push_back(0.0);
+                                eligible.push_back(false);
                             }
                             else
                             {
-                                probs.push_back(a_Pop.m_Species[i].m_AverageFitness);
+                                const double fitness =
+                                    std::isfinite(
+                                        a_Pop.m_Species[i].m_AverageFitness)
+                                    ? a_Pop.m_Species[i].m_AverageFitness
+                                    : 0.0;
+                                probs.push_back(fitness);
+                                eligible.push_back(true);
+                                minimum = have_eligible
+                                    ? std::min(minimum, fitness)
+                                    : fitness;
+                                have_eligible = true;
                             }
-                            allp += probs[probs.size() - 1];
                         }
-                        if (allp > 0)
+                        if (have_eligible)
                         {
+                            if (minimum < 0.0)
+                            {
+                                for (std::size_t i = 0;
+                                     i < probs.size(); ++i)
+                                {
+                                    if (eligible[i])
+                                        probs[i] -= minimum;
+                                }
+                            }
+                            bool any_positive = false;
+                            for (std::size_t i = 0;
+                                 i < probs.size(); ++i)
+                            {
+                                any_positive =
+                                    any_positive ||
+                                    (eligible[i] && probs[i] > 0.0);
+                            }
+                            if (!any_positive)
+                            {
+                                for (std::size_t i = 0;
+                                     i < probs.size(); ++i)
+                                {
+                                    probs[i] = eligible[i] ? 1.0 : 0.0;
+                                }
+                            }
                             int t_diffspec = a_RNG.Roulette(probs);
                             t_mom = GetIndividual(a_Parameters, a_RNG);
                             t_dad = a_Pop.m_Species[t_diffspec].GetIndividual(a_Parameters, a_RNG);
@@ -869,6 +969,8 @@ namespace NEAT
                 std::cout << "mutated baby\n";
 #endif
             }
+            // See the generational reproduction path above.
+            t_baby.SortGenes();
 
             // Check if this baby is already present somewhere in the offspring
             // we don't want that
@@ -880,7 +982,10 @@ namespace NEAT
                 {
                     for (unsigned int j = 0; j < a_Pop.m_Species[i].m_Individuals.size(); j++)
                     {
-                        if (t_baby.IsIdenticalTo(a_Pop.m_Species[i].m_Individuals[j]))
+                        if (GenomesAreClones(
+                                t_baby,
+                                a_Pop.m_Species[i].m_Individuals[j],
+                                a_Parameters))
                         {
                             t_baby_exists_in_pop = true;
                             break;
@@ -894,7 +999,10 @@ namespace NEAT
             {
                 for (unsigned int i = 0; i < a_Pop.m_GenomeArchive.size(); i++)
                 {
-                        if (t_baby.IsIdenticalTo(a_Pop.m_GenomeArchive[i]))
+                        if (GenomesAreClones(
+                                t_baby,
+                                a_Pop.m_GenomeArchive[i],
+                                a_Parameters))
                     {
                         t_baby_exists_in_pop = true;
                         break;
@@ -1006,6 +1114,28 @@ namespace NEAT
         {
             t_mut_probs[REMOVE_NODE] = 0; // rem node
             t_mut_probs[REMOVE_LINK] = 0; // rem link
+        }
+        if (a_Parameters.MaxNeurons >= 0)
+        {
+            const int added_neurons = std::max(
+                0,
+                static_cast<int>(t_baby.NumNeurons()) -
+                    t_baby.m_initial_num_neurons);
+            if (added_neurons >= a_Parameters.MaxNeurons)
+                t_mut_probs[ADD_NODE] = 0.0;
+        }
+        if (a_Parameters.MaxLinks >= 0)
+        {
+            const int added_links = std::max(
+                0,
+                static_cast<int>(t_baby.NumLinks()) -
+                    t_baby.m_initial_num_links);
+            if (added_links >= a_Parameters.MaxLinks)
+            {
+                t_mut_probs[ADD_LINK] = 0.0;
+                // Splitting a link adds one net connection.
+                t_mut_probs[ADD_NODE] = 0.0;
+            }
         }
 
         bool has_possible_mutation = false;

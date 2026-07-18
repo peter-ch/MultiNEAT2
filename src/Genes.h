@@ -168,7 +168,10 @@ namespace NEAT
                     {
                         int m1 = std::get<int>(mine);
                         int m2 = std::get<int>(yours);
-                        m_Traits[it->first].value = (m1 + m2) / 2;
+                        m_Traits[it->first].value = static_cast<int>(
+                            (static_cast<long long>(m1) +
+                             static_cast<long long>(m2)) /
+                            2LL);
                     }
                     else if (std::holds_alternative<double>(mine))
                     {
@@ -407,7 +410,17 @@ namespace NEAT
         }
 
         // Compute distance of each matching trait
-        std::map<std::string, double> GetTraitDistances(const std::map<std::string, Trait> &other)
+        // Retain the historical non-const member for source and binary
+        // compatibility while also allowing distance queries on const genes.
+        std::map<std::string, double> GetTraitDistances(
+            const std::map<std::string, Trait> &other)
+        {
+            return static_cast<const Gene&>(*this)
+                .GetTraitDistances(other);
+        }
+
+        std::map<std::string, double> GetTraitDistances(
+            const std::map<std::string, Trait> &other) const
         {
             std::map<std::string, double> dist;
             for (auto it = other.begin(); it != other.end(); ++it)

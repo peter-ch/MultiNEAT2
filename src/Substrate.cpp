@@ -35,29 +35,28 @@ Substrate::Substrate()
 Substrate::Substrate(std::vector<std::vector<double> >& a_inputs,
         std::vector<std::vector<double> >& a_hidden,
         std::vector<std::vector<double> >& a_outputs)
+    : m_input_coords(a_inputs),
+      m_hidden_coords(a_hidden),
+      m_output_coords(a_outputs),
+      m_leaky(false),
+      m_with_distance(false),
+      m_allow_input_hidden_links(true),
+      m_allow_input_output_links(false),
+      m_allow_hidden_hidden_links(false),
+      m_allow_hidden_output_links(true),
+      m_allow_output_hidden_links(false),
+      m_allow_output_output_links(false),
+      m_allow_looped_hidden_links(false),
+      m_allow_looped_output_links(false),
+      m_custom_connectivity(),
+      m_custom_conn_obeys_flags(false),
+      m_query_weights_only(false),
+      m_hidden_nodes_activation(NEAT::UNSIGNED_SIGMOID),
+      m_output_nodes_activation(NEAT::UNSIGNED_SIGMOID),
+      m_max_weight_and_bias(5.0),
+      m_min_time_const(0.1),
+      m_max_time_const(1.0)
 {
-    m_leaky = false;
-    m_with_distance = false;
-    m_query_weights_only = false;
-    m_hidden_nodes_activation = NEAT::UNSIGNED_SIGMOID;
-    m_output_nodes_activation = NEAT::UNSIGNED_SIGMOID;
-    m_allow_input_hidden_links = true;
-    m_allow_input_output_links = false;
-    m_allow_hidden_hidden_links = false;
-    m_allow_hidden_output_links = true;
-    m_allow_output_hidden_links = false;
-    m_allow_output_output_links = false;
-    m_allow_looped_hidden_links = false;
-    m_allow_looped_output_links = false;
-
-    m_max_weight_and_bias = 5.0;
-    m_min_time_const = 0.1;
-    m_max_time_const = 1.0;
-    m_custom_conn_obeys_flags = false;
-
-    m_input_coords = a_inputs;
-    m_hidden_coords = a_hidden;
-    m_output_coords = a_outputs;
 }
 
 void Substrate::SetCustomConnectivity(std::vector< std::vector<int> >& a_conns)

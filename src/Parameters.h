@@ -467,6 +467,9 @@ public:
     std::string Serialize() const;
     static Parameters Deserialize(const std::string& data);
 
+    // Checks ranges and cross-field invariants without changing values.
+    bool Validate(std::string* error = nullptr) const;
+
     // Python callbacks cannot be represented by the legacy function-pointer
     // field. These helpers preserve that field for existing C++ users while
     // allowing each Parameters instance to own an independent callable.

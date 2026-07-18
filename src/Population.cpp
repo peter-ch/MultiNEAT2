@@ -1,6 +1,8 @@
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
+#include <numeric>
 #include <stdio.h>
 #include <set>
 #include <sstream>
@@ -29,6 +31,9 @@ bool Population::Validate(std::string* error) const
         return false;
     };
 
+    std::string parameter_error;
+    if (!m_Parameters.Validate(&parameter_error))
+        return fail("Population parameters are invalid: " + parameter_error);
     if (m_Species.empty())
     {
         return NumGenomes() == 0
@@ -86,9 +91,11 @@ bool Population::Validate(std::string* error) const
 Population::Population(const Genome& a_Seed, const Parameters& a_Parameters,
 		               bool a_RandomizeWeights, double a_RandomizationRange, int a_RNG_seed)
 {
-    if (a_Parameters.PopulationSize == 0)
+    std::string parameter_error;
+    if (!a_Parameters.Validate(&parameter_error))
     {
-        throw std::invalid_argument("PopulationSize must be greater than zero");
+        throw std::invalid_argument(
+            "Invalid evolution parameters: " + parameter_error);
     }
     if (a_RandomizationRange < 0.0 || !std::isfinite(a_RandomizationRange))
     {
@@ -152,7 +159,13 @@ Population::Population(const Genome& a_Seed, const Parameters& a_Parameters,
                     {
                         if (i != j) // don't compare the same genome
                         {
-                            if (m_Genomes[i].IsIdenticalTo(m_Genomes[j])) // equal genomes?
+                            if (m_Genomes[i].IsIdenticalTo(m_Genomes[j]) ||
+                                (m_Parameters.MinDeltaCompatEqualGenomes >
+                                     0.0 &&
+                                 m_Genomes[i].CompatibilityDistance(
+                                     m_Genomes[j], m_Parameters) <=
+                                     m_Parameters
+                                         .MinDeltaCompatEqualGenomes))
                             {
                                 is_invalid = true;
                                 break;
@@ -625,6 +638,12 @@ void Population::UpdateSpecies()
 // the epoch method - the heart of the GA
 void Population::Epoch()
 {
+    std::string parameter_error;
+    if (!m_Parameters.Validate(&parameter_error))
+    {
+        throw std::invalid_argument(
+            "Invalid evolution parameters: " + parameter_error);
+    }
     if (m_Species.empty() || NumGenomes() == 0)
     {
         throw std::runtime_error("Cannot run Epoch on an empty population");
@@ -653,6 +672,28 @@ void Population::Epoch()
     
     // Count the offspring of each individual and species
     CountOffspring();
+
+    for (auto& species : m_Species)
+        species.SetWorstSpecies(false);
+    if (m_Parameters.DetectCompetetiveCoevolutionStagnation &&
+        m_Parameters.KillWorstSpeciesEach > 0 &&
+        ((m_Generation + 1U) %
+         static_cast<unsigned int>(
+             m_Parameters.KillWorstSpeciesEach)) == 0U &&
+        m_Species.size() > 1)
+    {
+        for (std::size_t i = m_Species.size(); i > 0; --i)
+        {
+            Species& candidate = m_Species[i - 1];
+            if (!candidate.IsBestSpecies() &&
+                candidate.AgeGens() > m_Parameters.KillWorstAge)
+            {
+                candidate.SetWorstSpecies(true);
+                candidate.SetOffspringRqd(0.0);
+                break;
+            }
+        }
+    }
     
     // Incrementing the global stagnation counter, we can check later for global stagnation
     m_GensSinceBestFitnessLastChanged++;
@@ -820,26 +861,70 @@ void Population::Epoch()
     // total before reproduction. The old post-reproduction padding cloned a
     // leader (and its ID), violating both ID uniqueness and AllowClones.
     std::vector<unsigned int> offspring_counts(m_Species.size(), 0);
+    std::vector<double> offspring_remainders(m_Species.size(), 0.0);
     unsigned int assigned_offspring = 0;
     for (std::size_t i = 0; i < m_Species.size(); ++i)
     {
-        offspring_counts[i] = Rounded(m_Species[i].GetOffspringRqd());
+        const double requirement = m_Species[i].GetOffspringRqd();
+        if (!std::isfinite(requirement) || requirement < 0.0)
+        {
+            throw std::runtime_error(
+                "Species offspring requirements must be finite and non-negative");
+        }
+        const double integral = std::floor(requirement);
+        if (integral >
+            static_cast<double>(std::numeric_limits<unsigned int>::max()))
+        {
+            throw std::overflow_error(
+                "Species offspring requirement is too large");
+        }
+        offspring_counts[i] = static_cast<unsigned int>(integral);
+        offspring_remainders[i] = requirement - integral;
         assigned_offspring += offspring_counts[i];
     }
     if (assigned_offspring < m_Parameters.PopulationSize)
     {
-        offspring_counts.front() +=
+        std::vector<std::size_t> order;
+        order.reserve(m_Species.size());
+        for (std::size_t i = 0; i < m_Species.size(); ++i)
+        {
+            if (!m_Species[i].IsWorstSpecies())
+                order.push_back(i);
+        }
+        if (order.empty())
+            throw std::runtime_error(
+                "No species is eligible to receive offspring");
+        std::stable_sort(
+            order.begin(), order.end(),
+            [&offspring_remainders](std::size_t lhs, std::size_t rhs)
+            {
+                return offspring_remainders[lhs] >
+                       offspring_remainders[rhs];
+            });
+        unsigned int remaining =
             m_Parameters.PopulationSize - assigned_offspring;
+        for (unsigned int i = 0; i < remaining; ++i)
+        {
+            ++offspring_counts[
+                order[static_cast<std::size_t>(i) % order.size()]];
+        }
     }
     else
     {
         unsigned int excess =
             assigned_offspring - m_Parameters.PopulationSize;
-        for (std::size_t i = offspring_counts.size();
-             i > 0 && excess > 0;
-             --i)
+        std::vector<std::size_t> order(m_Species.size());
+        std::iota(order.begin(), order.end(), std::size_t{0});
+        std::stable_sort(
+            order.begin(), order.end(),
+            [&offspring_remainders](std::size_t lhs, std::size_t rhs)
+            {
+                return offspring_remainders[lhs] <
+                       offspring_remainders[rhs];
+            });
+        for (std::size_t i = 0; i < order.size() && excess > 0; ++i)
         {
-            const std::size_t index = i - 1;
+            const std::size_t index = order[i];
             const unsigned int reduction =
                 std::min(excess, offspring_counts[index]);
             offspring_counts[index] -= reduction;
@@ -996,7 +1081,29 @@ Genome Population::RemoveWorstIndividual()
     
     bool found=false;
 
-    // Find and kill the individual with the worst *adjusted* fitness
+    double minimum_fitness = 0.0;
+    bool have_finite_fitness = false;
+    for (const auto& species : m_Species)
+    {
+        for (const auto& genome : species.m_Individuals)
+        {
+            if (!genome.IsEvaluated())
+                continue;
+            const double fitness = std::isfinite(genome.GetFitness())
+                ? genome.GetFitness()
+                : 0.0;
+            minimum_fitness = have_finite_fitness
+                ? std::min(minimum_fitness, fitness)
+                : fitness;
+            have_finite_fitness = true;
+        }
+    }
+    const double fitness_offset =
+        have_finite_fitness && minimum_fitness <= 0.0
+            ? -minimum_fitness + 1.0e-7
+            : 0.0;
+
+    // Find and kill the individual with the worst fitness-shared score.
     for(unsigned int i=0; i<m_Species.size(); i++)
     {
         if (m_Species[i].m_Individuals.size() > 0)
@@ -1008,11 +1115,12 @@ Genome Population::RemoveWorstIndividual()
                 if (m_Species[i].m_Individuals[j].IsEvaluated())
                 {
                     numev++;
-                    double t_adjusted_fitness = m_Species[i].m_Individuals[j].GetFitness() * adjinv;
-                    if (std::isnan(t_adjusted_fitness) || std::isinf(t_adjusted_fitness))
-                    {
-                        t_adjusted_fitness = 0;
-                    }
+                    const double fitness = std::isfinite(
+                        m_Species[i].m_Individuals[j].GetFitness())
+                        ? m_Species[i].m_Individuals[j].GetFitness()
+                        : 0.0;
+                    const double t_adjusted_fitness =
+                        (fitness + fitness_offset) * adjinv;
             
                     if (t_adjusted_fitness < t_worst_fitness)
                     {
@@ -1066,42 +1174,40 @@ unsigned int Population::ChooseParentSpecies()
         throw std::runtime_error("Cannot choose a parent from an empty population");
     }
 
+    std::vector<std::size_t> eligible;
     std::vector<double> probs;
     double minimum = 0.0;
-    bool have_eligible = false;
-    for (const auto &species : m_Species)
+    for (std::size_t i = 0; i < m_Species.size(); ++i)
     {
+        const auto& species = m_Species[i];
         if (species.NumEvaluated() == 0 || species.NumIndividuals() == 0)
-        {
-            probs.push_back(0.0);
-        }
-        else
-        {
-            const double fitness =
-                std::isfinite(species.m_AverageFitness) ? species.m_AverageFitness : 0.0;
-            probs.push_back(fitness);
-            minimum = have_eligible ? std::min(minimum, fitness) : fitness;
-            have_eligible = true;
-        }
+            continue;
+        const double fitness = std::isfinite(species.m_AverageFitness)
+            ? species.m_AverageFitness
+            : 0.0;
+        minimum = eligible.empty() ? fitness : std::min(minimum, fitness);
+        eligible.push_back(i);
+        probs.push_back(fitness);
     }
 
-    if (!have_eligible)
+    if (eligible.empty())
     {
         throw std::runtime_error("No evaluated species is available for reproduction");
     }
     if (minimum < 0.0)
     {
-        for (std::size_t i = 0; i < probs.size(); ++i)
-        {
-            if (m_Species[i].NumEvaluated() > 0 &&
-                m_Species[i].NumIndividuals() > 0)
-            {
-                probs[i] -= minimum;
-            }
-        }
+        for (double& probability : probs)
+            probability -= minimum;
+    }
+    if (std::none_of(
+            probs.begin(), probs.end(),
+            [](double probability) { return probability > 0.0; }))
+    {
+        std::fill(probs.begin(), probs.end(), 1.0);
     }
 
-    return static_cast<unsigned int>(m_RNG.Roulette(probs));
+    return static_cast<unsigned int>(eligible[static_cast<std::size_t>(
+        m_RNG.Roulette(probs))]);
 }
 
 
@@ -1164,6 +1270,12 @@ void Population::ClearEmptySpecies()
 
 Genome* Population::Tick(Genome& a_deleted_genome)
 {
+    std::string parameter_error;
+    if (!m_Parameters.Validate(&parameter_error))
+    {
+        throw std::invalid_argument(
+            "Invalid evolution parameters: " + parameter_error);
+    }
     // Make sure at least one individual is evaluated
     int ne=0;
     for(int i=0; i<(int)m_Species.size(); i++)
@@ -1188,6 +1300,8 @@ Genome* Population::Tick(Genome& a_deleted_genome)
         for(int j=0; j<(int)m_Species[i].m_Individuals.size(); j++)
         {
             double t_fitness = m_Species[i].m_Individuals[j].GetFitness();
+            if (!m_Species[i].m_Individuals[j].IsEvaluated())
+                continue;
             if (std::isnan(t_fitness) || std::isinf(t_fitness))
             {
                 t_fitness = 0;
@@ -1212,6 +1326,8 @@ Genome* Population::Tick(Genome& a_deleted_genome)
     {
         for(int j=0; j<(int)m_Species[i].m_Individuals.size(); j++)
         {
+            if (!m_Species[i].m_Individuals[j].IsEvaluated())
+                continue;
             if (m_Species[i].m_Individuals[j].GetFitness() > t_f)
             {
                 t_f = m_Species[i].m_Individuals[j].GetFitness();
@@ -1547,12 +1663,14 @@ bool Population::NoveltySearchTick(Genome& a_SuccessfulGenome)
             {
                 m_Parameters.NoveltySearch_P_min = m_Parameters.NoveltySearch_Pmin_min;
             }
+            m_GensSinceLastArchiving = 0;
         }
 
         // too much additions to the archive (one after another)?
         if (m_QuickAddCounter > m_Parameters.NoveltySearch_Quick_Archiving_Min_Evaluations)
         {
             m_Parameters.NoveltySearch_P_min *= m_Parameters.NoveltySearch_Pmin_raising_multiplier;
+            m_QuickAddCounter = 0;
         }
     }
 
@@ -1566,31 +1684,50 @@ bool Population::NoveltySearchTick(Genome& a_SuccessfulGenome)
 
 double Population::ComputeSparseness(Genome& genome)
 {
+    if (genome.m_PhenotypeBehavior == nullptr)
+    {
+        throw std::invalid_argument(
+            "Cannot compute novelty sparseness without behavior data");
+    }
+
     std::vector<double> distances;
-    distances.clear();
+    const auto add_distance =
+        [&genome, &distances](PhenotypeBehavior* other)
+    {
+        if (other == nullptr)
+        {
+            throw std::runtime_error(
+                "Novelty search encountered an uninitialized behavior");
+        }
+        if (other == genome.m_PhenotypeBehavior)
+            return;
+        const double distance =
+            genome.m_PhenotypeBehavior->Distance_To(other);
+        if (!std::isfinite(distance) || distance < 0.0)
+        {
+            throw std::domain_error(
+                "Novelty behavior distances must be finite and non-negative");
+        }
+        distances.push_back(distance);
+    };
     for(unsigned int i=0; i<m_Species.size(); i++)
     {
         for(unsigned int j=0; j<m_Species[i].m_Individuals.size(); j++)
         {
-            distances.push_back( genome.m_PhenotypeBehavior->Distance_To( m_Species[i].m_Individuals[j].m_PhenotypeBehavior ) );
+            add_distance(
+                m_Species[i].m_Individuals[j].m_PhenotypeBehavior);
         }
     }
     if(m_BehaviorArchive)
     {
         for(unsigned int i=0; i<m_BehaviorArchive->size(); i++)
         {
-            distances.push_back( genome.m_PhenotypeBehavior->Distance_To( &((*m_BehaviorArchive)[i]) ) );
+            add_distance(&((*m_BehaviorArchive)[i]));
         }
     }
     
     if(distances.empty())
         return 0.0;
-    
-    // Remove the self-distance (assumed to be the smallest—usually zero)
-    auto selfIt = std::min_element(distances.begin(), distances.end());
-    if(selfIt != distances.end()){
-        distances.erase(selfIt);
-    }
     
     std::size_t k = std::min<std::size_t>(
         distances.size(), m_Parameters.NoveltySearch_K);

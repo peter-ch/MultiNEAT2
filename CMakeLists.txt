@@ -9,6 +9,8 @@ include(CTest)
 option(MULTINEAT_BUILD_DEMO "Build the C++ XOR demo executable" ON)
 option(MULTINEAT_BUILD_PYTHON "Build the pymultineat Python extension" ON)
 option(MULTINEAT_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
+option(MULTINEAT_ENABLE_SANITIZERS
+       "Enable AddressSanitizer and supported undefined-behavior checks" OFF)
 
 set(MULTINEAT_CORE_SOURCES
     src/Genome.cpp
@@ -68,12 +70,35 @@ function(multineat_enable_warnings target)
     endif()
 endfunction()
 
+function(multineat_enable_sanitizers target)
+    if(NOT MULTINEAT_ENABLE_SANITIZERS)
+        return()
+    endif()
+    if(MSVC)
+        target_compile_options(${target} PRIVATE /fsanitize=address)
+        target_link_options(${target} PRIVATE /INCREMENTAL:NO)
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(${target} PRIVATE
+            -fsanitize=address,undefined
+            -fno-omit-frame-pointer
+        )
+        target_link_options(${target} PRIVATE -fsanitize=address,undefined)
+    else()
+        message(FATAL_ERROR
+            "MULTINEAT_ENABLE_SANITIZERS is unsupported by "
+            "${CMAKE_CXX_COMPILER_ID}"
+        )
+    endif()
+endfunction()
+
 multineat_enable_warnings(multineat)
+multineat_enable_sanitizers(multineat)
 
 if(MULTINEAT_BUILD_DEMO)
     add_executable(multineat_exe src/Main.cpp)
     target_link_libraries(multineat_exe PRIVATE MultiNEAT::multineat)
     multineat_enable_warnings(multineat_exe)
+    multineat_enable_sanitizers(multineat_exe)
 endif()
 
 if(MULTINEAT_BUILD_PYTHON)
@@ -99,12 +124,14 @@ if(MULTINEAT_BUILD_PYTHON)
     pybind11_add_module(pymultineat MODULE src/Bindings.cpp)
     target_link_libraries(pymultineat PRIVATE MultiNEAT::multineat)
     multineat_enable_warnings(pymultineat)
+    multineat_enable_sanitizers(pymultineat)
 endif()
 
 if(BUILD_TESTING)
     add_executable(multineat_tests tests/core_tests.cpp)
     target_link_libraries(multineat_tests PRIVATE MultiNEAT::multineat)
     multineat_enable_warnings(multineat_tests)
+    multineat_enable_sanitizers(multineat_tests)
     add_test(NAME multineat_core COMMAND multineat_tests)
 
     if(MULTINEAT_BUILD_PYTHON)

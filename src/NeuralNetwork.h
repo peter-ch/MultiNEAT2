@@ -19,6 +19,11 @@ namespace NEAT
         bool m_recur_flag = false;
         double m_hebb_rate = 0.0;
         double m_hebb_pre_rate = 0.0;
+        // Appended after the historical fields so existing aggregate
+        // initializers retain their original positional meaning. This source
+        // activation is required for exact online RTRL gradients after
+        // recurrent neuron state advances.
+        double m_source_activation = 0.0;
 
         bool operator==(const Connection &other) const
         {
@@ -77,6 +82,9 @@ namespace NEAT
         void ActivateLeaky(double step);
         void RTRL_update_gradients();
         void RTRL_update_error(double a_target);
+        void RTRL_update_error(
+            const std::vector<double>& targets,
+            double learning_rate = 0.0001);
         void RTRL_update_weights();
         void Adapt(Parameters &a_Parameters);
         int ConnectionExists(int a_to, int a_from);

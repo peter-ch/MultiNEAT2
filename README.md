@@ -3,7 +3,8 @@
 MultiNEAT2 is a C++17 implementation of NEAT (NeuroEvolution of
 Augmenting Topologies) with optional Python bindings. It includes
 speciation, structural and trait mutation, recurrent networks, phased
-search, novelty search, HyperNEAT substrates, and ES-HyperNEAT parameters.
+search, novelty search, HyperNEAT substrates, and ES-HyperNEAT phenotype
+generation.
 
 This repository continues the original MultiNEAT codebase while retaining
 its established C++ and Python names wherever possible. Compatibility
@@ -35,6 +36,7 @@ Useful CMake options:
 | `MULTINEAT_BUILD_DEMO` | `ON` | Build the C++ XOR demo |
 | `BUILD_TESTING` | `ON` | Build and register regression tests |
 | `MULTINEAT_WARNINGS_AS_ERRORS` | `OFF` | Treat compiler warnings as errors |
+| `MULTINEAT_ENABLE_SANITIZERS` | `OFF` | Enable address and undefined-behavior sanitizers |
 
 For a C++-only build:
 
@@ -118,6 +120,29 @@ The older `Population.Save()` method deliberately retains its historical
 parameters/innovations/genomes file format for existing applications.
 Use `SaveState()` when generation counters, RNG state, species state,
 archives, and all trait data must be preserved exactly.
+
+## Algorithm and safety notes
+
+- `Parameters.Validate()` checks probability distributions, numeric ranges,
+  mutation limits, and trait schemas. Population construction and evolution
+  fail early with a descriptive exception when parameters are invalid.
+- Structural mutation exhaustively samples valid candidates, respects
+  recurrent-link split flags, prevents accidental feed-forward cycles, and
+  enforces `MaxLinks` and `MaxNeurons`.
+- Offspring are apportioned with the largest-remainder method, preserving the
+  population size exactly without systematic species-order bias. Negative
+  fitness is supported by parent and removal selection.
+- `BuildESHyperNEATPhenotype()` implements quadtree division, variance and band
+  pruning, optional LEO expression, iterative hidden discovery, deterministic
+  node indexing, link deduplication, and reachability pruning. Quadtree depth
+  is bounded to prevent accidental exponential allocation.
+- RTRL supports multiple outputs and configurable learning rates. Its sparse
+  topology update preserves the previous recurrent state and avoids repeated
+  connection scans from the inner gradient loops.
+
+Corrected convenience names such as `SetInputOutputDimensions()` and
+`GetConnectionLength()` are additive; historical misspellings remain
+available for downstream source compatibility.
 
 ## Project layout
 

@@ -189,8 +189,15 @@ public:
         }
 
         if (!found)
+        {
+            for (const auto& species : m_Species)
+            {
+                if (!species.m_Individuals.empty())
+                    return species.m_Individuals.front();
+            }
             throw std::runtime_error(
                 "Population::GetBestGenome: population has no genomes.");
+        }
         return m_Species[idx_species].m_Individuals[idx_genome];
     }
 
@@ -199,8 +206,26 @@ public:
 
     unsigned int GetNextGenomeID() const { return m_NextGenomeID; }
     unsigned int GetNextSpeciesID() const { return m_NextSpeciesID; }
-    void IncrementNextGenomeID() { m_NextGenomeID++; }
-    void IncrementNextSpeciesID() { m_NextSpeciesID++; }
+    void IncrementNextGenomeID()
+    {
+        if (m_NextGenomeID ==
+            static_cast<unsigned int>(
+                std::numeric_limits<int>::max()))
+        {
+            throw std::overflow_error("Genome ID space is exhausted");
+        }
+        ++m_NextGenomeID;
+    }
+    void IncrementNextSpeciesID()
+    {
+        if (m_NextSpeciesID ==
+            static_cast<unsigned int>(
+                std::numeric_limits<int>::max()))
+        {
+            throw std::overflow_error("Species ID space is exhausted");
+        }
+        ++m_NextSpeciesID;
+    }
     
     
     // Make sure no same genome IDs exist in the population

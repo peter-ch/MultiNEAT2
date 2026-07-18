@@ -29,6 +29,8 @@
 
 
 #include <fstream>
+#include <limits>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -40,6 +42,51 @@
 
 namespace NEAT
 {
+namespace
+{
+void ValidateInnovationState(const InnovationDatabase& database,
+                             int next_innovation,
+                             int next_neuron)
+{
+    std::set<int> innovation_ids;
+    int maximum_innovation = 0;
+    int maximum_neuron = 0;
+    for (const Innovation& innovation : database.m_Innovations)
+    {
+        if (innovation.ID() <= 0 ||
+            !innovation_ids.insert(innovation.ID()).second)
+        {
+            throw std::runtime_error(
+                "Innovation database IDs must be positive and unique");
+        }
+        if (innovation.FromNeuronID() <= 0 ||
+            innovation.ToNeuronID() <= 0)
+        {
+            throw std::runtime_error(
+                "Innovation database endpoints must be positive");
+        }
+        if (innovation.InnovType() == NEW_NEURON)
+        {
+            if (innovation.NeuronID() <= 0 ||
+                innovation.GetNeuronType() != HIDDEN)
+            {
+                throw std::runtime_error(
+                    "Neuron innovation data is invalid");
+            }
+            maximum_neuron =
+                std::max(maximum_neuron, innovation.NeuronID());
+        }
+        maximum_innovation =
+            std::max(maximum_innovation, innovation.ID());
+    }
+    if (next_innovation <= maximum_innovation ||
+        next_neuron <= maximum_neuron)
+    {
+        throw std::runtime_error(
+            "Innovation counters would reuse an existing ID");
+    }
+}
+}
 
 
 // Creates an empty database
@@ -53,7 +100,9 @@ InnovationDatabase::InnovationDatabase()
 // Creates an empty database but this time sets the next innov number and neuron ID
 InnovationDatabase::InnovationDatabase(int a_LastInnovationNum, int a_LastNeuronID)
 {
-    if (a_LastInnovationNum < 0 || a_LastNeuronID < 0)
+    if (a_LastInnovationNum < 0 || a_LastNeuronID < 0 ||
+        a_LastInnovationNum == std::numeric_limits<int>::max() ||
+        a_LastNeuronID == std::numeric_limits<int>::max())
     {
         throw std::invalid_argument(
             "Innovation counters cannot be negative");
@@ -69,7 +118,9 @@ InnovationDatabase::InnovationDatabase(int a_LastInnovationNum, int a_LastNeuron
 // Initializes an empty database
 void InnovationDatabase::Init(int a_LastInnovationNum, int a_LastNeuronID)
 {
-    if (a_LastInnovationNum < 0 || a_LastNeuronID < 0)
+    if (a_LastInnovationNum < 0 || a_LastNeuronID < 0 ||
+        a_LastInnovationNum == std::numeric_limits<int>::max() ||
+        a_LastNeuronID == std::numeric_limits<int>::max())
     {
         throw std::invalid_argument(
             "Innovation counters cannot be negative");
@@ -90,8 +141,16 @@ void InnovationDatabase::Init(const Genome& a_Genome)
         m_Innovations.emplace_back(t_innov);
     }
 
-    m_NextNeuronID = a_Genome.GetLastNeuronID() + 1;
-    m_NextInnovationNum = a_Genome.GetLastInnovationID() + 1;
+    const int last_neuron = a_Genome.GetLastNeuronID();
+    const int last_innovation = a_Genome.GetLastInnovationID();
+    if (last_neuron == std::numeric_limits<int>::max() ||
+        last_innovation == std::numeric_limits<int>::max())
+    {
+        throw std::overflow_error(
+            "Genome has exhausted the innovation ID space");
+    }
+    m_NextNeuronID = last_neuron + 1;
+    m_NextInnovationNum = last_innovation + 1;
 }
 
 
@@ -150,6 +209,8 @@ void InnovationDatabase::Init(std::ifstream& a_DataFile)
         }
         else if (t_str == "InnovationDatabaseEnd")
         {
+            ValidateInnovationState(
+                *this, m_NextInnovationNum, m_NextNeuronID);
             return;
         }
     }
@@ -221,7 +282,13 @@ InnovationDatabase InnovationDatabase::Deserialize(const std::string& data)
     while (input >> token)
     {
         if (token == "InnovationDatabaseEnd")
+        {
+            ValidateInnovationState(
+                database,
+                database.m_NextInnovationNum,
+                database.m_NextNeuronID);
             return database;
+        }
         if (token != "Innovation")
             throw std::runtime_error(
                 "InnovationDatabase::Deserialize: malformed innovation.");
@@ -359,6 +426,8 @@ int InnovationDatabase::AddLinkInnovation(int a_In, int a_Out)
 {
     if (a_In <= 0 || a_Out <= 0)
         throw std::invalid_argument("Innovation endpoints must be positive");
+    if (m_NextInnovationNum == std::numeric_limits<int>::max())
+        throw std::overflow_error("Innovation ID space is exhausted");
 
     m_Innovations.emplace_back( Innovation(m_NextInnovationNum, NEW_LINK, a_In, a_Out, NONE, -1) );
     m_NextInnovationNum++;
@@ -378,6 +447,12 @@ int InnovationDatabase::AddNeuronInnovation(int a_In, int a_Out, NeuronType a_NT
     if (a_In <= 0 || a_Out <= 0 || a_NType != HIDDEN)
         throw std::invalid_argument(
             "Neuron innovations require positive endpoints and a hidden neuron");
+    if (m_NextInnovationNum == std::numeric_limits<int>::max() ||
+        m_NextNeuronID == std::numeric_limits<int>::max())
+    {
+        throw std::overflow_error(
+            "Innovation or neuron ID space is exhausted");
+    }
 
     m_Innovations.emplace_back( Innovation(m_NextInnovationNum, NEW_NEURON, a_In, a_Out, a_NType, m_NextNeuronID) );
     m_NextInnovationNum++;

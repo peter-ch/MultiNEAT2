@@ -282,6 +282,10 @@ namespace NEAT
         // Like CPPN/HyperNEAT stuff
         ////////////
         void BuildHyperNEATPhenotype(NeuralNetwork &net, Substrate &subst);
+        void BuildESHyperNEATPhenotype(
+            NeuralNetwork &net,
+            Substrate &subst,
+            Parameters &params);
 
         // Saves this genome to a file
         void Save(const char *a_filename);

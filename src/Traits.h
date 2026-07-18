@@ -147,6 +147,18 @@ namespace NEAT
         }
 
         Trait& operator=(const Trait&) = default;
+
+        bool operator==(const Trait& rhs) const
+        {
+            return value == rhs.value &&
+                   dep_key == rhs.dep_key &&
+                   dep_values == rhs.dep_values;
+        }
+
+        bool operator!=(const Trait& rhs) const
+        {
+            return !(*this == rhs);
+        }
     };
 
 } // namespace NEAT

@@ -167,7 +167,11 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("InitTraits", &NEAT::Gene::InitTraits)
         .def("MateTraits", &NEAT::Gene::MateTraits)
         .def("MutateTraits", &NEAT::Gene::MutateTraits)
-        .def("GetTraitDistances", &NEAT::Gene::GetTraitDistances)
+        .def("GetTraitDistances",
+             [](const NEAT::Gene& gene,
+                const std::map<std::string, NEAT::Trait>& other) {
+                 return gene.GetTraitDistances(other);
+             })
         .def_readwrite("m_Traits", &NEAT::Gene::m_Traits);
 
     py::class_<NEAT::LinkGene, NEAT::Gene>(m, "LinkGene")
@@ -257,6 +261,8 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("BuildPhenotype", &NEAT::Genome::BuildPhenotype)
         .def("BuildHyperNEATPhenotype",
              &NEAT::Genome::BuildHyperNEATPhenotype)
+        .def("BuildESHyperNEATPhenotype",
+             &NEAT::Genome::BuildESHyperNEATPhenotype)
         .def("DerivePhenotypicChanges", &NEAT::Genome::DerivePhenotypicChanges)
         .def("CompatibilityDistance", &NEAT::Genome::CompatibilityDistance)
         .def("IsCompatibleWith", &NEAT::Genome::IsCompatibleWith)
@@ -370,6 +376,8 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite("m_target_neuron_idx", &NEAT::Connection::m_target_neuron_idx)
         .def_readwrite("m_weight", &NEAT::Connection::m_weight)
         .def_readwrite("m_signal", &NEAT::Connection::m_signal)
+        .def_readwrite("m_source_activation",
+                       &NEAT::Connection::m_source_activation)
         .def_readwrite("m_recur_flag", &NEAT::Connection::m_recur_flag)
         .def_readwrite("m_hebb_rate", &NEAT::Connection::m_hebb_rate)
         .def_readwrite("m_hebb_pre_rate", &NEAT::Connection::m_hebb_pre_rate);
@@ -406,7 +414,13 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("RTRL_update_gradients",
              &NEAT::NeuralNetwork::RTRL_update_gradients)
         .def("RTRL_update_error",
-             &NEAT::NeuralNetwork::RTRL_update_error)
+             py::overload_cast<double>(
+                 &NEAT::NeuralNetwork::RTRL_update_error))
+        .def("RTRL_update_error",
+             py::overload_cast<const std::vector<double>&, double>(
+                 &NEAT::NeuralNetwork::RTRL_update_error),
+             py::arg("targets"),
+             py::arg("learning_rate") = 0.0001)
         .def("RTRL_update_weights",
              &NEAT::NeuralNetwork::RTRL_update_weights)
         .def("Adapt", &NEAT::NeuralNetwork::Adapt)
@@ -459,6 +473,12 @@ PYBIND11_MODULE(pymultineat, m) {
             .def("Reset", &NEAT::Parameters::Reset)
             .def("Serialize", &NEAT::Parameters::Serialize)
             .def_static("Deserialize", &NEAT::Parameters::Deserialize)
+            .def("Validate",
+                 [](const NEAT::Parameters& parameters) {
+                     std::string error;
+                     return py::make_tuple(
+                         parameters.Validate(&error), error);
+                 })
             // Public members – Basic parameters
             .def_readwrite("PopulationSize", &NEAT::Parameters::PopulationSize)
             .def_readwrite("Speciation", &NEAT::Parameters::Speciation)

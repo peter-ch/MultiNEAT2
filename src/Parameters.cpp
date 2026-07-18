@@ -1,7 +1,9 @@
 #include "Parameters.h"
 
+#include <cmath>
 #include <cstdio>
 #include <functional>
+#include <limits>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -510,6 +512,352 @@ bool Parameters::FailsCustomConstraints(Genome& genome) const
     if (m_CustomConstraintsFunction)
         return m_CustomConstraintsFunction(genome);
     return CustomConstraints != nullptr && CustomConstraints(genome);
+}
+
+bool Parameters::Validate(std::string* error) const
+{
+    const auto fail = [error](const std::string& message)
+    {
+        if (error != nullptr)
+            *error = message;
+        return false;
+    };
+    const auto finite_range =
+        [&fail](const char* name, double minimum, double maximum)
+    {
+        if (!std::isfinite(minimum) || !std::isfinite(maximum) ||
+            minimum > maximum)
+        {
+            return fail(
+                std::string(name) +
+                " must have a finite, ordered minimum and maximum");
+        }
+        return true;
+    };
+    const auto probability =
+        [&fail](const char* name, double value)
+    {
+        if (!std::isfinite(value) || value < 0.0 || value > 1.0)
+        {
+            return fail(
+                std::string(name) + " must be between 0 and 1");
+        }
+        return true;
+    };
+
+    if (PopulationSize == 0)
+        return fail("PopulationSize must be greater than zero");
+    if (PopulationSize >=
+        static_cast<unsigned int>(std::numeric_limits<int>::max()))
+        return fail("PopulationSize exceeds the supported ID range");
+    if (MinSpecies == 0 || MinSpecies > MaxSpecies)
+        return fail("MinSpecies and MaxSpecies must define a non-empty range");
+    if (ConstraintTrials <= 0)
+        return fail("ConstraintTrials must be greater than zero");
+    if (NeuronTries <= 0)
+        return fail("NeuronTries must be greater than zero");
+    if (LinkTries == 0)
+        return fail("LinkTries must be greater than zero");
+    if (MaxLinks < -1 || MaxNeurons < -1)
+        return fail("MaxLinks and MaxNeurons must be -1 or non-negative");
+    if (InitialDepth > MaxDepth)
+        return fail("InitialDepth cannot exceed MaxDepth");
+    if (MaxDepth > 9)
+        return fail("MaxDepth exceeds the supported safe limit of 9");
+    if (Width <= 0.0 || Height <= 0.0)
+        return fail("Width and Height must be positive");
+    if (TournamentSelection && TournamentSize == 0)
+        return fail(
+            "TournamentSize must be greater than zero when tournament "
+            "selection is enabled");
+    if (DetectCompetetiveCoevolutionStagnation &&
+        (KillWorstSpeciesEach <= 0 || KillWorstAge < 0))
+    {
+        return fail(
+            "competitive coevolution stagnation detection requires a "
+            "positive interval and non-negative age");
+    }
+
+    const std::pair<const char*, double> probabilities[] = {
+        {"SurvivalRate", SurvivalRate},
+        {"CrossoverRate", CrossoverRate},
+        {"OverallMutationRate", OverallMutationRate},
+        {"InterspeciesCrossoverRate", InterspeciesCrossoverRate},
+        {"MultipointCrossoverRate", MultipointCrossoverRate},
+        {"PreferFitterParentRate", PreferFitterParentRate},
+        {"EliteFraction", EliteFraction},
+        {"MutateAddNeuronProb", MutateAddNeuronProb},
+        {"MutateAddLinkProb", MutateAddLinkProb},
+        {"MutateAddLinkFromBiasProb", MutateAddLinkFromBiasProb},
+        {"MutateRemLinkProb", MutateRemLinkProb},
+        {"MutateRemSimpleNeuronProb", MutateRemSimpleNeuronProb},
+        {"RecurrentProb", RecurrentProb},
+        {"RecurrentLoopProb", RecurrentLoopProb},
+        {"MutateWeightsProb", MutateWeightsProb},
+        {"MutateWeightsSevereProb", MutateWeightsSevereProb},
+        {"WeightMutationRate", WeightMutationRate},
+        {"WeightReplacementRate", WeightReplacementRate},
+        {"MutateActivationAProb", MutateActivationAProb},
+        {"MutateActivationBProb", MutateActivationBProb},
+        {"MutateNeuronActivationTypeProb",
+         MutateNeuronActivationTypeProb},
+        {"MutateNeuronTimeConstantsProb",
+         MutateNeuronTimeConstantsProb},
+        {"MutateNeuronBiasesProb", MutateNeuronBiasesProb},
+        {"MutateNeuronTraitsProb", MutateNeuronTraitsProb},
+        {"MutateLinkTraitsProb", MutateLinkTraitsProb},
+        {"MutateGenomeTraitsProb", MutateGenomeTraitsProb},
+        {"ActivationFunction_SignedSigmoid_Prob",
+         ActivationFunction_SignedSigmoid_Prob},
+        {"ActivationFunction_UnsignedSigmoid_Prob",
+         ActivationFunction_UnsignedSigmoid_Prob},
+        {"ActivationFunction_Tanh_Prob", ActivationFunction_Tanh_Prob},
+        {"ActivationFunction_TanhCubic_Prob",
+         ActivationFunction_TanhCubic_Prob},
+        {"ActivationFunction_SignedStep_Prob",
+         ActivationFunction_SignedStep_Prob},
+        {"ActivationFunction_UnsignedStep_Prob",
+         ActivationFunction_UnsignedStep_Prob},
+        {"ActivationFunction_SignedGauss_Prob",
+         ActivationFunction_SignedGauss_Prob},
+        {"ActivationFunction_UnsignedGauss_Prob",
+         ActivationFunction_UnsignedGauss_Prob},
+        {"ActivationFunction_Abs_Prob", ActivationFunction_Abs_Prob},
+        {"ActivationFunction_SignedSine_Prob",
+         ActivationFunction_SignedSine_Prob},
+        {"ActivationFunction_UnsignedSine_Prob",
+         ActivationFunction_UnsignedSine_Prob},
+        {"ActivationFunction_Linear_Prob",
+         ActivationFunction_Linear_Prob},
+        {"ActivationFunction_Relu_Prob", ActivationFunction_Relu_Prob},
+        {"ActivationFunction_Softplus_Prob",
+         ActivationFunction_Softplus_Prob}};
+    for (const auto& item : probabilities)
+    {
+        if (!probability(item.first, item.second))
+            return false;
+    }
+
+    if (!finite_range("weight range", MinWeight, MaxWeight) ||
+        !finite_range(
+            "activation A range", MinActivationA, MaxActivationA) ||
+        !finite_range(
+            "activation B range", MinActivationB, MaxActivationB) ||
+        !finite_range(
+            "neuron time-constant range",
+            MinNeuronTimeConstant,
+            MaxNeuronTimeConstant) ||
+        !finite_range(
+            "neuron bias range", MinNeuronBias, MaxNeuronBias))
+    {
+        return false;
+    }
+
+    const std::pair<const char*, double> non_negative[] = {
+        {"YoungAgeFitnessBoost", YoungAgeFitnessBoost},
+        {"StagnationDelta", StagnationDelta},
+        {"OldAgePenalty", OldAgePenalty},
+        {"WeightMutationMaxPower", WeightMutationMaxPower},
+        {"WeightReplacementMaxPower", WeightReplacementMaxPower},
+        {"ActivationAMutationMaxPower", ActivationAMutationMaxPower},
+        {"ActivationBMutationMaxPower", ActivationBMutationMaxPower},
+        {"TimeConstantMutationMaxPower", TimeConstantMutationMaxPower},
+        {"BiasMutationMaxPower", BiasMutationMaxPower},
+        {"DisjointCoeff", DisjointCoeff},
+        {"ExcessCoeff", ExcessCoeff},
+        {"ActivationADiffCoeff", ActivationADiffCoeff},
+        {"ActivationBDiffCoeff", ActivationBDiffCoeff},
+        {"WeightDiffCoeff", WeightDiffCoeff},
+        {"TimeConstantDiffCoeff", TimeConstantDiffCoeff},
+        {"BiasDiffCoeff", BiasDiffCoeff},
+        {"ActivationFunctionDiffCoeff", ActivationFunctionDiffCoeff},
+        {"CompatTreshold", CompatTreshold},
+        {"MinCompatTreshold", MinCompatTreshold},
+        {"CompatTresholdModifier", CompatTresholdModifier},
+        {"MinDeltaCompatEqualGenomes", MinDeltaCompatEqualGenomes},
+        {"NoveltySearch_P_min", NoveltySearch_P_min},
+        {"NoveltySearch_Pmin_min", NoveltySearch_Pmin_min},
+        {"DivisionThreshold", DivisionThreshold},
+        {"VarianceThreshold", VarianceThreshold},
+        {"BandThreshold", BandThreshold}};
+    for (const auto& item : non_negative)
+    {
+        if (!std::isfinite(item.second) || item.second < 0.0)
+            return fail(std::string(item.first) +
+                        " must be finite and non-negative");
+    }
+    if (!std::isfinite(NoveltySearch_Pmin_lowering_multiplier) ||
+        NoveltySearch_Pmin_lowering_multiplier <= 0.0 ||
+        !std::isfinite(NoveltySearch_Pmin_raising_multiplier) ||
+        NoveltySearch_Pmin_raising_multiplier <= 0.0)
+    {
+        return fail(
+            "novelty threshold multipliers must be finite and positive");
+    }
+    const std::pair<const char*, double> finite_values[] = {
+        {"CPPN_Bias", CPPN_Bias},
+        {"Qtree_X", Qtree_X},
+        {"Qtree_Y", Qtree_Y},
+        {"LeoThreshold", LeoThreshold}};
+    for (const auto& item : finite_values)
+    {
+        if (!std::isfinite(item.second))
+            return fail(std::string(item.first) + " must be finite");
+    }
+
+    double activation_total = 0.0;
+    for (std::size_t i = 26; i < std::size(probabilities); ++i)
+        activation_total += probabilities[i].second;
+    if ((MutateAddNeuronProb > 0.0 ||
+         MutateNeuronActivationTypeProb > 0.0) &&
+        activation_total <= 0.0)
+    {
+        return fail(
+            "at least one activation function must have positive probability");
+    }
+
+    const auto validate_traits =
+        [&fail, &probability](
+            const char* category,
+            const std::map<std::string, TraitParameters>& schemas)
+    {
+        for (const auto& entry : schemas)
+        {
+            const TraitParameters& schema = entry.second;
+            const std::string prefix =
+                std::string(category) + " trait '" + entry.first + "': ";
+            const auto validate_set_probabilities =
+                [&fail, &prefix](
+                    std::size_t set_size,
+                    const std::vector<double>& probabilities)
+            {
+                if (!probabilities.empty() &&
+                    probabilities.size() != set_size)
+                {
+                    return fail(
+                        prefix +
+                        "probability count must match the set size");
+                }
+                for (const double value : probabilities)
+                {
+                    if (!std::isfinite(value) || value < 0.0)
+                    {
+                        return fail(
+                            prefix +
+                            "set probabilities must be finite and "
+                            "non-negative");
+                    }
+                }
+                return true;
+            };
+            if (!std::isfinite(schema.m_ImportanceCoeff) ||
+                schema.m_ImportanceCoeff < 0.0)
+            {
+                return fail(prefix +
+                            "importance must be finite and non-negative");
+            }
+            if (!probability(
+                    (prefix + "mutation probability").c_str(),
+                    schema.m_MutationProb))
+            {
+                return false;
+            }
+            if (schema.type == "int")
+            {
+                if (!std::holds_alternative<IntTraitParameters>(
+                        schema.m_Details))
+                    return fail(prefix + "detail type does not match");
+                const auto& detail =
+                    std::get<IntTraitParameters>(schema.m_Details);
+                if (detail.min > detail.max || detail.mut_power < 0)
+                    return fail(prefix + "integer range is invalid");
+                if (!probability(
+                        (prefix + "replacement probability").c_str(),
+                        detail.mut_replace_prob))
+                    return false;
+            }
+            else if (schema.type == "float")
+            {
+                if (!std::holds_alternative<FloatTraitParameters>(
+                        schema.m_Details))
+                    return fail(prefix + "detail type does not match");
+                const auto& detail =
+                    std::get<FloatTraitParameters>(schema.m_Details);
+                if (!std::isfinite(detail.min) ||
+                    !std::isfinite(detail.max) ||
+                    detail.min > detail.max ||
+                    !std::isfinite(detail.mut_power) ||
+                    detail.mut_power < 0.0)
+                    return fail(prefix + "floating-point range is invalid");
+                if (!probability(
+                        (prefix + "replacement probability").c_str(),
+                        detail.mut_replace_prob))
+                    return false;
+            }
+            else if (schema.type == "str")
+            {
+                if (!std::holds_alternative<StringTraitParameters>(
+                        schema.m_Details))
+                    return fail(prefix + "detail type does not match");
+                const auto& detail =
+                    std::get<StringTraitParameters>(schema.m_Details);
+                if (detail.set.empty())
+                    return fail(prefix + "set cannot be empty");
+                if (!validate_set_probabilities(
+                        detail.set.size(), detail.probs))
+                    return false;
+            }
+            else if (schema.type == "intset")
+            {
+                if (!std::holds_alternative<IntSetTraitParameters>(
+                        schema.m_Details))
+                    return fail(prefix + "detail type does not match");
+                const auto& detail =
+                    std::get<IntSetTraitParameters>(schema.m_Details);
+                if (detail.set.empty())
+                    return fail(prefix + "set cannot be empty");
+                if (!validate_set_probabilities(
+                        detail.set.size(), detail.probs))
+                    return false;
+            }
+            else if (schema.type == "floatset")
+            {
+                if (!std::holds_alternative<FloatSetTraitParameters>(
+                        schema.m_Details))
+                    return fail(prefix + "detail type does not match");
+                const auto& detail =
+                    std::get<FloatSetTraitParameters>(schema.m_Details);
+                if (detail.set.empty())
+                    return fail(prefix + "set cannot be empty");
+                if (!validate_set_probabilities(
+                        detail.set.size(), detail.probs))
+                    return false;
+                for (const auto& value : detail.set)
+                {
+                    if (!std::isfinite(value.value))
+                        return fail(
+                            prefix +
+                            "set values must be finite");
+                }
+            }
+            else
+            {
+                return fail(prefix + "unsupported type");
+            }
+            if (!schema.dep_key.empty())
+            {
+                if (schemas.find(schema.dep_key) == schemas.end())
+                    return fail(prefix + "dependency key does not exist");
+                if (schema.dep_values.empty())
+                    return fail(
+                        prefix + "dependency values cannot be empty");
+            }
+        }
+        return true;
+    };
+    return validate_traits("neuron", NeuronTraits) &&
+           validate_traits("link", LinkTraits) &&
+           validate_traits("genome", GenomeTraits);
 }
 
 } // namespace NEAT

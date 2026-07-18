@@ -92,6 +92,7 @@ namespace NEAT
         void FlushCube();
         void Input(std::vector<double> &a_Inputs);
         std::vector<double> Output();
+        void ActivateSteps(unsigned int steps, bool fast = true);
         void AddNeuron(const Neuron &a_n) { m_neurons.push_back(a_n); }
         void AddConnection(const Connection &a_c) { m_connections.push_back(a_c); }
         Connection GetConnectionByIndex(unsigned int a_idx) const

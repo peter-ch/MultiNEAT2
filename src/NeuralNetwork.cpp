@@ -210,15 +210,16 @@ namespace NEAT
 
     void NeuralNetwork::ActivateFast()
     {
-        ValidateNetworkTopology(*this);
+        // The phenotype builder guarantees valid endpoint indexes. This is the
+        // intentionally unchecked hot path; Activate() remains the validating
+        // entry point for networks assembled through public vectors.
         for (auto &conn : m_connections)
         {
             conn.m_source_activation =
                 m_neurons[conn.m_source_neuron_idx].m_activation;
             conn.m_signal = conn.m_source_activation * conn.m_weight;
-        }
-        for (auto &conn : m_connections)
             m_neurons[conn.m_target_neuron_idx].m_activesum += conn.m_signal;
+        }
         for (size_t i = m_num_inputs; i < m_neurons.size(); i++)
         {
             double x = m_neurons[i].m_activesum;
@@ -249,39 +250,7 @@ namespace NEAT
     void NeuralNetwork::Activate()
     {
         ValidateNetworkTopology(*this);
-        for (auto &conn : m_connections)
-        {
-            conn.m_source_activation =
-                m_neurons[conn.m_source_neuron_idx].m_activation;
-            conn.m_signal = conn.m_source_activation * conn.m_weight;
-        }
-        for (auto &conn : m_connections)
-            m_neurons[conn.m_target_neuron_idx].m_activesum += conn.m_signal;
-        for (size_t i = m_num_inputs; i < m_neurons.size(); i++)
-        {
-            double x = m_neurons[i].m_activesum;
-            m_neurons[i].m_activesum = 0;
-            double y = 0.0;
-            switch (m_neurons[i].m_activation_function_type)
-            {
-                case SIGNED_SIGMOID:    y = af_sigmoid_signed(x, m_neurons[i].m_a, m_neurons[i].m_b); break;
-                case UNSIGNED_SIGMOID:  y = af_sigmoid_unsigned(x, m_neurons[i].m_a, m_neurons[i].m_b); break;
-                case TANH:              y = af_tanh(x, m_neurons[i].m_a, m_neurons[i].m_b); break;
-                case TANH_CUBIC:        y = af_tanh_cubic(x, m_neurons[i].m_a, m_neurons[i].m_b); break;
-                case SIGNED_STEP:       y = af_step_signed(x, m_neurons[i].m_b); break;
-                case UNSIGNED_STEP:     y = af_step_unsigned(x, m_neurons[i].m_b); break;
-                case SIGNED_GAUSS:      y = af_gauss_signed(x, m_neurons[i].m_a, m_neurons[i].m_b); break;
-                case UNSIGNED_GAUSS:    y = af_gauss_unsigned(x, m_neurons[i].m_a, m_neurons[i].m_b); break;
-                case ABS:               y = af_abs(x, m_neurons[i].m_b); break;
-                case SIGNED_SINE:       y = af_sine_signed(x, m_neurons[i].m_a, m_neurons[i].m_b); break;
-                case UNSIGNED_SINE:     y = af_sine_unsigned(x, m_neurons[i].m_a, m_neurons[i].m_b); break;
-                case LINEAR:            y = af_linear(x, m_neurons[i].m_b); break;
-                case RELU:              y = af_relu(x); break;
-                case SOFTPLUS:          y = af_softplus(x); break;
-                default:                y = af_sigmoid_unsigned(x, m_neurons[i].m_a, m_neurons[i].m_b); break;
-            }
-            m_neurons[i].m_activation = y;
-        }
+        ActivateFast();
     }
 
     void NeuralNetwork::ActivateUseInternalBias()
@@ -407,6 +376,14 @@ namespace NEAT
                                    static_cast<size_t>(m_num_inputs));
         for (size_t i = 0; i < mx; i++)
             m_neurons[i].m_activation = a_Inputs[i];
+    }
+
+    void NeuralNetwork::ActivateSteps(unsigned int steps, bool fast)
+    {
+        if (!fast)
+            ValidateNetworkTopology(*this);
+        for (unsigned int step = 0; step < steps; ++step)
+            ActivateFast();
     }
 
     std::vector<double> NeuralNetwork::Output()

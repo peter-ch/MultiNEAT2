@@ -18,6 +18,7 @@
 #include <stdexcept>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include "Assert.h"
 #include "Genome.h"
@@ -826,7 +827,10 @@ void Genome::BuildPhenotype(NeuralNetwork &a_Net)
     a_Net.Clear();
     a_Net.SetInputOutputDimentions(m_NumInputs, m_NumOutputs);
 
-    std::map<int, int> neuron_indices;
+    std::unordered_map<int, int> neuron_indices;
+    neuron_indices.reserve(m_NeuronGenes.size());
+    a_Net.m_neurons.reserve(m_NeuronGenes.size());
+    a_Net.m_connections.reserve(m_LinkGenes.size());
     for (const auto &ng : m_NeuronGenes)
     {
         Neuron t_n;
@@ -1864,7 +1868,8 @@ double Genome::CompatibilityDistance(Genome &a_G, Parameters &a_Parameters)
                         + a_Parameters.WeightDiffCoeff * (total_w_diff / M);
     total_distance += dist_links;
 
-    std::map<int, const NeuronGene*> other_neurons;
+    std::unordered_map<int, const NeuronGene*> other_neurons;
+    other_neurons.reserve(a_G.m_NeuronGenes.size());
     for (const NeuronGene& neuron : a_G.m_NeuronGenes)
         other_neurons.emplace(neuron.ID(), &neuron);
     for (size_t i = 0; i < m_NeuronGenes.size(); ++i)
@@ -1959,7 +1964,94 @@ bool Genome::Mutate_LinkWeights(const Parameters &a_Parameters, RNG &a_RNG)
             if(in_tail || a_RNG.RandFloat() < a_Parameters.WeightReplacementRate)
                 w = a_RNG.RandFloatSigned() * a_Parameters.WeightReplacementMaxPower;
             else
-                w += a_RNG.RandFloatSigned() * a_Parameters.WeightMutationMaxPower;
+            {
+                switch (a_Parameters.WeightMutationDistribution)
+                {
+                case UNIFORM_MUTATION:
+                    w +=
+                        a_RNG.RandFloatSigned() *
+                        a_Parameters.WeightMutationMaxPower;
+                    break;
+
+                case GAUSSIAN_MUTATION:
+                    if (a_Parameters.WeightMutationMaxPower > 0.0)
+                    {
+                        w += a_RNG.RandNormal(
+                            0.0,
+                            a_Parameters.WeightMutationSigma *
+                                a_Parameters.WeightMutationMaxPower);
+                    }
+                    break;
+
+                case CAUCHY_MUTATION:
+                    if (a_Parameters.WeightMutationMaxPower > 0.0)
+                    {
+                        w += a_RNG.RandCauchy(
+                            0.0,
+                            a_Parameters.WeightMutationCauchyScale *
+                                a_Parameters.WeightMutationMaxPower);
+                    }
+                    break;
+
+                case POLYNOMIAL_MUTATION:
+                {
+                    const double range =
+                        a_Parameters.MaxWeight -
+                        a_Parameters.MinWeight;
+                    if (range <= 0.0 ||
+                        a_Parameters.WeightMutationMaxPower <= 0.0)
+                        break;
+                    Clamp(
+                        w,
+                        a_Parameters.MinWeight,
+                        a_Parameters.MaxWeight);
+                    const double delta_lower =
+                        (w - a_Parameters.MinWeight) / range;
+                    const double delta_upper =
+                        (a_Parameters.MaxWeight - w) / range;
+                    const double draw = a_RNG.RandFloat();
+                    const double exponent =
+                        1.0 /
+                        (a_Parameters.WeightMutationPolynomialEta +
+                         1.0);
+                    double delta = 0.0;
+                    if (draw <= 0.5)
+                    {
+                        const double value =
+                            2.0 * draw +
+                            (1.0 - 2.0 * draw) *
+                                std::pow(
+                                    1.0 - delta_lower,
+                                    a_Parameters
+                                            .WeightMutationPolynomialEta +
+                                        1.0);
+                        delta = std::pow(value, exponent) - 1.0;
+                    }
+                    else
+                    {
+                        const double value =
+                            2.0 * (1.0 - draw) +
+                            2.0 * (draw - 0.5) *
+                                std::pow(
+                                    1.0 - delta_upper,
+                                    a_Parameters
+                                            .WeightMutationPolynomialEta +
+                                        1.0);
+                        delta = 1.0 - std::pow(value, exponent);
+                    }
+                    w +=
+                        delta *
+                        std::min(
+                            range,
+                            a_Parameters.WeightMutationMaxPower);
+                    break;
+                }
+
+                default:
+                    throw std::invalid_argument(
+                        "Unsupported weight mutation distribution");
+                }
+            }
             Clamp(w, a_Parameters.MinWeight, a_Parameters.MaxWeight);
             if (w != original)
             {
@@ -2555,8 +2647,30 @@ bool Genome::HasDeadEnds() const
     return false;
 }
 
-Genome Genome::Mate(Genome &a_Dad, bool a_MateAverage, bool a_InterSpecies, RNG &a_RNG, Parameters &a_Parameters)
+Genome Genome::Mate(
+    Genome &a_Dad,
+    bool a_MateAverage,
+    bool a_InterSpecies,
+    RNG &a_RNG,
+    Parameters &a_Parameters)
 {
+    return MateWithMode(
+        a_Dad,
+        a_MateAverage ? AVERAGE : MULTIPOINT,
+        a_InterSpecies,
+        a_RNG,
+        a_Parameters);
+}
+
+Genome Genome::MateWithMode(
+    Genome &a_Dad,
+    CrossoverMode a_Mode,
+    bool a_InterSpecies,
+    RNG &a_RNG,
+    Parameters &a_Parameters)
+{
+    if (a_Mode < MULTIPOINT || a_Mode > SIMULATED_BINARY)
+        throw std::invalid_argument("Unsupported crossover mode");
     if (m_NumInputs != a_Dad.m_NumInputs ||
         m_NumOutputs != a_Dad.m_NumOutputs)
     {
@@ -2586,7 +2700,13 @@ Genome Genome::Mate(Genome &a_Dad, bool a_MateAverage, bool a_InterSpecies, RNG 
     std::sort(dad_links.begin(), dad_links.end());
     auto t_curMom = mom_links.begin();
     auto t_curDad = dad_links.begin();
-    if (!a_MateAverage)
+    const bool average_traits =
+        a_Mode == AVERAGE || a_Mode == BLEND ||
+        a_Mode == SIMULATED_BINARY;
+    const bool prefer_fitter_neurons =
+        a_Mode == MULTIPOINT || a_Mode == SINGLE_POINT;
+
+    if (!average_traits)
     {
         Gene n;
         if (a_RNG.RandFloat() < a_Parameters.PreferFitterParentRate)
@@ -2615,7 +2735,7 @@ Genome Genome::Mate(Genome &a_Dad, bool a_MateAverage, bool a_InterSpecies, RNG 
                 "Cannot mate genomes with incompatible input/output neurons");
         }
         NeuronGene child = mom;
-        if (a_MateAverage)
+        if (average_traits)
         {
             child.MateTraits(dad.m_Traits, a_RNG);
         }
@@ -2630,6 +2750,39 @@ Genome Genome::Mate(Genome &a_Dad, bool a_MateAverage, bool a_InterSpecies, RNG 
         }
         t_baby.m_NeuronGenes.push_back(std::move(child));
     }
+
+    std::size_t matching_link_count = 0;
+    if (a_Mode == SINGLE_POINT)
+    {
+        auto mom = mom_links.begin();
+        auto dad = dad_links.begin();
+        while (mom != mom_links.end() && dad != dad_links.end())
+        {
+            if (mom->InnovationID() == dad->InnovationID())
+            {
+                ++matching_link_count;
+                ++mom;
+                ++dad;
+            }
+            else if (mom->InnovationID() < dad->InnovationID())
+            {
+                ++mom;
+            }
+            else
+            {
+                ++dad;
+            }
+        }
+    }
+    const std::size_t single_point =
+        a_Mode != SINGLE_POINT || matching_link_count == 0
+            ? 0
+            : static_cast<std::size_t>(a_RNG.RandInt(
+                  0, static_cast<int>(matching_link_count)));
+    const bool mom_before_single_point =
+        a_Mode != SINGLE_POINT || a_RNG.RandFloat() < 0.5;
+    std::size_t matching_link_index = 0;
+
     LinkGene t_emptygene(0, 0, -1, 0, false);
     while (!(t_curMom == mom_links.end() && t_curDad == dad_links.end()))
     {
@@ -2655,21 +2808,95 @@ Genome Genome::Mate(Genome &a_Dad, bool a_MateAverage, bool a_InterSpecies, RNG 
             const int t_innov_dad = t_curDad->InnovationID();
             if(t_innov_mom == t_innov_dad)
             {
-                if (!a_MateAverage)
+                switch (a_Mode)
                 {
+                case MULTIPOINT:
                     if (a_RNG.RandFloat() < a_Parameters.PreferFitterParentRate)
                         t_selectedgene =
                             (t_better == MOM) ? *t_curMom : *t_curDad;
                     else
                         t_selectedgene = (a_RNG.RandFloat() < 0.5) ? *t_curMom : *t_curDad;
+                    break;
+
+                case AVERAGE:
+                    t_selectedgene = *t_curMom;
+                    t_selectedgene.SetWeight(
+                        (t_curDad->GetWeight() +
+                         t_curMom->GetWeight()) /
+                        2.0);
+                    t_selectedgene.MateTraits(t_curDad->m_Traits, a_RNG);
+                    break;
+
+                case SINGLE_POINT:
+                {
+                    const bool take_mom =
+                        (matching_link_index < single_point) ==
+                        mom_before_single_point;
+                    t_selectedgene =
+                        take_mom ? *t_curMom : *t_curDad;
+                    break;
                 }
-                else
+
+                case BLEND:
                 {
                     t_selectedgene = *t_curMom;
-                    double t_Weight = (t_curDad->GetWeight() + t_curMom->GetWeight()) / 2.0;
-                    t_selectedgene.SetWeight(t_Weight);
-                    t_selectedgene.MateTraits(t_curDad->m_Traits, a_RNG);
+                    const double mom_weight = t_curMom->GetWeight();
+                    const double dad_weight = t_curDad->GetWeight();
+                    const double minimum =
+                        std::min(mom_weight, dad_weight);
+                    const double maximum =
+                        std::max(mom_weight, dad_weight);
+                    const double span = maximum - minimum;
+                    double weight =
+                        minimum - a_Parameters.CrossoverBlendAlpha * span +
+                        a_RNG.RandFloat() *
+                            (span *
+                             (1.0 +
+                              2.0 *
+                                  a_Parameters.CrossoverBlendAlpha));
+                    Clamp(
+                        weight,
+                        a_Parameters.MinWeight,
+                        a_Parameters.MaxWeight);
+                    t_selectedgene.SetWeight(weight);
+                    t_selectedgene.MateTraits(
+                        t_curDad->m_Traits, a_RNG);
+                    break;
                 }
+
+                case SIMULATED_BINARY:
+                {
+                    t_selectedgene = *t_curMom;
+                    const double draw = a_RNG.RandFloat();
+                    const double exponent =
+                        1.0 / (a_Parameters.CrossoverSBXEta + 1.0);
+                    const double beta =
+                        draw <= 0.5
+                            ? std::pow(2.0 * draw, exponent)
+                            : std::pow(
+                                  1.0 / (2.0 * (1.0 - draw)),
+                                  exponent);
+                    const double first = t_curMom->GetWeight();
+                    const double second = t_curDad->GetWeight();
+                    double weight =
+                        a_RNG.RandFloat() < 0.5
+                            ? 0.5 *
+                                  ((1.0 + beta) * first +
+                                   (1.0 - beta) * second)
+                            : 0.5 *
+                                  ((1.0 - beta) * first +
+                                   (1.0 + beta) * second);
+                    Clamp(
+                        weight,
+                        a_Parameters.MinWeight,
+                        a_Parameters.MaxWeight);
+                    t_selectedgene.SetWeight(weight);
+                    t_selectedgene.MateTraits(
+                        t_curDad->m_Traits, a_RNG);
+                    break;
+                }
+                }
+                ++matching_link_index;
                 ++t_curMom;
                 ++t_curDad;
             }
@@ -2702,7 +2929,7 @@ Genome Genome::Mate(Genome &a_Dad, bool a_MateAverage, bool a_InterSpecies, RNG 
                 {
                     if(a_Dad.HasNeuronID(t_selectedgene.FromNeuronID()))
                     {
-                        if(!a_MateAverage)
+                        if(prefer_fitter_neurons)
                             t_baby.m_NeuronGenes.push_back((t_better == MOM) ?
                                                            GetNeuronByIndex(GetNeuronIndex(t_selectedgene.FromNeuronID())) :
                                                            a_Dad.m_NeuronGenes[a_Dad.GetNeuronIndex(t_selectedgene.FromNeuronID())]);
@@ -2718,7 +2945,7 @@ Genome Genome::Mate(Genome &a_Dad, bool a_MateAverage, bool a_InterSpecies, RNG 
                 {
                     if(a_Dad.HasNeuronID(t_selectedgene.ToNeuronID()))
                     {
-                        if(!a_MateAverage)
+                        if(prefer_fitter_neurons)
                             t_baby.m_NeuronGenes.push_back((t_better == MOM) ?
                                                            GetNeuronByIndex(GetNeuronIndex(t_selectedgene.ToNeuronID())) :
                                                            a_Dad.m_NeuronGenes[a_Dad.GetNeuronIndex(t_selectedgene.ToNeuronID())]);
@@ -2734,7 +2961,7 @@ Genome Genome::Mate(Genome &a_Dad, bool a_MateAverage, bool a_InterSpecies, RNG 
                 {
                     if(HasNeuronID(t_selectedgene.FromNeuronID()))
                     {
-                        if(!a_MateAverage)
+                        if(prefer_fitter_neurons)
                             t_baby.m_NeuronGenes.push_back((t_better == DAD) ?
                                                            a_Dad.m_NeuronGenes[a_Dad.GetNeuronIndex(t_selectedgene.FromNeuronID())]:
                                                            GetNeuronByIndex(GetNeuronIndex(t_selectedgene.FromNeuronID())));
@@ -2750,7 +2977,7 @@ Genome Genome::Mate(Genome &a_Dad, bool a_MateAverage, bool a_InterSpecies, RNG 
                 {
                     if(HasNeuronID(t_selectedgene.ToNeuronID()))
                     {
-                        if(!a_MateAverage)
+                        if(prefer_fitter_neurons)
                             t_baby.m_NeuronGenes.push_back((t_better == DAD) ?
                                                            a_Dad.m_NeuronGenes[a_Dad.GetNeuronIndex(t_selectedgene.ToNeuronID())] :
                                                            GetNeuronByIndex(GetNeuronIndex(t_selectedgene.ToNeuronID())));

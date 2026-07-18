@@ -54,6 +54,40 @@ namespace NEAT
         return val;
     }
 
+    double RNG::RandNormal(double mean, double standard_deviation)
+    {
+        if (!std::isfinite(mean) ||
+            !std::isfinite(standard_deviation) ||
+            standard_deviation <= 0.0)
+        {
+            throw std::invalid_argument(
+                "RNG::RandNormal requires a finite mean and positive "
+                "standard deviation.");
+        }
+        std::normal_distribution<double> distribution(
+            mean, standard_deviation);
+        return distribution(m_Engine);
+    }
+
+    double RNG::RandCauchy(double location, double scale)
+    {
+        if (!std::isfinite(location) || !std::isfinite(scale) ||
+            scale <= 0.0)
+        {
+            throw std::invalid_argument(
+                "RNG::RandCauchy requires a finite location and positive "
+                "scale.");
+        }
+        std::cauchy_distribution<double> distribution(location, scale);
+        double result = distribution(m_Engine);
+        // The mathematical distribution is unbounded. Resample the extremely
+        // rare non-finite floating-point result so callers always receive a
+        // usable mutation.
+        while (!std::isfinite(result))
+            result = distribution(m_Engine);
+        return result;
+    }
+
     int RNG::Roulette(const std::vector<double>& a_probs)
     {
         if (a_probs.empty())

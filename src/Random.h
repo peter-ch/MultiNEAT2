@@ -21,6 +21,8 @@ namespace NEAT
         double RandFloat();
         double RandFloatSigned();
         double RandGaussSigned();
+        double RandNormal(double mean = 0.0, double standard_deviation = 1.0);
+        double RandCauchy(double location = 0.0, double scale = 1.0);
         int Roulette(const std::vector<double>& a_probs);
         std::string Serialize() const;
         void Deserialize(const std::string& data);

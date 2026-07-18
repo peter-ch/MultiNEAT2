@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 
-project(MultiNEAT VERSION 2.0.0 LANGUAGES CXX)
+project(MultiNEAT VERSION 2.1.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -8,6 +8,7 @@ include(CTest)
 
 option(MULTINEAT_BUILD_DEMO "Build the C++ XOR demo executable" ON)
 option(MULTINEAT_BUILD_PYTHON "Build the pymultineat Python extension" ON)
+option(MULTINEAT_BUILD_BENCHMARKS "Build repeatable microbenchmarks" OFF)
 option(MULTINEAT_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(MULTINEAT_ENABLE_SANITIZERS
        "Enable AddressSanitizer and supported undefined-behavior checks" OFF)
@@ -101,6 +102,19 @@ if(MULTINEAT_BUILD_DEMO)
     multineat_enable_sanitizers(multineat_exe)
 endif()
 
+if(MULTINEAT_BUILD_BENCHMARKS)
+    add_executable(
+        multineat_benchmarks
+        benchmarks/core_benchmarks.cpp
+    )
+    target_link_libraries(
+        multineat_benchmarks
+        PRIVATE MultiNEAT::multineat
+    )
+    multineat_enable_warnings(multineat_benchmarks)
+    multineat_enable_sanitizers(multineat_benchmarks)
+endif()
+
 if(MULTINEAT_BUILD_PYTHON)
     find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module)
     find_package(pybind11 QUIET CONFIG)
@@ -157,6 +171,27 @@ if(BUILD_TESTING)
         endif()
         set_tests_properties(multineat_python PROPERTIES
             ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:pymultineat>"
+        )
+
+        if(MSVC)
+            add_test(
+                NAME multineat_visualization
+                CONFIGURATIONS Release RelWithDebInfo MinSizeRel
+                COMMAND
+                    "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_neattools.py"
+            )
+        else()
+            add_test(
+                NAME multineat_visualization
+                COMMAND
+                    "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_neattools.py"
+            )
+        endif()
+        set_tests_properties(multineat_visualization PROPERTIES
+            ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:pymultineat>"
+            SKIP_RETURN_CODE 77
         )
     endif()
 endif()

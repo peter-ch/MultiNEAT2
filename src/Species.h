@@ -15,21 +15,6 @@ namespace NEAT
 // forward
 class Population;
 
-//////////////////////////////////////////////
-// The Species class
-//////////////////////////////////////////////
-
-enum SelectionMode
-{
-    TRUNCATION,
-    ROULETTE,
-    RANK_LINEAR,
-    RANK_EXP,
-    TOURNAMENT,
-    STOCHASTIC,
-    BOLTZMANN
-};
-
 class Species
 {
 

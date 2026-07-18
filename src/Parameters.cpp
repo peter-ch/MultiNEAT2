@@ -7,6 +7,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 
@@ -148,7 +149,20 @@ namespace
     X(GeometrySeed)                                                         \
     X(MutateNeuronTraitsProb)                                               \
     X(MutateLinkTraitsProb)                                                 \
-    X(MutateGenomeTraitsProb)
+    X(MutateGenomeTraitsProb)                                               \
+    X(ParentSelectionMode)                                                  \
+    X(RankSelectionPressure)                                                \
+    X(RankSelectionExponent)                                                \
+    X(BoltzmannTemperature)                                                 \
+    X(SinglePointCrossoverRate)                                             \
+    X(BlendCrossoverRate)                                                   \
+    X(SimulatedBinaryCrossoverRate)                                         \
+    X(CrossoverBlendAlpha)                                                  \
+    X(CrossoverSBXEta)                                                      \
+    X(WeightMutationDistribution)                                           \
+    X(WeightMutationSigma)                                                  \
+    X(WeightMutationCauchyScale)                                            \
+    X(WeightMutationPolynomialEta)
 
 template <typename T>
 void WriteScalar(std::ostream& output, const T& value)
@@ -164,7 +178,17 @@ void WriteScalar(std::ostream& output, bool value)
 template <typename T>
 void ReadScalar(std::istream& input, T& value)
 {
-    input >> value;
+    if constexpr (std::is_enum_v<T>)
+    {
+        std::underlying_type_t<T> encoded{};
+        input >> encoded;
+        if (input)
+            value = static_cast<T>(encoded);
+    }
+    else
+    {
+        input >> value;
+    }
 }
 
 void ReadScalar(std::istream& input, bool& value)
@@ -416,6 +440,22 @@ void Parameters::Reset()
     MutateNeuronTraitsProb = 0.0;
     MutateLinkTraitsProb = 0.0;
     MutateGenomeTraitsProb = 0.0;
+
+    ParentSelectionMode = LEGACY_SELECTION;
+    RankSelectionPressure = 1.7;
+    RankSelectionExponent = 4.0;
+    BoltzmannTemperature = 1.0;
+
+    SinglePointCrossoverRate = 0.0;
+    BlendCrossoverRate = 0.0;
+    SimulatedBinaryCrossoverRate = 0.0;
+    CrossoverBlendAlpha = 0.5;
+    CrossoverSBXEta = 10.0;
+
+    WeightMutationDistribution = UNIFORM_MUTATION;
+    WeightMutationSigma = 1.0;
+    WeightMutationCauchyScale = 1.0;
+    WeightMutationPolynomialEta = 20.0;
 }
 
 int Parameters::Load(std::ifstream& input)
@@ -566,10 +606,22 @@ bool Parameters::Validate(std::string* error) const
         return fail("MaxDepth exceeds the supported safe limit of 9");
     if (Width <= 0.0 || Height <= 0.0)
         return fail("Width and Height must be positive");
-    if (TournamentSelection && TournamentSize == 0)
+    if ((TournamentSelection || ParentSelectionMode == TOURNAMENT) &&
+        TournamentSize == 0)
         return fail(
             "TournamentSize must be greater than zero when tournament "
             "selection is enabled");
+    if (ParentSelectionMode < LEGACY_SELECTION ||
+        ParentSelectionMode > BOLTZMANN)
+    {
+        return fail("ParentSelectionMode is not a supported selection mode");
+    }
+    if (WeightMutationDistribution < UNIFORM_MUTATION ||
+        WeightMutationDistribution > POLYNOMIAL_MUTATION)
+    {
+        return fail(
+            "WeightMutationDistribution is not a supported mutation mode");
+    }
     if (DetectCompetetiveCoevolutionStagnation &&
         (KillWorstSpeciesEach <= 0 || KillWorstAge < 0))
     {
@@ -584,6 +636,10 @@ bool Parameters::Validate(std::string* error) const
         {"OverallMutationRate", OverallMutationRate},
         {"InterspeciesCrossoverRate", InterspeciesCrossoverRate},
         {"MultipointCrossoverRate", MultipointCrossoverRate},
+        {"SinglePointCrossoverRate", SinglePointCrossoverRate},
+        {"BlendCrossoverRate", BlendCrossoverRate},
+        {"SimulatedBinaryCrossoverRate",
+         SimulatedBinaryCrossoverRate},
         {"PreferFitterParentRate", PreferFitterParentRate},
         {"EliteFraction", EliteFraction},
         {"MutateAddNeuronProb", MutateAddNeuronProb},
@@ -637,6 +693,15 @@ bool Parameters::Validate(std::string* error) const
         if (!probability(item.first, item.second))
             return false;
     }
+    const double crossover_mode_total =
+        MultipointCrossoverRate + SinglePointCrossoverRate +
+        BlendCrossoverRate + SimulatedBinaryCrossoverRate;
+    if (!std::isfinite(crossover_mode_total) ||
+        crossover_mode_total > 1.0 + 1.0e-12)
+    {
+        return fail(
+            "crossover method probabilities must sum to at most 1");
+    }
 
     if (!finite_range("weight range", MinWeight, MaxWeight) ||
         !finite_range(
@@ -663,6 +728,9 @@ bool Parameters::Validate(std::string* error) const
         {"ActivationBMutationMaxPower", ActivationBMutationMaxPower},
         {"TimeConstantMutationMaxPower", TimeConstantMutationMaxPower},
         {"BiasMutationMaxPower", BiasMutationMaxPower},
+        {"CrossoverBlendAlpha", CrossoverBlendAlpha},
+        {"CrossoverSBXEta", CrossoverSBXEta},
+        {"WeightMutationPolynomialEta", WeightMutationPolynomialEta},
         {"DisjointCoeff", DisjointCoeff},
         {"ExcessCoeff", ExcessCoeff},
         {"ActivationADiffCoeff", ActivationADiffCoeff},
@@ -686,6 +754,23 @@ bool Parameters::Validate(std::string* error) const
             return fail(std::string(item.first) +
                         " must be finite and non-negative");
     }
+    if (!std::isfinite(RankSelectionPressure) ||
+        RankSelectionPressure < 1.0 ||
+        RankSelectionPressure > 2.0)
+    {
+        return fail("RankSelectionPressure must be between 1 and 2");
+    }
+    const std::pair<const char*, double> positive_values[] = {
+        {"RankSelectionExponent", RankSelectionExponent},
+        {"BoltzmannTemperature", BoltzmannTemperature},
+        {"WeightMutationSigma", WeightMutationSigma},
+        {"WeightMutationCauchyScale", WeightMutationCauchyScale}};
+    for (const auto& item : positive_values)
+    {
+        if (!std::isfinite(item.second) || item.second <= 0.0)
+            return fail(std::string(item.first) +
+                        " must be finite and positive");
+    }
     if (!std::isfinite(NoveltySearch_Pmin_lowering_multiplier) ||
         NoveltySearch_Pmin_lowering_multiplier <= 0.0 ||
         !std::isfinite(NoveltySearch_Pmin_raising_multiplier) ||
@@ -705,9 +790,21 @@ bool Parameters::Validate(std::string* error) const
             return fail(std::string(item.first) + " must be finite");
     }
 
-    double activation_total = 0.0;
-    for (std::size_t i = 26; i < std::size(probabilities); ++i)
-        activation_total += probabilities[i].second;
+    const double activation_total =
+        ActivationFunction_SignedSigmoid_Prob +
+        ActivationFunction_UnsignedSigmoid_Prob +
+        ActivationFunction_Tanh_Prob +
+        ActivationFunction_TanhCubic_Prob +
+        ActivationFunction_SignedStep_Prob +
+        ActivationFunction_UnsignedStep_Prob +
+        ActivationFunction_SignedGauss_Prob +
+        ActivationFunction_UnsignedGauss_Prob +
+        ActivationFunction_Abs_Prob +
+        ActivationFunction_SignedSine_Prob +
+        ActivationFunction_UnsignedSine_Prob +
+        ActivationFunction_Linear_Prob +
+        ActivationFunction_Relu_Prob +
+        ActivationFunction_Softplus_Prob;
     if ((MutateAddNeuronProb > 0.0 ||
          MutateNeuronActivationTypeProb > 0.0) &&
         activation_total <= 0.0)

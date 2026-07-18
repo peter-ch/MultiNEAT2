@@ -387,6 +387,15 @@ namespace NEAT
         // If fitness is equal, the smaller genome is assumed to be the better one
         Genome Mate(Genome &a_dad, bool a_averagemating, bool a_interspecies, RNG &a_RNG, Parameters &a_Parameters);
 
+        // Explicit additive crossover API. The historical Mate overload above
+        // remains the compatibility entry point.
+        Genome MateWithMode(
+            Genome &a_dad,
+            CrossoverMode a_mode,
+            bool a_interspecies,
+            RNG &a_RNG,
+            Parameters &a_Parameters);
+
 
         //////////
         // Utility

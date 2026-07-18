@@ -11,6 +11,10 @@ its established C++ and Python names wherever possible. Compatibility
 spellings such as `SetInputOutputDimentions`, `GetConnectionLenght`, and
 `Elitism` remain available alongside corrected names.
 
+The additions are source- and checkpoint-compatible. As with any C++ library
+whose public value types gain fields, applications linking a precompiled
+MultiNEAT binary must rebuild when upgrading to 2.1.
+
 ## Build
 
 Requirements:
@@ -34,6 +38,7 @@ Useful CMake options:
 | --- | --- | --- |
 | `MULTINEAT_BUILD_PYTHON` | `ON` | Build the `pymultineat` extension |
 | `MULTINEAT_BUILD_DEMO` | `ON` | Build the C++ XOR demo |
+| `MULTINEAT_BUILD_BENCHMARKS` | `OFF` | Build repeatable core microbenchmarks |
 | `BUILD_TESTING` | `ON` | Build and register regression tests |
 | `MULTINEAT_WARNINGS_AS_ERRORS` | `OFF` | Treat compiler warnings as errors |
 | `MULTINEAT_ENABLE_SANITIZERS` | `OFF` | Enable address and undefined-behavior sanitizers |
@@ -103,6 +108,79 @@ The Box2D and MuJoCo examples under `demos/` require their corresponding
 Gymnasium extras and visualization dependencies. They are not required by
 the core library.
 
+## Advanced evolutionary operators
+
+All new operators are opt-in. Default parameters preserve the historical
+MultiNEAT selection, crossover, and uniform weight-mutation behavior.
+
+Parent selection can be selected explicitly with
+`Parameters.ParentSelectionMode`:
+
+| Mode | Behavior |
+| --- | --- |
+| `LEGACY_SELECTION` | Existing truncation/roulette/tournament booleans |
+| `TRUNCATION` | Uniform sampling from the best `SurvivalRate` fraction |
+| `ROULETTE` | Shifted fitness-proportionate selection |
+| `RANK_LINEAR` | Baker linear ranking with configurable pressure |
+| `RANK_EXP` | Exponentially decaying rank selection |
+| `TOURNAMENT` | Best of `TournamentSize` random draws |
+| `STOCHASTIC` | Fitness-proportionate stochastic acceptance |
+| `BOLTZMANN` | Numerically stable softmax selection |
+
+Reproduction supports multipoint, average, single-point, BLX-alpha, and
+simulated-binary crossover. `MultipointCrossoverRate` keeps its original
+meaning; the new rate fields are additive, and remaining probability uses
+average crossover.
+
+Weight perturbation can use uniform, Gaussian, Cauchy, or bounded polynomial
+mutation:
+
+```python
+parameters = neat.Parameters()
+parameters.ParentSelectionMode = neat.RANK_EXP
+parameters.RankSelectionExponent = 3.0
+
+parameters.MultipointCrossoverRate = 0.4
+parameters.SinglePointCrossoverRate = 0.2
+parameters.BlendCrossoverRate = 0.2
+parameters.SimulatedBinaryCrossoverRate = 0.1
+
+parameters.WeightMutationDistribution = neat.GAUSSIAN_MUTATION
+parameters.WeightMutationSigma = 0.5
+```
+
+Direct experiments can use
+`Genome.MateWithMode(..., neat.SIMULATED_BINARY, ...)`; the historical
+`Genome.Mate(..., average_mating, ...)` signature remains unchanged.
+See [docs/ALGORITHMS.md](docs/ALGORITHMS.md) for formulas, tuning guidance,
+and compatibility details.
+
+## Visualization and analysis
+
+Install the optional visualization stack with:
+
+```sh
+python -m pip install -r requirements-visualization.txt
+```
+
+`neattools.py` retains its original helpers and now provides:
+
+- topology-, split-, coordinate-, spring-, and Kamada-Kawai layouts;
+- weight sign/magnitude encoding and curved recurrent connections;
+- activation and trait labels;
+- genome comparison and machine-readable topology statistics;
+- population/species dashboards and an `EvolutionTracker`;
+- static DOT, GraphML, GEXF, JSON, SVG, PNG, and PDF export;
+- optional interactive Plotly HTML graphs with rich hover data.
+
+```python
+from neattools import DrawGenome, DrawPopulation, InteractiveGenome
+
+DrawGenome(genome, layout="topology", show_activation=True)
+DrawPopulation(population)
+InteractiveGenome(genome).write_html("genome.html")
+```
+
 ## Persistence
 
 `Parameters`, `Genome`, `Species`, `InnovationDatabase`, `NeuralNetwork`,
@@ -139,10 +217,27 @@ archives, and all trait data must be preserved exactly.
 - RTRL supports multiple outputs and configurable learning rates. Its sparse
   topology update preserves the previous recurrent state and avoids repeated
   connection scans from the inner gradient loops.
+- `ActivateFast()` is the unchecked phenotype hot path and fuses signal
+  calculation with accumulation. `Activate()` remains the topology-validating
+  entry point. `ActivateSteps()` validates once (when requested) and advances
+  recurrent networks without repeated API crossings.
 
 Corrected convenience names such as `SetInputOutputDimensions()` and
 `GetConnectionLength()` are additive; historical misspellings remain
 available for downstream source compatibility.
+
+## Benchmarks
+
+Build and run the opt-in benchmark with:
+
+```sh
+cmake -S . -B build -DMULTINEAT_BUILD_BENCHMARKS=ON
+cmake --build build --config Release --parallel
+./build/multineat_benchmarks
+```
+
+It compares checked activation with the fused phenotype hot path on a dense
+network. Results depend on compiler, topology, and CPU.
 
 ## Project layout
 

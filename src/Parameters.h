@@ -15,6 +15,42 @@ namespace NEAT
 // forward
 class Genome;
 
+// Parent-selection algorithms. LEGACY_SELECTION preserves the historical
+// TruncationSelection/RouletteWheelSelection/TournamentSelection switches.
+// The remaining values make the previously advertised selection modes
+// explicit and mutually exclusive.
+enum SelectionMode
+{
+    LEGACY_SELECTION = -1,
+    TRUNCATION = 0,
+    ROULETTE,
+    RANK_LINEAR,
+    RANK_EXP,
+    TOURNAMENT,
+    STOCHASTIC,
+    BOLTZMANN
+};
+
+// Link-gene recombination used for matching innovations. The historical
+// Genome::Mate boolean maps to MULTIPOINT or AVERAGE.
+enum CrossoverMode
+{
+    MULTIPOINT = 0,
+    AVERAGE,
+    SINGLE_POINT,
+    BLEND,
+    SIMULATED_BINARY
+};
+
+// Distribution used when perturbing (rather than replacing) link weights.
+enum WeightMutationMode
+{
+    UNIFORM_MUTATION = 0,
+    GAUSSIAN_MUTATION,
+    CAUCHY_MUTATION,
+    POLYNOMIAL_MUTATION
+};
+
 //////////////////////////////////////////////
 // The NEAT Parameters class
 //////////////////////////////////////////////
@@ -437,6 +473,42 @@ public:
     double MutateNeuronTraitsProb;
     double MutateLinkTraitsProb;
     double MutateGenomeTraitsProb;
+
+    /////////////////////////////////////
+    // Advanced algorithm controls
+    /////////////////////////////////////
+
+    // LEGACY_SELECTION keeps all historical selection switches functional.
+    SelectionMode ParentSelectionMode;
+
+    // Baker linear-ranking pressure in [1, 2]. A value of 1 is uniform and
+    // 2 gives the strongest valid linear ranking pressure.
+    double RankSelectionPressure;
+
+    // Positive exponential decay applied to normalized rank.
+    double RankSelectionExponent;
+
+    // Positive softmax temperature for Boltzmann selection.
+    double BoltzmannTemperature;
+
+    // Additional crossover probabilities. MultipointCrossoverRate remains
+    // unchanged; any probability left over selects average crossover.
+    double SinglePointCrossoverRate;
+    double BlendCrossoverRate;
+    double SimulatedBinaryCrossoverRate;
+
+    // BLX-alpha expansion and SBX distribution index.
+    double CrossoverBlendAlpha;
+    double CrossoverSBXEta;
+
+    // The default UNIFORM_MUTATION exactly preserves historical mutation.
+    WeightMutationMode WeightMutationDistribution;
+
+    // Gaussian standard-deviation multiplier, Cauchy scale multiplier, and
+    // bounded polynomial-mutation distribution index.
+    double WeightMutationSigma;
+    double WeightMutationCauchyScale;
+    double WeightMutationPolynomialEta;
 
     /////////////////////////////////////
     // Constructors

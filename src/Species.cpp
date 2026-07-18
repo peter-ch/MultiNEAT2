@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <sstream>
@@ -38,6 +39,26 @@ namespace NEAT
                 weight -= minimum;
             }
         }
+    }
+
+    CrossoverMode SelectCrossoverMode(
+        const Parameters& parameters,
+        RNG& rng)
+    {
+        const double draw = rng.RandFloat();
+        double cumulative = parameters.MultipointCrossoverRate;
+        if (draw < cumulative)
+            return MULTIPOINT;
+        cumulative += parameters.SinglePointCrossoverRate;
+        if (draw < cumulative)
+            return SINGLE_POINT;
+        cumulative += parameters.BlendCrossoverRate;
+        if (draw < cumulative)
+            return BLEND;
+        cumulative += parameters.SimulatedBinaryCrossoverRate;
+        if (draw < cumulative)
+            return SIMULATED_BINARY;
+        return AVERAGE;
     }
 
     bool genome_greater(const Genome& ls, const Genome& rs)
@@ -160,11 +181,27 @@ namespace NEAT
             return (m_Individuals[t_Evaluated[0].first]);
         }
 
-        // Warning!!!! The individuals must be sorted by best fitness for this to work
+        const SelectionMode selection_mode =
+            a_Parameters.ParentSelectionMode;
+
+        // Explicit rank and truncation modes are robust even when called
+        // outside Epoch(), where the species may not have been sorted yet.
+        if (selection_mode == TRUNCATION ||
+            selection_mode == RANK_LINEAR ||
+            selection_mode == RANK_EXP)
+        {
+            std::stable_sort(
+                t_Evaluated.begin(),
+                t_Evaluated.end(),
+                idxfitnesspair_greater);
+        }
+
         int t_chosen_one = 0;
 
         // Truncation selection goes first if enabled
-        if (a_Parameters.TruncationSelection)
+        if ((selection_mode == LEGACY_SELECTION &&
+             a_Parameters.TruncationSelection) ||
+            selection_mode == TRUNCATION)
         {
             int t_num_parents = static_cast<int>(
                 a_Parameters.SurvivalRate *
@@ -180,6 +217,178 @@ namespace NEAT
             }
             // do truncation here, and other extra selections can be applied below
             t_Evaluated.resize(t_num_parents);
+        }
+
+        if (selection_mode != LEGACY_SELECTION)
+        {
+            const std::size_t candidate_count = t_Evaluated.size();
+            switch (selection_mode)
+            {
+            case TRUNCATION:
+                t_chosen_one = t_Evaluated[static_cast<std::size_t>(
+                    a_RNG.RandInt(
+                        0, static_cast<int>(candidate_count) - 1))].first;
+                break;
+
+            case ROULETTE:
+            {
+                std::vector<double> weights;
+                weights.reserve(candidate_count);
+                for (const auto& candidate : t_Evaluated)
+                    weights.push_back(candidate.second);
+                NormalizeSelectionWeights(weights);
+                t_chosen_one = t_Evaluated[static_cast<std::size_t>(
+                    a_RNG.Roulette(weights))].first;
+                break;
+            }
+
+            case RANK_LINEAR:
+            {
+                std::vector<double> weights(candidate_count, 1.0);
+                if (candidate_count > 1)
+                {
+                    const double count =
+                        static_cast<double>(candidate_count);
+                    const double pressure =
+                        a_Parameters.RankSelectionPressure;
+                    for (std::size_t rank = 0;
+                         rank < candidate_count;
+                         ++rank)
+                    {
+                        weights[rank] =
+                            (2.0 - pressure) / count +
+                            2.0 *
+                                static_cast<double>(
+                                    candidate_count - rank - 1) *
+                                (pressure - 1.0) /
+                                (count * (count - 1.0));
+                    }
+                }
+                t_chosen_one = t_Evaluated[static_cast<std::size_t>(
+                    a_RNG.Roulette(weights))].first;
+                break;
+            }
+
+            case RANK_EXP:
+            {
+                std::vector<double> weights(candidate_count, 1.0);
+                if (candidate_count > 1)
+                {
+                    const double denominator =
+                        static_cast<double>(candidate_count - 1);
+                    for (std::size_t rank = 0;
+                         rank < candidate_count;
+                         ++rank)
+                    {
+                        weights[rank] = std::exp(
+                            -a_Parameters.RankSelectionExponent *
+                            static_cast<double>(rank) / denominator);
+                    }
+                }
+                t_chosen_one = t_Evaluated[static_cast<std::size_t>(
+                    a_RNG.Roulette(weights))].first;
+                break;
+            }
+
+            case TOURNAMENT:
+            {
+                std::size_t winner = static_cast<std::size_t>(
+                    a_RNG.RandInt(
+                        0, static_cast<int>(candidate_count) - 1));
+                for (unsigned int draw = 1;
+                     draw < a_Parameters.TournamentSize;
+                     ++draw)
+                {
+                    const std::size_t challenger =
+                        static_cast<std::size_t>(a_RNG.RandInt(
+                            0,
+                            static_cast<int>(candidate_count) - 1));
+                    if (t_Evaluated[challenger].second >
+                        t_Evaluated[winner].second)
+                    {
+                        winner = challenger;
+                    }
+                }
+                t_chosen_one = t_Evaluated[winner].first;
+                break;
+            }
+
+            case STOCHASTIC:
+            {
+                // Fitness-proportionate stochastic acceptance avoids a
+                // cumulative scan in the common case while retaining roulette
+                // probabilities exactly.
+                std::vector<double> weights;
+                weights.reserve(candidate_count);
+                for (const auto& candidate : t_Evaluated)
+                    weights.push_back(candidate.second);
+                NormalizeSelectionWeights(weights);
+                const double maximum =
+                    *std::max_element(weights.begin(), weights.end());
+                if (maximum <= 0.0)
+                {
+                    t_chosen_one = t_Evaluated[static_cast<std::size_t>(
+                        a_RNG.RandInt(
+                            0,
+                            static_cast<int>(candidate_count) - 1))].first;
+                    break;
+                }
+                bool accepted = false;
+                const std::size_t maximum_attempts =
+                    std::max<std::size_t>(32, candidate_count * 4);
+                for (std::size_t attempt = 0;
+                     attempt < maximum_attempts;
+                     ++attempt)
+                {
+                    const std::size_t candidate =
+                        static_cast<std::size_t>(a_RNG.RandInt(
+                            0,
+                            static_cast<int>(candidate_count) - 1));
+                    if (a_RNG.RandFloat() <
+                        weights[candidate] / maximum)
+                    {
+                        t_chosen_one = t_Evaluated[candidate].first;
+                        accepted = true;
+                        break;
+                    }
+                }
+                if (!accepted)
+                {
+                    t_chosen_one = t_Evaluated[static_cast<std::size_t>(
+                        a_RNG.Roulette(weights))].first;
+                }
+                break;
+            }
+
+            case BOLTZMANN:
+            {
+                double maximum_fitness =
+                    t_Evaluated.front().second;
+                for (const auto& candidate : t_Evaluated)
+                {
+                    maximum_fitness =
+                        std::max(maximum_fitness, candidate.second);
+                }
+                std::vector<double> weights;
+                weights.reserve(candidate_count);
+                for (const auto& candidate : t_Evaluated)
+                {
+                    weights.push_back(std::exp(
+                        (candidate.second - maximum_fitness) /
+                        a_Parameters.BoltzmannTemperature));
+                }
+                t_chosen_one = t_Evaluated[static_cast<std::size_t>(
+                    a_RNG.Roulette(weights))].first;
+                break;
+            }
+
+            case LEGACY_SELECTION:
+            default:
+                throw std::invalid_argument(
+                    "Unsupported explicit parent selection mode");
+            }
+
+            return m_Individuals[static_cast<std::size_t>(t_chosen_one)];
         }
 
         if (a_Parameters.TournamentSelection && (!a_Parameters.RouletteWheelSelection)) // pure tournament without roulette
@@ -612,16 +821,14 @@ namespace NEAT
                                 t_interspecies = false;
                             }
 
-                            // OK we have both mom and dad so mate them
-                            // Choose randomly one of two types of crossover
-                            if (a_RNG.RandFloat() < a_Parameters.MultipointCrossoverRate)
-                            {
-                                t_baby = t_mom.Mate(t_dad, false, t_interspecies, a_RNG, a_Parameters);
-                            }
-                            else
-                            {
-                                t_baby = t_mom.Mate(t_dad, true, t_interspecies, a_RNG, a_Parameters);
-                            }
+                            // OK we have both mom and dad so mate them.
+                            t_baby = t_mom.MateWithMode(
+                                t_dad,
+                                SelectCrossoverMode(
+                                    a_Parameters, a_RNG),
+                                t_interspecies,
+                                a_RNG,
+                                a_Parameters);
 
                             t_mated = true;
                         }
@@ -936,16 +1143,13 @@ namespace NEAT
                         t_interspecies = false;
                     }
 
-                    // OK we have both mom and dad so mate them
-                    // Choose randomly one of two types of crossover
-                    if (a_RNG.RandFloat() < a_Parameters.MultipointCrossoverRate)
-                    {
-                        t_baby = t_mom.Mate(t_dad, false, t_interspecies, a_RNG, a_Parameters);
-                    }
-                    else
-                    {
-                        t_baby = t_mom.Mate(t_dad, true, t_interspecies, a_RNG, a_Parameters);
-                    }
+                    // OK we have both mom and dad so mate them.
+                    t_baby = t_mom.MateWithMode(
+                        t_dad,
+                        SelectCrossoverMode(a_Parameters, a_RNG),
+                        t_interspecies,
+                        a_RNG,
+                        a_Parameters);
 
 #ifdef VDEBUG
                     std::cout << "mated baby\n";

@@ -100,6 +100,32 @@ PYBIND11_MODULE(pymultineat, m) {
         .value("BLENDED", NEAT::BLENDED)
         .export_values();
 
+    py::enum_<NEAT::SelectionMode>(m, "SelectionMode")
+        .value("LEGACY_SELECTION", NEAT::LEGACY_SELECTION)
+        .value("TRUNCATION", NEAT::TRUNCATION)
+        .value("ROULETTE", NEAT::ROULETTE)
+        .value("RANK_LINEAR", NEAT::RANK_LINEAR)
+        .value("RANK_EXP", NEAT::RANK_EXP)
+        .value("TOURNAMENT", NEAT::TOURNAMENT)
+        .value("STOCHASTIC", NEAT::STOCHASTIC)
+        .value("BOLTZMANN", NEAT::BOLTZMANN)
+        .export_values();
+
+    py::enum_<NEAT::CrossoverMode>(m, "CrossoverMode")
+        .value("MULTIPOINT", NEAT::MULTIPOINT)
+        .value("AVERAGE", NEAT::AVERAGE)
+        .value("SINGLE_POINT", NEAT::SINGLE_POINT)
+        .value("BLEND", NEAT::BLEND)
+        .value("SIMULATED_BINARY", NEAT::SIMULATED_BINARY)
+        .export_values();
+
+    py::enum_<NEAT::WeightMutationMode>(m, "WeightMutationMode")
+        .value("UNIFORM_MUTATION", NEAT::UNIFORM_MUTATION)
+        .value("GAUSSIAN_MUTATION", NEAT::GAUSSIAN_MUTATION)
+        .value("CAUCHY_MUTATION", NEAT::CAUCHY_MUTATION)
+        .value("POLYNOMIAL_MUTATION", NEAT::POLYNOMIAL_MUTATION)
+        .export_values();
+
 
     // ========================
     // Bindings for traits-related classes
@@ -283,6 +309,7 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("Mutate_RemoveSimpleNeuron", &NEAT::Genome::Mutate_RemoveSimpleNeuron)
         .def("Cleanup", &NEAT::Genome::Cleanup)
         .def("Mate", &NEAT::Genome::Mate)
+        .def("MateWithMode", &NEAT::Genome::MateWithMode)
         .def("SortGenes", &NEAT::Genome::SortGenes)
         .def("Save",
              py::overload_cast<const char*>(&NEAT::Genome::Save))
@@ -409,6 +436,11 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("InitRTRLMatrix", &NEAT::NeuralNetwork::InitRTRLMatrix)
         .def("ActivateFast", &NEAT::NeuralNetwork::ActivateFast)
         .def("Activate", &NEAT::NeuralNetwork::Activate)
+        .def(
+            "ActivateSteps",
+            &NEAT::NeuralNetwork::ActivateSteps,
+            py::arg("steps"),
+            py::arg("fast") = true)
         .def("ActivateUseInternalBias", &NEAT::NeuralNetwork::ActivateUseInternalBias)
         .def("ActivateLeaky", &NEAT::NeuralNetwork::ActivateLeaky)
         .def("RTRL_update_gradients",
@@ -632,6 +664,19 @@ PYBIND11_MODULE(pymultineat, m) {
             .def_readwrite("MutateNeuronTraitsProb", &NEAT::Parameters::MutateNeuronTraitsProb)
             .def_readwrite("MutateLinkTraitsProb", &NEAT::Parameters::MutateLinkTraitsProb)
             .def_readwrite("MutateGenomeTraitsProb", &NEAT::Parameters::MutateGenomeTraitsProb)
+            .def_readwrite("ParentSelectionMode", &NEAT::Parameters::ParentSelectionMode)
+            .def_readwrite("RankSelectionPressure", &NEAT::Parameters::RankSelectionPressure)
+            .def_readwrite("RankSelectionExponent", &NEAT::Parameters::RankSelectionExponent)
+            .def_readwrite("BoltzmannTemperature", &NEAT::Parameters::BoltzmannTemperature)
+            .def_readwrite("SinglePointCrossoverRate", &NEAT::Parameters::SinglePointCrossoverRate)
+            .def_readwrite("BlendCrossoverRate", &NEAT::Parameters::BlendCrossoverRate)
+            .def_readwrite("SimulatedBinaryCrossoverRate", &NEAT::Parameters::SimulatedBinaryCrossoverRate)
+            .def_readwrite("CrossoverBlendAlpha", &NEAT::Parameters::CrossoverBlendAlpha)
+            .def_readwrite("CrossoverSBXEta", &NEAT::Parameters::CrossoverSBXEta)
+            .def_readwrite("WeightMutationDistribution", &NEAT::Parameters::WeightMutationDistribution)
+            .def_readwrite("WeightMutationSigma", &NEAT::Parameters::WeightMutationSigma)
+            .def_readwrite("WeightMutationCauchyScale", &NEAT::Parameters::WeightMutationCauchyScale)
+            .def_readwrite("WeightMutationPolynomialEta", &NEAT::Parameters::WeightMutationPolynomialEta)
             .def(py::pickle(
                 [](const NEAT::Parameters &parameters) {
                     return parameters.Serialize();
@@ -765,6 +810,16 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("RandFloat", &NEAT::RNG::RandFloat)
         .def("RandFloatSigned", &NEAT::RNG::RandFloatSigned)
         .def("RandGaussSigned", &NEAT::RNG::RandGaussSigned)
+        .def(
+            "RandNormal",
+            &NEAT::RNG::RandNormal,
+            py::arg("mean") = 0.0,
+            py::arg("standard_deviation") = 1.0)
+        .def(
+            "RandCauchy",
+            &NEAT::RNG::RandCauchy,
+            py::arg("location") = 0.0,
+            py::arg("scale") = 1.0)
         .def("Roulette", &NEAT::RNG::Roulette)
         .def("Serialize", &NEAT::RNG::Serialize)
         .def("Deserialize", &NEAT::RNG::Deserialize)

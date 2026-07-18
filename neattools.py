@@ -204,7 +204,7 @@ def get_topologically_sorted_nodes(genome):
         G = Genome2NX(genome)
         sorted_nodes = list(nx.topological_sort(G))
         return sorted_nodes
-    except Exception as e:
+    except Exception:
         print("Topological sort failed (graph not a DAG). Falling back to sorting by y position.")
         pos = compute_node_positions(genome)
         sorted_nodes = sorted(pos.keys(), key=lambda nid: pos[nid][1], reverse=True)
@@ -292,7 +292,7 @@ def DrawGenome(genome, ax=None, node_size=100, with_edge_labels=False):
             ttype = "Bias"
         else:
             ttype = str(node_type)
-        labels[node] = f"{node}"
+        labels[node] = f"{node}\n{ttype}"
     nx.draw_networkx_labels(G, pos, labels=labels, font_size=8, ax=ax)
     
     if with_edge_labels:

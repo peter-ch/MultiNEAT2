@@ -3,6 +3,10 @@
 
 #include <vector>
 #include <float.h>
+#include <limits>
+#include <memory>
+#include <stdexcept>
+#include <string>
 
 #include "Innovation.h"
 #include "Genome.h"
@@ -40,25 +44,25 @@ private:
     InnovationDatabase m_InnovationDatabase;
 
     // next genome ID
-    unsigned int m_NextGenomeID;
+    unsigned int m_NextGenomeID = 0;
 
     // next species ID
-    unsigned int m_NextSpeciesID;
+    unsigned int m_NextSpeciesID = 0;
 
     ////////////////////////////
     // Phased searching members
 
     // The current mode of search
-    SearchMode m_SearchMode;
+    SearchMode m_SearchMode = BLENDED;
 
     // The current Mean Population Complexity
-    double m_CurrentMPC;
+    double m_CurrentMPC = 0.0;
 
     // The MPC from the previous generation (for comparison)
-    double m_OldMPC;
+    double m_OldMPC = 0.0;
 
     // The base MPC (for switching between complexifying/simplifying phase)
-    double m_BaseMPC;
+    double m_BaseMPC = 0.0;
 
     // Separates the population into species based on compatibility distance
     void Speciate();
@@ -79,20 +83,20 @@ private:
     void CalculateMPC();
 
     // best fitness ever achieved
-    double m_BestFitnessEver;
+    double m_BestFitnessEver = std::numeric_limits<double>::lowest();
 
     // Keep a local copy of the best ever genome found in the run
     Genome m_BestGenome;
     Genome m_BestGenomeEver;
 
     // Number of generations since the best fitness changed
-    unsigned int m_GensSinceBestFitnessLastChanged;
+    unsigned int m_GensSinceBestFitnessLastChanged = 0;
 
     // Number of evaluations since the best fitness changed
-    unsigned int m_EvalsSinceBestFitnessLastChanged;
+    unsigned int m_EvalsSinceBestFitnessLastChanged = 0;
 
     // How many generations passed until the last change of MPC
-    unsigned int m_GensSinceMPCLastChanged;
+    unsigned int m_GensSinceMPCLastChanged = 0;
 
     // The initial list of genomes
     std::vector<Genome> m_Genomes;
@@ -109,12 +113,12 @@ public:
     Parameters m_Parameters;
 
     // Current generation
-    unsigned int m_Generation;
+    unsigned int m_Generation = 0;
 
     // The list of species
     std::vector<Species> m_Species;
     
-    int m_ID;
+    int m_ID = 0;
 
 
     ////////////////////////////
@@ -131,7 +135,7 @@ public:
     // Loads a population from a file.
     Population(const std::string a_FileName);
 
-    Population() {};
+    Population() = default;
 
     ////////////////////////////
     // Destructor
@@ -151,7 +155,8 @@ public:
     	unsigned int num=0;
     	for(unsigned int i=0; i<m_Species.size(); i++)
     	{
-    		num += m_Species[i].m_Individuals.size();
+            num += static_cast<unsigned int>(
+                m_Species[i].m_Individuals.size());
     	}
     	return num;
     }
@@ -160,22 +165,32 @@ public:
     double GetBestFitnessEver() const { return m_BestFitnessEver; }
     Genome GetBestGenome() const
     {
-        double best = std::numeric_limits<double>::min();
+        if (m_Species.empty())
+            throw std::runtime_error(
+                "Population::GetBestGenome: population is empty.");
+
+        double best = std::numeric_limits<double>::lowest();
         int idx_species = 0;
         int idx_genome = 0;
+        bool found = false;
         for(unsigned int i=0; i<m_Species.size(); i++)
         {
             for(unsigned int j=0; j<m_Species[i].m_Individuals.size(); j++)
             {
-                if (m_Species[i].m_Individuals[j].GetFitness() > best)
+                if (!found ||
+                    m_Species[i].m_Individuals[j].GetFitness() > best)
                 {
                     best = m_Species[i].m_Individuals[j].GetFitness();
                     idx_species = i;
                     idx_genome = j;
+                    found = true;
                 }
             }
         }
 
+        if (!found)
+            throw std::runtime_error(
+                "Population::GetBestGenome: population has no genomes.");
         return m_Species[idx_species].m_Individuals[idx_genome];
     }
 
@@ -195,6 +210,9 @@ public:
 
     InnovationDatabase& AccessInnovationDatabase() { return m_InnovationDatabase; }
 
+    // Checks population-wide structural and ID invariants.
+    bool Validate(std::string* error = nullptr) const;
+
     // Sorts each species's genomes by fitness
     void Sort();
 
@@ -203,6 +221,10 @@ public:
 
     // Saves the whole population to a file
     void Save(const char* a_FileName);
+
+    // Saves a complete resumable checkpoint. Save() retains the historical
+    // parameters/innovations/genomes format for existing consumers.
+    void SaveState(const char* a_FileName) const;
 
     //////////////////////
     std::vector<Species> m_TempSpecies; // useful in reproduction
@@ -231,7 +253,7 @@ public:
     // Useful in realtime when the compatibility treshold changes
     void ReassignSpecies(int a_genome_idx);
 
-    unsigned int m_NumEvaluations;
+    unsigned int m_NumEvaluations = 0;
 
 
 
@@ -240,12 +262,17 @@ public:
 
     // A pointer to the archive of PhenotypeBehaviors
     // Necessary to contain derived custom classes.
-    std::vector< PhenotypeBehavior >* m_BehaviorArchive;
+    std::vector< PhenotypeBehavior >* m_BehaviorArchive = nullptr;
 
     // Call this function to allocate memory for your custom
     // behaviors. This initializes everything.
     void InitPhenotypeBehaviorData(std::vector< PhenotypeBehavior >* a_population, 
                                    std::vector< PhenotypeBehavior >* a_archive);
+
+    // Ownership-safe overload for language bindings and modern C++ callers.
+    void InitPhenotypeBehaviorData(
+        const std::vector<std::shared_ptr<PhenotypeBehavior>>& a_population);
+    const std::vector<PhenotypeBehavior>& GetBehaviorArchive() const;
 
     // This is the main method performing novelty search.
     // Performs one reproduction and assigns novelty scores
@@ -258,11 +285,15 @@ public:
     double ComputeSparseness(Genome& genome);
 
     // counters for archive stagnation
-    unsigned int m_GensSinceLastArchiving;
-    unsigned int m_QuickAddCounter;
+    unsigned int m_GensSinceLastArchiving = 0;
+    unsigned int m_QuickAddCounter = 0;
 
     std::string Serialize() const;
     static Population Deserialize(const std::string &data);
+
+private:
+    std::vector<std::shared_ptr<PhenotypeBehavior>> m_OwnedBehaviorData;
+    std::vector<PhenotypeBehavior> m_OwnedBehaviorArchive;
         
     };
 

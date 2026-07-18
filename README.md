@@ -1,346 +1,133 @@
 # MultiNEAT2
 
-MultiNEAT2 is a powerful, open-source C++ implementation of NEAT (NeuroEvolution of Augmenting Topologies) with Python bindings. MultiNEAT2 evolves neural networks by gradually complexifying their topology while optimizing connection weights. The project features a full C++ library (with modern C++17 features) plus a Python module (via pybind11) that lets you experiment with neuroevolution, run training simulations (for example on the XOR problem), and visualize results using networkx and matplotlib.
+MultiNEAT2 is a C++17 implementation of NEAT (NeuroEvolution of
+Augmenting Topologies) with optional Python bindings. It includes
+speciation, structural and trait mutation, recurrent networks, phased
+search, novelty search, HyperNEAT substrates, and ES-HyperNEAT parameters.
 
-I named this MultiNEAT2 to keep the original MultiNEAT intact. Development of the original library is shutting down and work continues on this new project.
+This repository continues the original MultiNEAT codebase while retaining
+its established C++ and Python names wherever possible. Compatibility
+spellings such as `SetInputOutputDimentions`, `GetConnectionLenght`, and
+`Elitism` remain available alongside corrected names.
 
----
+## Build
 
-## Key Features
+Requirements:
 
-- **Complete NEAT Implementation**: Full implementation of the NEAT algorithm including speciation, dynamic compatibility threshold adjustment, genome mating and mutation operators, and innovation tracking.
-- **Advanced Evolution Strategies**: Support for Phased Searching, Novelty Search, and ES-HyperNEAT extensions.
-- **Modular C++ Architecture**: Clean separation of concerns with dedicated modules for Genome, Population, Species, NeuralNetwork, Innovation, Traits, and Utilities.
-- **High-Performance Python Bindings**: Seamless Python integration via pybind11 with the `pymultineat` module for experimentation and visualization.
-- **Physics Environment Integration**: Pre-built demos for Box2D and MuJoCo physics environments including Lunar Lander, Bipedal Walker, and Humanoid control.
-- **Comprehensive Visualization**: Advanced network visualization tools with `neattools.py` for analyzing genome structure and evolution progress.
-- **Parallel Evaluation**: Built-in support for multiprocessing to accelerate fitness evaluation in computationally intensive environments.
+- CMake 3.15 or newer
+- A C++17 compiler (recent GCC, Clang, or MSVC)
+- Python development files and pybind11 when building `pymultineat`
 
----
+Configure, build, and test:
 
-## Project Structure
-
-### Core C++ Components
-- **`src/`** - Main C++ source code directory
-  - *Genome.cpp/h*: Genome representation and manipulation
-  - *Species.cpp/h*: Speciation algorithms and species management
-  - *Population.cpp/h*: Population-level evolutionary operations
-  - *NeuralNetwork.cpp/h*: Phenotype construction and activation
-  - *Innovation.cpp/h*: Innovation tracking system
-  - *Traits.cpp/h*: Trait parameter management
-  - *Utils.cpp/h*: Utility functions and mathematical operations
-  - *Random.cpp/h*: Random number generation
-  - *Substrate.cpp/h*: HyperNEAT substrate definitions
-  - *Bindings.cpp*: pybind11 interface definitions
-  - *Assert.h*: Debug assertion macros
-  - *Main.cpp*: Entry point for C++ demonstrations
-
-### Python Interface
-- **`pymultineat`**: Python module exposing core C++ classes via pybind11
-- **`neattools.py`**: Comprehensive utility library for genome analysis and visualization
-
-### Demonstration Scripts
-- **`demos/xor.py`**: Classic XOR problem demonstration
-- **`demos/box2d/`**: Physics-based environments using Box2D
-  - *lunar_lander_box2d.py*: Lunar Lander control
-  - *bipedal_walker_box2d.py*: Bipedal locomotion
-  - *car_racing_box2d.py*: Car racing challenge
-- **`demos/mujoco/`**: Advanced physics environments using MuJoCo
-  - *humanoid_mujoco.py*: Humanoid control
-  - *ant_mujoco.py*: Quadrupedal locomotion
-  - *halfcheetah_mujoco.py*: Fast bipedal running
-
----
-
-## System Requirements
-
-### Minimum Requirements
-- **Operating System**: Windows 10+, macOS 10.14+, or Linux (Ubuntu 18.04+)
-- **C++ Compiler**: Compiler supporting C++17 (GCC 7+, Clang 6+, or MSVC 2017+)
-- **CMake**: Version 3.10 or later
-- **Python**: Python 3.7+ with pip
-
-### Python Dependencies
-```bash
-pip install pybind11 networkx matplotlib gymnasium pygame tqdm numpy
+```sh
+python -m pip install pybind11
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake --build build --config Release --parallel
+ctest --test-dir build -C Release --output-on-failure
 ```
 
-### Physics Engine Dependencies (Optional)
-For Box2D and MuJoCo demos:
-```bash
-# Box2D environments
-pip install Box2D
+Useful CMake options:
 
-# MuJoCo environments (requires MuJoCo license)
-pip install mujoco
+| Option | Default | Purpose |
+| --- | --- | --- |
+| `MULTINEAT_BUILD_PYTHON` | `ON` | Build the `pymultineat` extension |
+| `MULTINEAT_BUILD_DEMO` | `ON` | Build the C++ XOR demo |
+| `BUILD_TESTING` | `ON` | Build and register regression tests |
+| `MULTINEAT_WARNINGS_AS_ERRORS` | `OFF` | Treat compiler warnings as errors |
+
+For a C++-only build:
+
+```sh
+cmake -S . -B build -DMULTINEAT_BUILD_PYTHON=OFF
+cmake --build build --config Release --parallel
 ```
 
----
+The Python extension is created in the selected build configuration
+directory. Add that directory to `PYTHONPATH`, install the CMake project,
+or copy the extension into your environment before importing it.
 
-## Build Instructions
+## Install and consume from CMake
 
-### Windows (Visual Studio)
-```bash
-git clone https://github.com/peter-ch/MultiNEAT2
-cd MultiNEAT2
-
-# Create build directory
-mkdir build
-cd build
-
-# Configure with Visual Studio generator
-cmake .. -G "Visual Studio 17 2022" -A x64
-
-# Build using Visual Studio or command line
-cmake --build . --config Release
+```sh
+cmake --install build --config Release --prefix /your/install/prefix
 ```
 
-### Windows (MinGW/Ninja)
-```bash
-git clone https://github.com/peter-ch/MultiNEAT2
-cd MultiNEAT2
+Downstream projects can use the exported target:
 
-# Create build directory
-mkdir build
-cd build
-
-# Configure with Ninja generator
-cmake .. -G "Ninja" -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
-
-# Build
-cmake --build .
+```cmake
+find_package(MultiNEAT 2 CONFIG REQUIRED)
+target_link_libraries(your_target PRIVATE MultiNEAT::multineat)
 ```
 
-### Linux/macOS
-```bash
-git clone https://github.com/peter-ch/MultiNEAT2
-cd MultiNEAT2
+Point `CMAKE_PREFIX_PATH` at the chosen install prefix if it is not a
+standard system location.
 
-# Create build directory
-mkdir build
-cd build
+## Python example
 
-# Configure
-cmake ..
+```python
+import time
+import pymultineat as neat
 
-# Build
-make -j$(nproc)
+parameters = neat.Parameters()
+parameters.PopulationSize = 150
+
+initial = neat.GenomeInitStruct()
+initial.NumInputs = 3       # two inputs plus the bias neuron
+initial.NumOutputs = 1
+initial.OutputActType = neat.UNSIGNED_SIGMOID
+
+seed = neat.Genome(parameters, initial)
+population = neat.Population(seed, parameters, True, 1.0, int(time.time()))
+
+for _ in range(100):
+    for species in population.m_Species:
+        for genome in species.m_Individuals:
+            network = neat.NeuralNetwork()
+            genome.BuildPhenotype(network)
+            # Evaluate the network here. Negative fitness values are supported.
+            genome.SetFitness(evaluate(network))
+            genome.SetEvaluated()
+    population.Epoch()
 ```
 
----
+Run the self-contained XOR example with:
 
-## Parameter Reference
-
-The `Parameters` class controls all aspects of the NEAT algorithm. Below are key parameters organized by category:
-
-### Population & Speciation
-| Parameter | Default | Description |
-|---------|--------|------------|
-| `PopulationSize` | 150 | Number of genomes in the population |
-| `Speciation` | true | Enable species formation |
-| `DynamicCompatibility` | true | Automatically adjust compatibility threshold |
-| `MinSpecies` | 2 | Minimum number of species |
-| `MaxSpecies` | 10 | Maximum number of species |
-| `CompatTreshold` | 2.0 | Compatibility threshold for speciation |
-| `SurvivalRate` | 0.2 | Fraction of best individuals that reproduce |
-
-### Mutation Operators
-| Parameter | Default | Description |
-|---------|--------|------------|
-| `MutateAddNeuronProb` | 0.01 | Probability of adding a neuron |
-| `MutateAddLinkProb` | 0.1 | Probability of adding a link |
-| `MutateRemLinkProb` | 0.0 | Probability of removing a link |
-| `RecurrentProb` | 0.0 | Probability of creating recurrent connections |
-| `OverallMutationRate` | 0.3 | Probability of mutation after crossover |
-| `WeightMutationRate` | 0.85 | Probability of mutating a weight |
-| `WeightMutationMaxPower` | 0.5 | Maximum weight perturbation |
-
-### Compatibility Calculation
-| Parameter | Default | Weight |
-|---------|--------|--------|
-| `ExcessCoeff` | 1.0 | Excess genes importance |
-| `DisjointCoeff` | 1.0 | Disjoint genes importance |
-| `WeightDiffCoeff` | 0.4 | Weight difference importance |
-| `ActivationFunctionDiffCoeff` | 0.0 | Activation function difference |
-
-### Age-Based Parameters
-| Parameter | Default | Description |
-|---------|--------|------------|
-| `YoungAgeTreshold` | 15 | Age threshold for young species |
-| `YoungAgeFitnessBoost` | 1.0 | Fitness boost for young species |
-| `OldAgeTreshold` | 35 | Age threshold for old species |
-| `OldAgePenalty` | 0.0 | Penalty multiplier for old species |
-| `SpeciesMaxStagnation` | 15 | Generations without improvement before penalty |
-
-### Activation Functions
-| Function | Probability | Description |
-|---------|------------|------------|
-| `UNSIGNED_SIGMOID` | 1.0 | Standard sigmoid (0-1) |
-| `TANH` | 0.0 | Hyperbolic tangent (-1 to 1) |
-| `SIGNED_SIGMOID` | 0.0 | Sigmoid (-1 to 1) |
-| `LINEAR` | 0.0 | Linear activation |
-| `RELU` | 0.0 | Rectified Linear Unit |
-
----
-
-## Usage Examples
-
-### Running Demos
-
-#### XOR Problem (Basic)
-```bash
+```sh
 python demos/xor.py
 ```
 
-#### Lunar Lander (Box2D)
-```bash
-# Serial evaluation (slower, easier to debug)
-python demos/box2d/lunar_lander_box2d.py --serial
+The Box2D and MuJoCo examples under `demos/` require their corresponding
+Gymnasium extras and visualization dependencies. They are not required by
+the core library.
 
-# Parallel evaluation (faster)
-python demos/box2d/lunar_lander_box2d.py
-```
+## Persistence
 
-#### Humanoid Control (MuJoCo)
-```bash
-python demos/mujoco/humanoid_mujoco.py --serial
-```
+`Parameters`, `Genome`, `Species`, `InnovationDatabase`, `NeuralNetwork`,
+and `Population` provide round-trippable serialization and Python pickle
+support.
 
-### Custom Implementation
+For a complete resumable population checkpoint:
 
 ```python
-import pymultineat as pnt
-from neattools import DrawGenome, print_genome_summary
-import time
-
-def custom_fitness_function(genome):
-    # Create neural network phenotype
-    nn = pnt.NeuralNetwork()
-    genome.BuildPhenotype(nn)
-    
-    # Evaluate on your custom task
-    total_error = 0.0
-    # ... your evaluation logic here ...
-    
-    # Return non-negative fitness
-    fitness = 1.0 / (1.0 + total_error)
-    return fitness
-
-def main():
-    # Configure NEAT parameters
-    params = pnt.Parameters()
-    params.PopulationSize = 200
-    params.MutateAddNeuronProb = 0.02
-    params.MutateAddLinkProb = 0.15
-    params.RecurrentProb = 0.3
-    
-    # Initialize genome structure
-    init_struct = pnt.GenomeInitStruct()
-    init_struct.NumInputs = 8  # Adjust for your problem
-    init_struct.NumOutputs = 2
-    init_struct.NumHidden = 0
-    init_struct.SeedType = pnt.GenomeSeedType.PERCEPTRON
-    init_struct.OutputActType = pnt.TANH
-    
-    # Create population
-    genome_prototype = pnt.Genome(params, init_struct)
-    pop = pnt.Population(genome_prototype, params, True, 1.0, int(time.time()))
-    
-    # Evolution loop
-    for generation in range(1000):
-        # Evaluate all genomes
-        for species in pop.m_Species:
-            for individual in species.m_Individuals:
-                fitness = custom_fitness_function(individual)
-                individual.SetFitness(fitness)
-        
-        # Get best genome
-        best_genome = pop.GetBestGenome()
-        print(f"Generation {generation}: {best_genome.GetFitness()}")
-        
-        # Advance generation
-        pop.Epoch()
-    
-    # Visualize result
-    DrawGenome(best_genome)
-    print_genome_summary(best_genome)
-
-if __name__ == "__main__":
-    main()
+population.SaveState("experiment.state")
+population = neat.Population("experiment.state")
 ```
 
----
+The older `Population.Save()` method deliberately retains its historical
+parameters/innovations/genomes file format for existing applications.
+Use `SaveState()` when generation counters, RNG state, species state,
+archives, and all trait data must be preserved exactly.
 
-## Advanced Features
+## Project layout
 
-### Parallel Evaluation
-MultiNEAT2 supports multiprocessing for faster fitness evaluation:
-
-```python
-import multiprocessing
-from tqdm import tqdm
-
-def init_worker():
-    global worker_env
-    worker_env = gym.make('LunarLander-v3')
-
-def evaluate_genome_parallel(genome):
-    return evaluate_genome(genome, env=worker_env)
-
-# In your main loop:
-with multiprocessing.Pool(processes=8, initializer=init_worker) as pool:
-    fitnesses = pool.map(evaluate_genome_parallel, genomes)
-```
-
-### Network Visualization
-The `neattools.py` module provides comprehensive visualization:
-
-```python
-from neattools import DrawGenome, DrawGenomes, get_layered_nodes
-
-# Draw single genome
-DrawGenome(best_genome)
-
-# Draw multiple genomes in grid
-DrawGenomes([genome1, genome2, genome3])
-
-# Analyze network structure
-layers = get_layered_nodes(best_genome)
-print("Network layers:", layers)
-```
-
-### Genome Analysis
-Detailed genome inspection tools:
-
-```python
-from neattools import print_genome_summary, narrate_traits
-
-# Print basic statistics
-print_genome_summary(genome)
-
-# Detailed trait analysis
-narrate_traits(genome)
-
-# Export to Graphviz format
-export_genome_graph(genome, "network.dot")
-```
-
----
-
-## Troubleshooting
-
-### Common Build Issues
-- **"pybind11 not found"**: Install via `pip install pybind11` and ensure CMake can locate it
-- **Compiler errors**: Verify your compiler supports C++17 features
-- **Linking errors**: Ensure Python development headers are installed
-
-### Runtime Issues
-- **Import errors**: Verify the `pymultineat` module is in your Python path
-- **Segmentation faults**: Check for memory access violations in custom code
-- **Slow performance**: Consider reducing population size or enabling parallel evaluation
-
----
+- `src/` — C++ library and pybind11 bindings
+- `tests/` — C++ and Python regression tests plus an installed-package test
+- `demos/` — XOR, Box2D, MuJoCo, and visualization examples
+- `neattools.py` — genome visualization helpers
 
 ## License
 
-Apache 2.0
+MultiNEAT2 is distributed under the GNU Lesser General Public License,
+version 3 or (at your option) any later version, matching the license
+notices in the inherited MultiNEAT source. See [LICENSE](LICENSE).

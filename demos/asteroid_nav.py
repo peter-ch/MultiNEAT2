@@ -414,7 +414,6 @@ def main() -> None:
     genome_prototype = pnt.Genome(params, init_struct)
     pop = pnt.Population(genome_prototype, params, True, 1.0, int(time.time()))
 
-    GENERATIONS = 5000000
     gen = 0
 
     # Main loop switches between two modes:

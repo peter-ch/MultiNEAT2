@@ -3,6 +3,7 @@
 #include <chrono>
 #include <cmath>
 #include <limits>
+#include <sstream>
 #include <stdexcept>
 
 namespace NEAT
@@ -28,7 +29,7 @@ namespace NEAT
     int RNG::RandInt(int x, int y)
     {
         if(x > y)
-            throw std::runtime_error("RNG::RandInt: invalid range (x > y).");
+            throw std::invalid_argument("RNG::RandInt: invalid range (x > y).");
         std::uniform_int_distribution<int> dist(x, y);
         return dist(m_Engine);
     }
@@ -55,16 +56,28 @@ namespace NEAT
 
     int RNG::Roulette(const std::vector<double>& a_probs)
     {
+        if (a_probs.empty())
+            throw std::invalid_argument(
+                "RNG::Roulette: probability vector is empty.");
+
         double total = 0.0;
         for (double p : a_probs)
         {
-            if (p > 0.0)  // Only add positive probabilities to the total
-                total += p;
+            if (!std::isfinite(p))
+                throw std::invalid_argument(
+                    "RNG::Roulette: probabilities must be finite.");
+            if (p < 0.0)
+                throw std::invalid_argument(
+                    "RNG::Roulette: probabilities cannot be negative.");
+            total += p;
+            if (!std::isfinite(total))
+                throw std::overflow_error(
+                    "RNG::Roulette: probability total overflowed.");
         }
 
-        if (total <= 0.0 || a_probs.empty())
+        if (total <= 0.0)
         {
-            int maxIndex = a_probs.size() > 0 ? static_cast<int>(a_probs.size()) - 1 : 0;
+            int maxIndex = static_cast<int>(a_probs.size()) - 1;
             std::uniform_int_distribution<int> dist(0, maxIndex);
             return dist(m_Engine);
         }
@@ -85,6 +98,22 @@ namespace NEAT
             }
         }
         return static_cast<int>(lastNonZero);
+    }
+
+    std::string RNG::Serialize() const
+    {
+        std::ostringstream output;
+        output << m_Engine;
+        return output.str();
+    }
+
+    void RNG::Deserialize(const std::string& data)
+    {
+        std::istringstream input(data);
+        input >> m_Engine;
+        if (!input)
+            throw std::invalid_argument(
+                "RNG::Deserialize: invalid generator state.");
     }
 }
 

@@ -54,7 +54,7 @@ def collect_frames_for_pca(num_frames=300):
     env = gym.make('CarRacing-v2', render_mode='human')
     frames = []
     ikk = 0
-    obs, _ = env.reset()
+    env.reset()
     
     pbar = tqdm(total=num_frames, desc="Collecting frames for PCA")
     while len(frames) < num_frames:
@@ -67,9 +67,7 @@ def collect_frames_for_pca(num_frames=300):
             pbar.update(1)
         
         if done or truncated:
-            obs, _ = env.reset()
-        else:
-            obs = next_obs
+            env.reset()
         ikk += 1
     
     env.close()

@@ -1,10 +1,16 @@
 #include <math.h>
 #include <float.h>
+#include <algorithm>
+#include <cstdlib>
 #include <fstream>
+#include <iomanip>
+#include <limits>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <iostream>
 #include "NeuralNetwork.h"
+#include "FileIO.h"
 #include "Assert.h"
 #include "Utils.h"
 
@@ -13,6 +19,33 @@
 
 namespace NEAT
 {
+    namespace
+    {
+        void ValidateNetworkTopology(const NeuralNetwork& network)
+        {
+            const std::size_t neuron_count = network.m_neurons.size();
+            if (network.m_num_inputs > neuron_count ||
+                network.m_num_outputs > neuron_count - network.m_num_inputs)
+            {
+                throw std::runtime_error(
+                    "Neural network input/output dimensions exceed its neuron count");
+            }
+            for (const auto &connection : network.m_connections)
+            {
+                if (connection.m_source_neuron_idx < 0 ||
+                    connection.m_target_neuron_idx < 0 ||
+                    static_cast<std::size_t>(connection.m_source_neuron_idx) >=
+                        neuron_count ||
+                    static_cast<std::size_t>(connection.m_target_neuron_idx) >=
+                        neuron_count)
+                {
+                    throw std::runtime_error(
+                        "Neural network connection index is out of range");
+                }
+            }
+        }
+    }
+
     inline double af_sigmoid_unsigned(double aX, double aSlope, double aShift)
     {
         return 1.0 / (1.0 + exp(-aSlope * aX - aShift));
@@ -26,12 +59,12 @@ namespace NEAT
 
     inline double af_tanh(double aX, double aSlope, double aShift)
     {
-        return tanh(aX * aSlope);
+        return tanh(aX * aSlope + aShift);
     }
 
     inline double af_tanh_cubic(double aX, double aSlope, double aShift)
     {
-        return tanh(aX * aX * aX * aSlope);
+        return tanh(aX * aX * aX * aSlope + aShift);
     }
 
     inline double af_step_signed(double aX, double aShift)
@@ -83,7 +116,7 @@ namespace NEAT
 
     inline double af_softplus(double aX)
     {
-        return log(1 + exp(aX));
+        return std::max(aX, 0.0) + log1p(exp(-std::abs(aX)));
     }
 
     double unsigned_sigmoid_derivative(double x)
@@ -100,7 +133,26 @@ namespace NEAT
     {
         if (!a_Minimal)
         {
-            // (XOR network code omitted for brevity)
+            m_neurons.resize(5);
+            m_num_inputs = 3;
+            m_num_outputs = 1;
+
+            const int endpoints[][2] = {
+                {0, 3}, {1, 3}, {2, 3},
+                {0, 4}, {1, 4}, {2, 4},
+                {4, 3}
+            };
+            for (const auto &endpoint : endpoints)
+            {
+                Connection connection;
+                connection.m_source_neuron_idx = endpoint[0];
+                connection.m_target_neuron_idx = endpoint[1];
+                connection.m_weight =
+                    static_cast<double>(std::rand()) /
+                        static_cast<double>(RAND_MAX) -
+                    0.5;
+                m_connections.push_back(connection);
+            }
             InitRTRLMatrix();
         }
         else
@@ -122,17 +174,18 @@ namespace NEAT
     {
         for (auto &neuron : m_neurons)
         {
-            neuron.m_sensitivity_matrix.resize(m_neurons.size());
-            for (auto &row : neuron.m_sensitivity_matrix)
-                row.resize(m_neurons.size(), 0.0);
+            neuron.m_sensitivity_matrix.assign(
+                m_neurons.size(),
+                std::vector<double>(m_neurons.size(), 0.0));
         }
         FlushCube();
         m_total_error = 0;
-        m_total_weight_change.resize(m_connections.size(), 0.0);
+        m_total_weight_change.assign(m_connections.size(), 0.0);
     }
 
     void NeuralNetwork::ActivateFast()
     {
+        ValidateNetworkTopology(*this);
         for (auto &conn : m_connections)
             conn.m_signal = m_neurons[conn.m_source_neuron_idx].m_activation * conn.m_weight;
         for (auto &conn : m_connections)
@@ -166,6 +219,7 @@ namespace NEAT
 
     void NeuralNetwork::Activate()
     {
+        ValidateNetworkTopology(*this);
         for (auto &conn : m_connections)
             conn.m_signal = m_neurons[conn.m_source_neuron_idx].m_activation * conn.m_weight;
         for (auto &conn : m_connections)
@@ -199,6 +253,7 @@ namespace NEAT
 
     void NeuralNetwork::ActivateUseInternalBias()
     {
+        ValidateNetworkTopology(*this);
         for (auto &conn : m_connections)
             conn.m_signal = m_neurons[conn.m_source_neuron_idx].m_activation * conn.m_weight;
         for (auto &conn : m_connections)
@@ -232,6 +287,21 @@ namespace NEAT
 
     void NeuralNetwork::ActivateLeaky(double a_dtime)
     {
+        ValidateNetworkTopology(*this);
+        if (!std::isfinite(a_dtime) || a_dtime < 0.0)
+        {
+            throw std::invalid_argument(
+                "Leaky activation time step must be finite and non-negative");
+        }
+        for (std::size_t i = m_num_inputs; i < m_neurons.size(); ++i)
+        {
+            if (!std::isfinite(m_neurons[i].m_timeconst) ||
+                m_neurons[i].m_timeconst <= 0.0)
+            {
+                throw std::domain_error(
+                    "Leaky activation requires positive, finite neuron time constants");
+            }
+        }
         for (auto &conn : m_connections)
             conn.m_signal = m_neurons[conn.m_source_neuron_idx].m_activation * conn.m_weight;
         for (auto &conn : m_connections)
@@ -287,30 +357,275 @@ namespace NEAT
 
     void NeuralNetwork::Input(std::vector<double> &a_Inputs)
     {
-        size_t mx = std::min(a_Inputs.size(), static_cast<size_t>(m_num_inputs));
+        if (m_num_inputs > m_neurons.size())
+        {
+            throw std::runtime_error(
+                "Neural network input count exceeds its neuron count");
+        }
+        const size_t mx = std::min(a_Inputs.size(),
+                                   static_cast<size_t>(m_num_inputs));
         for (size_t i = 0; i < mx; i++)
             m_neurons[i].m_activation = a_Inputs[i];
     }
 
     std::vector<double> NeuralNetwork::Output()
     {
+        ValidateNetworkTopology(*this);
         std::vector<double> t_output;
+        t_output.reserve(m_num_outputs);
         for (unsigned int i = 0; i < m_num_outputs; i++)
             t_output.push_back(m_neurons[i + m_num_inputs].m_activation);
         return t_output;
     }
 
+    double NeuralNetwork::GetConnectionLenght(Neuron source, Neuron target)
+    {
+        const double dx = target.m_x - source.m_x;
+        const double dy = target.m_y - source.m_y;
+        const double dz = target.m_z - source.m_z;
+        return std::sqrt(dx * dx + dy * dy + dz * dz);
+    }
+
+    double NeuralNetwork::GetTotalConnectionLength()
+    {
+        ValidateNetworkTopology(*this);
+        double total = 0.0;
+        for (const auto &connection : m_connections)
+        {
+            total += GetConnectionLenght(
+                m_neurons[static_cast<std::size_t>(
+                    connection.m_source_neuron_idx)],
+                m_neurons[static_cast<std::size_t>(
+                    connection.m_target_neuron_idx)]);
+        }
+        return total;
+    }
+
+    void NeuralNetwork::Adapt(Parameters &a_Parameters)
+    {
+        ValidateNetworkTopology(*this);
+        if (!std::isfinite(a_Parameters.MinWeight) ||
+            !std::isfinite(a_Parameters.MaxWeight) ||
+            a_Parameters.MinWeight > a_Parameters.MaxWeight)
+        {
+            throw std::invalid_argument(
+                "Adapt requires a valid, finite weight range");
+        }
+        double maximum_weight = 0.0;
+        for (const auto &connection : m_connections)
+        {
+            maximum_weight =
+                std::max(maximum_weight, std::abs(connection.m_weight));
+        }
+
+        for (auto &connection : m_connections)
+        {
+            const double input = m_neurons[static_cast<std::size_t>(
+                connection.m_source_neuron_idx)].m_activation;
+            const double output = m_neurons[static_cast<std::size_t>(
+                connection.m_target_neuron_idx)].m_activation;
+            if (connection.m_weight > 0.0)
+            {
+                const double delta =
+                    connection.m_hebb_rate *
+                        (maximum_weight - connection.m_weight) *
+                        input * output +
+                    connection.m_hebb_pre_rate * maximum_weight *
+                        input * (output - 1.0);
+                connection.m_weight += delta;
+            }
+            else if (connection.m_weight < 0.0)
+            {
+                double magnitude = -connection.m_weight;
+                const double delta =
+                    connection.m_hebb_pre_rate *
+                        (maximum_weight - magnitude) *
+                        input * (1.0 - output) -
+                    connection.m_hebb_rate * maximum_weight * input * output;
+                magnitude = std::max(0.0, magnitude + delta);
+                connection.m_weight = -magnitude;
+            }
+            Clamp(connection.m_weight,
+                  a_Parameters.MinWeight,
+                  a_Parameters.MaxWeight);
+        }
+    }
+
+    int NeuralNetwork::ConnectionExists(int a_to, int a_from)
+    {
+        for (std::size_t i = 0; i < m_connections.size(); ++i)
+        {
+            if (m_connections[i].m_source_neuron_idx == a_from &&
+                m_connections[i].m_target_neuron_idx == a_to)
+            {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    }
+
+    void NeuralNetwork::RTRL_update_gradients()
+    {
+        ValidateNetworkTopology(*this);
+        const std::size_t neuron_count = m_neurons.size();
+        bool initialized = true;
+        for (const auto &neuron : m_neurons)
+        {
+            if (neuron.m_sensitivity_matrix.size() != neuron_count)
+            {
+                initialized = false;
+                break;
+            }
+            for (const auto &row : neuron.m_sensitivity_matrix)
+            {
+                if (row.size() != neuron_count)
+                {
+                    initialized = false;
+                    break;
+                }
+            }
+        }
+        if (!initialized)
+        {
+            InitRTRLMatrix();
+        }
+
+        for (std::size_t k = m_num_inputs; k < neuron_count; ++k)
+        {
+            for (std::size_t i = m_num_inputs; i < neuron_count; ++i)
+            {
+                for (std::size_t j = 0; j < neuron_count; ++j)
+                {
+                    const int connection_index = ConnectionExists(
+                        static_cast<int>(i), static_cast<int>(j));
+                    if (connection_index < 0)
+                    {
+                        m_neurons[k].m_sensitivity_matrix[i][j] = 0.0;
+                        continue;
+                    }
+
+                    double derivative = 0.0;
+                    if (m_neurons[k].m_activation_function_type ==
+                        UNSIGNED_SIGMOID)
+                    {
+                        derivative = unsigned_sigmoid_derivative(
+                            m_neurons[k].m_activation);
+                    }
+                    else if (m_neurons[k].m_activation_function_type == TANH)
+                    {
+                        derivative =
+                            tanh_derivative(m_neurons[k].m_activation);
+                    }
+
+                    double sum = 0.0;
+                    for (std::size_t l = 0; l < neuron_count; ++l)
+                    {
+                        const int recurrent_index = ConnectionExists(
+                            static_cast<int>(k), static_cast<int>(l));
+                        if (recurrent_index >= 0)
+                        {
+                            sum += m_connections[static_cast<std::size_t>(
+                                       recurrent_index)].m_weight *
+                                   m_neurons[l].m_sensitivity_matrix[i][j];
+                        }
+                    }
+                    if (i == k)
+                    {
+                        sum += m_neurons[j].m_activation;
+                    }
+                    m_neurons[k].m_sensitivity_matrix[i][j] =
+                        derivative * sum;
+                }
+            }
+        }
+    }
+
+    void NeuralNetwork::RTRL_update_error(double a_target)
+    {
+        ValidateNetworkTopology(*this);
+        if (m_num_outputs == 0)
+        {
+            throw std::runtime_error(
+                "RTRL error update requires at least one output neuron");
+        }
+        if (m_total_weight_change.size() != m_connections.size())
+        {
+            m_total_weight_change.assign(m_connections.size(), 0.0);
+        }
+        if (m_neurons[m_num_inputs].m_sensitivity_matrix.size() !=
+            m_neurons.size())
+        {
+            throw std::runtime_error(
+                "RTRL gradients must be initialized before updating error");
+        }
+        for (const auto &row :
+             m_neurons[m_num_inputs].m_sensitivity_matrix)
+        {
+            if (row.size() != m_neurons.size())
+            {
+                throw std::runtime_error(
+                    "RTRL sensitivity matrix has invalid dimensions");
+            }
+        }
+
+        m_total_error = a_target - Output().front();
+        for (std::size_t i = 0; i < m_neurons.size(); ++i)
+        {
+            for (std::size_t j = 0; j < m_neurons.size(); ++j)
+            {
+                const int index = ConnectionExists(
+                    static_cast<int>(i), static_cast<int>(j));
+                if (index >= 0)
+                {
+                    const double delta =
+                        m_total_error *
+                        m_neurons[m_num_inputs].m_sensitivity_matrix[i][j];
+                    m_total_weight_change[static_cast<std::size_t>(index)] +=
+                        delta * LEARNING_RATE;
+                }
+            }
+        }
+    }
+
+    void NeuralNetwork::RTRL_update_weights()
+    {
+        if (m_total_weight_change.size() != m_connections.size())
+        {
+            throw std::runtime_error(
+                "RTRL weight state does not match the network connections");
+        }
+        for (std::size_t i = 0; i < m_connections.size(); ++i)
+        {
+            m_connections[i].m_weight += m_total_weight_change[i];
+            m_total_weight_change[i] = 0.0;
+        }
+        m_total_error = 0.0;
+    }
+
     void NeuralNetwork::Save(const char* a_filename)
     {
-        FILE *fil = fopen(a_filename, "w");
+        if (a_filename == nullptr)
+            throw std::invalid_argument(
+                "NeuralNetwork::Save: filename is null.");
+        FILE *fil = detail::OpenFile(a_filename, "w");
+        if (fil == nullptr)
+        {
+            throw std::runtime_error("Cannot open neural network file for writing");
+        }
         Save(fil);
-        fclose(fil);
+        if (fclose(fil) != 0)
+            throw std::runtime_error(
+                "NeuralNetwork::Save: failed to close output file.");
     }
 
     void NeuralNetwork::Save(FILE *a_file)
     {
+        if (a_file == nullptr)
+            throw std::invalid_argument(
+                "NeuralNetwork::Save: file is null.");
+        ValidateNetworkTopology(*this);
         fprintf(a_file, "NNstart\n");
-        fprintf(a_file, "%d %d\n", m_num_inputs, m_num_outputs);
+        fprintf(a_file, "%u %u\n", m_num_inputs, m_num_outputs);
         for (const auto &neuron : m_neurons)
         {
             fprintf(a_file, "neuron %d %3.18f %3.18f %3.18f %3.18f %d %3.18f\n",
@@ -343,9 +658,10 @@ namespace NEAT
             {
                 Neuron t_n;
                 int t_type, t_aftype;
-                a_DataFile >> t_n.m_a >> t_n.m_b >> t_n.m_timeconst >> t_n.m_bias;
+                a_DataFile >> t_type >> t_n.m_a >> t_n.m_b
+                           >> t_n.m_timeconst >> t_n.m_bias;
                 a_DataFile >> t_aftype >> t_n.m_split_y;
-                // (Assuming t_type was read elsewhere if needed.)
+                t_n.m_type = static_cast<NeuronType>(t_type);
                 t_n.m_activation_function_type = static_cast<ActivationFunction>(t_aftype);
                 m_neurons.push_back(t_n);
             }
@@ -358,60 +674,240 @@ namespace NEAT
                 m_connections.push_back(t_c);
             }
         }
+        if (!a_DataFile || t_str != "NNend")
+        {
+            Clear();
+            return false;
+        }
+        try
+        {
+            ValidateNetworkTopology(*this);
+        }
+        catch (const std::exception&)
+        {
+            Clear();
+            return false;
+        }
         return true;
     }
 
     bool NeuralNetwork::Load(const char *a_filename)
     {
+        if (a_filename == nullptr)
+            return false;
         std::ifstream t_DataFile(a_filename);
+        if (!t_DataFile)
+            return false;
         return Load(t_DataFile);
     }
 
-    std::string NeuralNetwork::Serialize() const {
-        std::ostringstream oss;
-        oss << m_num_inputs << " " << m_num_outputs << "\n";
-        oss << m_neurons.size() << "\n";
-        for (const auto &n : m_neurons) {
-            // Save all the necessary data: here we assume that an int can represent the enums
-            oss << static_cast<int>(n.m_type) << " " << n.m_a << " " << n.m_b << " " 
-                << n.m_timeconst << " " << n.m_bias << " " 
-                << static_cast<int>(n.m_activation_function_type) << " " 
-                << n.m_split_y << "\n";
+    std::string NeuralNetwork::Serialize() const
+    {
+        ValidateNetworkTopology(*this);
+        std::ostringstream output;
+        output << std::setprecision(
+            std::numeric_limits<double>::max_digits10);
+        output << "NeuralNetworkFormat 2\n";
+        output << "State " << m_num_inputs << ' ' << m_num_outputs << ' '
+               << m_total_error << '\n';
+        output << "TotalWeightChange " << m_total_weight_change.size();
+        for (double value : m_total_weight_change)
+            output << ' ' << value;
+        output << '\n';
+        output << "Neurons " << m_neurons.size() << '\n';
+        for (const auto &neuron : m_neurons)
+        {
+            output << "Neuron " << neuron.m_activesum << ' '
+                   << neuron.m_activation << ' ' << neuron.m_a << ' '
+                   << neuron.m_b << ' ' << neuron.m_timeconst << ' '
+                   << neuron.m_bias << ' ' << neuron.m_membrane_potential
+                   << ' '
+                   << static_cast<int>(neuron.m_activation_function_type)
+                   << ' ' << neuron.m_x << ' ' << neuron.m_y << ' '
+                   << neuron.m_z << ' ' << neuron.m_sx << ' ' << neuron.m_sy
+                   << ' ' << neuron.m_sz << ' ' << neuron.m_split_y << ' '
+                   << static_cast<int>(neuron.m_type) << '\n';
+            output << "SubstrateCoordinates "
+                   << neuron.m_substrate_coords.size();
+            for (double coordinate : neuron.m_substrate_coords)
+                output << ' ' << coordinate;
+            output << '\n';
+            output << "Sensitivity " << neuron.m_sensitivity_matrix.size()
+                   << '\n';
+            for (const auto& row : neuron.m_sensitivity_matrix)
+            {
+                output << "SensitivityRow " << row.size();
+                for (double value : row)
+                    output << ' ' << value;
+                output << '\n';
+            }
         }
-        oss << m_connections.size() << "\n";
-        for (const auto &c : m_connections) {
-            oss << c.m_source_neuron_idx << " " << c.m_target_neuron_idx << " " 
-                << c.m_weight << " " << c.m_recur_flag << " " 
-                << c.m_hebb_rate << " " << c.m_hebb_pre_rate << "\n";
+        output << "Connections " << m_connections.size() << '\n';
+        for (const auto &connection : m_connections)
+        {
+            output << "Connection " << connection.m_source_neuron_idx << ' '
+                   << connection.m_target_neuron_idx << ' '
+                   << connection.m_weight << ' ' << connection.m_signal << ' '
+                   << static_cast<int>(connection.m_recur_flag) << ' '
+                   << connection.m_hebb_rate << ' '
+                   << connection.m_hebb_pre_rate << '\n';
         }
-        return oss.str();
+        output << "NeuralNetworkEnd\n";
+        return output.str();
     }
-    
-    NeuralNetwork NeuralNetwork::Deserialize(const std::string &data) {
-        NeuralNetwork nn;
-        std::istringstream iss(data);
-        iss >> nn.m_num_inputs >> nn.m_num_outputs;
-        int num_neurons = 0;
-        iss >> num_neurons;
-        for (int i = 0; i < num_neurons; ++i) {
-            Neuron n;
-            int type_int, af_int;
-            iss >> type_int >> n.m_a >> n.m_b >> n.m_timeconst >> n.m_bias >> af_int >> n.m_split_y;
-            n.m_type = static_cast<NeuronType>(type_int);
-            n.m_activation_function_type = static_cast<ActivationFunction>(af_int);
-            nn.m_neurons.push_back(n);
+
+    NeuralNetwork NeuralNetwork::Deserialize(const std::string &data)
+    {
+        NeuralNetwork network;
+        std::istringstream input(data);
+        std::string token;
+        input >> token;
+        if (token != "NeuralNetworkFormat")
+        {
+            // Legacy pickle format.
+            try
+            {
+                network.m_num_inputs =
+                    static_cast<unsigned int>(std::stoul(token));
+            }
+            catch (const std::exception&)
+            {
+                throw std::runtime_error(
+                    "NeuralNetwork::Deserialize: malformed header.");
+            }
+            input >> network.m_num_outputs;
+            std::size_t neuron_count = 0;
+            input >> neuron_count;
+            for (std::size_t i = 0; i < neuron_count; ++i)
+            {
+                Neuron neuron;
+                int type, activation;
+                input >> type >> neuron.m_a >> neuron.m_b
+                      >> neuron.m_timeconst >> neuron.m_bias >> activation
+                      >> neuron.m_split_y;
+                neuron.m_type = static_cast<NeuronType>(type);
+                neuron.m_activation_function_type =
+                    static_cast<ActivationFunction>(activation);
+                network.m_neurons.push_back(neuron);
+            }
+            std::size_t connection_count = 0;
+            input >> connection_count;
+            for (std::size_t i = 0; i < connection_count; ++i)
+            {
+                Connection connection;
+                int recurrent = 0;
+                input >> connection.m_source_neuron_idx
+                      >> connection.m_target_neuron_idx >> connection.m_weight
+                      >> recurrent >> connection.m_hebb_rate
+                      >> connection.m_hebb_pre_rate;
+                connection.m_recur_flag = recurrent != 0;
+                network.m_connections.push_back(connection);
+            }
+            if (!input)
+                throw std::runtime_error(
+                    "NeuralNetwork::Deserialize: malformed legacy data.");
+            ValidateNetworkTopology(network);
+            return network;
         }
-        int num_connections = 0;
-        iss >> num_connections;
-        for (int i = 0; i < num_connections; ++i) {
-            Connection c;
-            int src, tgt, is_recur;
-            iss >> src >> tgt >> c.m_weight >> is_recur >> c.m_hebb_rate >> c.m_hebb_pre_rate;
-            c.m_source_neuron_idx = src;
-            c.m_target_neuron_idx = tgt;
-            c.m_recur_flag = is_recur != 0;
-            nn.m_connections.push_back(c);
+
+        int version = 0;
+        input >> version;
+        if (version != 2)
+            throw std::runtime_error(
+                "NeuralNetwork::Deserialize: unsupported format.");
+        input >> token;
+        if (token != "State")
+            throw std::runtime_error(
+                "NeuralNetwork::Deserialize: missing State marker.");
+        input >> network.m_num_inputs >> network.m_num_outputs
+              >> network.m_total_error;
+
+        std::size_t count = 0;
+        input >> token >> count;
+        if (token != "TotalWeightChange")
+            throw std::runtime_error(
+                "NeuralNetwork::Deserialize: missing weight-change state.");
+        network.m_total_weight_change.resize(count);
+        for (double& value : network.m_total_weight_change)
+            input >> value;
+
+        input >> token >> count;
+        if (token != "Neurons")
+            throw std::runtime_error(
+                "NeuralNetwork::Deserialize: missing Neurons marker.");
+        network.m_neurons.reserve(count);
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            input >> token;
+            if (token != "Neuron")
+                throw std::runtime_error(
+                    "NeuralNetwork::Deserialize: missing Neuron marker.");
+            Neuron neuron;
+            int activation = 0;
+            int type = 0;
+            input >> neuron.m_activesum >> neuron.m_activation >> neuron.m_a
+                  >> neuron.m_b >> neuron.m_timeconst >> neuron.m_bias
+                  >> neuron.m_membrane_potential >> activation >> neuron.m_x
+                  >> neuron.m_y >> neuron.m_z >> neuron.m_sx >> neuron.m_sy
+                  >> neuron.m_sz >> neuron.m_split_y >> type;
+            neuron.m_activation_function_type =
+                static_cast<ActivationFunction>(activation);
+            neuron.m_type = static_cast<NeuronType>(type);
+
+            std::size_t coordinates = 0;
+            input >> token >> coordinates;
+            if (token != "SubstrateCoordinates")
+                throw std::runtime_error(
+                    "NeuralNetwork::Deserialize: missing coordinates.");
+            neuron.m_substrate_coords.resize(coordinates);
+            for (double& coordinate : neuron.m_substrate_coords)
+                input >> coordinate;
+
+            std::size_t rows = 0;
+            input >> token >> rows;
+            if (token != "Sensitivity")
+                throw std::runtime_error(
+                    "NeuralNetwork::Deserialize: missing sensitivity state.");
+            neuron.m_sensitivity_matrix.resize(rows);
+            for (auto& row : neuron.m_sensitivity_matrix)
+            {
+                std::size_t columns = 0;
+                input >> token >> columns;
+                if (token != "SensitivityRow")
+                    throw std::runtime_error(
+                        "NeuralNetwork::Deserialize: missing sensitivity row.");
+                row.resize(columns);
+                for (double& value : row)
+                    input >> value;
+            }
+            network.m_neurons.push_back(std::move(neuron));
         }
-        return nn;
+
+        input >> token >> count;
+        if (token != "Connections")
+            throw std::runtime_error(
+                "NeuralNetwork::Deserialize: missing Connections marker.");
+        network.m_connections.reserve(count);
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            input >> token;
+            if (token != "Connection")
+                throw std::runtime_error(
+                    "NeuralNetwork::Deserialize: missing Connection marker.");
+            Connection connection;
+            int recurrent = 0;
+            input >> connection.m_source_neuron_idx
+                  >> connection.m_target_neuron_idx >> connection.m_weight
+                  >> connection.m_signal >> recurrent
+                  >> connection.m_hebb_rate >> connection.m_hebb_pre_rate;
+            connection.m_recur_flag = recurrent != 0;
+            network.m_connections.push_back(connection);
+        }
+        input >> token;
+        if (token != "NeuralNetworkEnd" || !input)
+            throw std::runtime_error(
+                "NeuralNetwork::Deserialize: malformed network data.");
+        ValidateNetworkTopology(network);
+        return network;
     }
 }

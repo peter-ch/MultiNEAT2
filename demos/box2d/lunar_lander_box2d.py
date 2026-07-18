@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # lunar_lander_neat.py
 
+import argparse
 import gymnasium as gym
 import pymultineat as pnt
 import numpy as np
@@ -63,8 +64,6 @@ def evaluate_genome(genome, env=None, render=False, max_steps=1000):
     # Adjust for negative rewards (NEAT requires non-negative fitness)
     fitness = total_reward + abs(min_reward) + 1
     return fitness
-
-import argparse
 
 def main():
     # Parse command-line arguments

@@ -1,6 +1,9 @@
 #ifndef _PHENOTYPE_H
 #define _PHENOTYPE_H
 
+#include <cstdio>
+#include <fstream>
+#include <string>
 #include <vector>
 #include "Genes.h"
 
@@ -9,13 +12,13 @@ namespace NEAT
     class Connection
     {
     public:
-        int m_source_neuron_idx;
-        int m_target_neuron_idx;
-        double m_weight;
-        double m_signal;
-        bool m_recur_flag;
-        double m_hebb_rate;
-        double m_hebb_pre_rate;
+        int m_source_neuron_idx = 0;
+        int m_target_neuron_idx = 0;
+        double m_weight = 0.0;
+        double m_signal = 0.0;
+        bool m_recur_flag = false;
+        double m_hebb_rate = 0.0;
+        double m_hebb_pre_rate = 0.0;
 
         bool operator==(const Connection &other) const
         {
@@ -27,16 +30,23 @@ namespace NEAT
     class Neuron
     {
     public:
-        double m_activesum;
-        double m_activation;
-        double m_a, m_b, m_timeconst, m_bias;
-        double m_membrane_potential;
-        ActivationFunction m_activation_function_type;
-        double m_x, m_y, m_z;
-        double m_sx, m_sy, m_sz;
+        double m_activesum = 0.0;
+        double m_activation = 0.0;
+        double m_a = 1.0;
+        double m_b = 0.0;
+        double m_timeconst = 1.0;
+        double m_bias = 0.0;
+        double m_membrane_potential = 0.0;
+        ActivationFunction m_activation_function_type = UNSIGNED_SIGMOID;
+        double m_x = 0.0;
+        double m_y = 0.0;
+        double m_z = 0.0;
+        double m_sx = 0.0;
+        double m_sy = 0.0;
+        double m_sz = 0.0;
         std::vector<double> m_substrate_coords;
-        double m_split_y;
-        NeuronType m_type;
+        double m_split_y = 0.0;
+        NeuronType m_type = NONE;
         std::vector<std::vector<double>> m_sensitivity_matrix;
 
         bool operator==(Neuron const &other) const
@@ -49,11 +59,12 @@ namespace NEAT
 
     class NeuralNetwork
     {
-        double m_total_error;
+        double m_total_error = 0.0;
         std::vector<double> m_total_weight_change;
 
     public:
-        unsigned int m_num_inputs, m_num_outputs;
+        unsigned int m_num_inputs = 0;
+        unsigned int m_num_outputs = 0;
         std::vector<Connection> m_connections;
         std::vector<Neuron> m_neurons;
 
@@ -68,6 +79,7 @@ namespace NEAT
         void RTRL_update_error(double a_target);
         void RTRL_update_weights();
         void Adapt(Parameters &a_Parameters);
+        int ConnectionExists(int a_to, int a_from);
         void Flush();
         void FlushCube();
         void Input(std::vector<double> &a_Inputs);
@@ -76,20 +88,32 @@ namespace NEAT
         void AddConnection(const Connection &a_c) { m_connections.push_back(a_c); }
         Connection GetConnectionByIndex(unsigned int a_idx) const
         {
-            return m_connections[a_idx];
+            return m_connections.at(a_idx);
         }
         Neuron GetNeuronByIndex(unsigned int a_idx) const
         {
-            return m_neurons[a_idx];
+            return m_neurons.at(a_idx);
         }
         void SetInputOutputDimentions(const unsigned int a_i, const unsigned int a_o)
         {
             m_num_inputs = a_i;
             m_num_outputs = a_o;
         }
+        void SetInputOutputDimensions(
+            const unsigned int inputs,
+            const unsigned int outputs)
+        {
+            SetInputOutputDimentions(inputs, outputs);
+        }
         unsigned int NumInputs() const { return m_num_inputs; }
         unsigned int NumOutputs() const { return m_num_outputs; }
         double GetConnectionLenght(Neuron source, Neuron target);
+        double GetConnectionLength(
+            const Neuron& source,
+            const Neuron& target)
+        {
+            return GetConnectionLenght(source, target);
+        }
         double GetTotalConnectionLength();
         void Save(const char* a_filename);
         bool Load(const char* a_filename);
@@ -101,6 +125,7 @@ namespace NEAT
             m_neurons.clear();
             m_connections.clear();
             m_total_weight_change.clear();
+            m_total_error = 0.0;
             SetInputOutputDimentions(0, 0);
         }
 

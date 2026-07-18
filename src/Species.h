@@ -1,6 +1,8 @@
 #ifndef _SPECIES_H
 #define _SPECIES_H
 
+#include <cstddef>
+#include <stdexcept>
 #include <vector>
 
 #include "Innovation.h"
@@ -89,7 +91,8 @@ public:
         m_OffspringRqd = 0;
         m_AgeGenerations = 0;
         m_AgeEvaluations = 0;
-        m_BestFitness = 0;
+        m_BestFitness = std::numeric_limits<double>::lowest();
+        m_AverageFitness = 0;
         m_GensNoImprovement = 0;
         m_EvalsNoImprovement = 0;
         m_R = m_G = m_B = 0;
@@ -97,6 +100,7 @@ public:
 
     // initializes a species with a leader genome and an ID number
     Species(const Genome& a_Seed, const Parameters& a_Parameters, int a_id);
+    Species(const Species&) = default;
 
     // assignment operator
     Species& operator=(const Species& a_g);
@@ -115,8 +119,8 @@ public:
     double GetBestFitness() const { return m_BestFitness; }
     double GetActualBestFitness() const
     {
-        double f = std::numeric_limits<double>::min();
-        for(int i=0; i<m_Individuals.size(); i++)
+        double f = std::numeric_limits<double>::lowest();
+        for(std::size_t i=0; i<m_Individuals.size(); i++)
         {
             if (m_Individuals[i].IsEvaluated())
             {
@@ -138,21 +142,38 @@ public:
     void IncreaseEvalsNoImprovement() { m_EvalsNoImprovement++; }
     void SetOffspringRqd(double a_ofs) { m_OffspringRqd = a_ofs; }
     double GetOffspringRqd() const { return m_OffspringRqd; }
-    unsigned int NumIndividuals() { return m_Individuals.size(); }
+    unsigned int NumIndividuals()
+    {
+        return static_cast<const Species&>(*this).NumIndividuals();
+    }
+    unsigned int NumIndividuals() const
+    {
+        return static_cast<unsigned int>(m_Individuals.size());
+    }
     void ClearIndividuals() { m_Individuals.clear(); }
-    int ID() { return m_ID; }
+    int ID() { return static_cast<const Species&>(*this).ID(); }
+    int ID() const { return m_ID; }
     int GensNoImprovement() { return m_GensNoImprovement; }
     int EvalsNoImprovement() { return m_EvalsNoImprovement; }
     int AgeGens() { return m_AgeGenerations; }
     int AgeEvals() { return m_AgeEvaluations; }
-    Genome GetIndividualByIdx(int a_idx) const { return (m_Individuals[a_idx]); }
+    Genome GetIndividualByIdx(int a_idx) const
+    {
+        if (a_idx < 0)
+            throw std::out_of_range("Species individual index cannot be negative");
+        return m_Individuals.at(static_cast<std::size_t>(a_idx));
+    }
     bool IsBestSpecies() const { return m_BestSpecies; }
     bool IsWorstSpecies() const { return m_WorstSpecies; }
 
     int NumEvaluated()
     {
+        return static_cast<const Species&>(*this).NumEvaluated();
+    }
+    int NumEvaluated() const
+    {
         int x=0;
-        for(int i=0; i<m_Individuals.size(); i++)
+        for(std::size_t i=0; i<m_Individuals.size(); i++)
         {
             if (m_Individuals[i].IsEvaluated())
                 x++;
@@ -181,6 +202,7 @@ public:
     // it also boosts the fitness if young and penalizes if old
     // applies extreme penalty for stagnating species over SpeciesDropoffAge generations.
     void AdjustFitness(Parameters& a_Parameters);
+    void AdjustFitness(Parameters& a_Parameters, double a_FitnessOffset);
 
     // Sorts the individuals
     void SortIndividuals();

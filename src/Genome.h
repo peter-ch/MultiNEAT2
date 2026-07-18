@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <queue>
+#include <string>
 
 #include "NeuralNetwork.h"
 #include "Substrate.h"
@@ -160,6 +161,9 @@ namespace NEAT
         // Checks if two genomes have identical structure and data (ignore IDs, focus on topology and parameters)
         bool IsIdenticalTo(const Genome& other) const;
 
+        // Checks structural invariants without modifying the genome.
+        bool Validate(std::string* error = nullptr) const;
+
         // Builds this genome from a file
         Genome(const char *a_filename);
 
@@ -244,8 +248,6 @@ namespace NEAT
 
         bool FailsConstraints(const Parameters &a_Parameters)
         {
-            bool fails = false;
-
             if (HasDeadEnds() || (NumLinks() == 0))
             {
                 return true; // no reason to continue
@@ -258,13 +260,8 @@ namespace NEAT
             }
 
             // Custom constraints
-            if (a_Parameters.CustomConstraints != NULL)
-            {
-                if (a_Parameters.CustomConstraints(*this))
-                {
-                    return true;
-                }
-            }
+            if (a_Parameters.FailsCustomConstraints(*this))
+                return true;
 
             // add more constraints here
             return false;

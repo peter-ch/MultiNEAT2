@@ -12,42 +12,28 @@ namespace NEAT
     class intsetelement
     {
     public:
-        int value;
+        int value = 0;
 
         bool operator==(const intsetelement& rhs) const
         {
             return rhs.value == value;
         }
 
-        intsetelement &operator=(const intsetelement &a_g)
-        {
-            if (this != &a_g)
-            {
-                value = a_g.value;
-            }
-            return *this;
-        }
+        intsetelement& operator=(const intsetelement&) = default;
     };
 
     // Represents an element in a float set trait
     class floatsetelement
     {
     public:
-        double value;
+        double value = 0.0;
 
         bool operator==(const floatsetelement& rhs) const
         {
             return rhs.value == value;
         }
 
-        floatsetelement &operator=(const floatsetelement &a_g)
-        {
-            if (this != &a_g)
-            {
-                value = a_g.value;
-            }
-            return *this;
-        }
+        floatsetelement& operator=(const floatsetelement&) = default;
     };
 
     // Using std::variant to store possible trait types
@@ -68,17 +54,7 @@ namespace NEAT
             mut_replace_prob = 0.0;
         }
 
-        IntTraitParameters &operator=(const IntTraitParameters &a_g)
-        {
-            if (this != &a_g)
-            {
-                min = a_g.min;
-                max = a_g.max;
-                mut_power = a_g.mut_power;
-                mut_replace_prob = a_g.mut_replace_prob;
-            }
-            return *this;
-        }
+        IntTraitParameters& operator=(const IntTraitParameters&) = default;
     };
 
     class FloatTraitParameters
@@ -96,17 +72,7 @@ namespace NEAT
             mut_replace_prob = 0.0;
         }
 
-        FloatTraitParameters &operator=(const FloatTraitParameters &a_g)
-        {
-            if (this != &a_g)
-            {
-                min = a_g.min;
-                max = a_g.max;
-                mut_power = a_g.mut_power;
-                mut_replace_prob = a_g.mut_replace_prob;
-            }
-            return *this;
-        }
+        FloatTraitParameters& operator=(const FloatTraitParameters&) = default;
     };
 
     class StringTraitParameters
@@ -115,15 +81,7 @@ namespace NEAT
         std::vector<std::string> set;  // the set of possible strings
         std::vector<double> probs;     // their respective probabilities for appearance
 
-        StringTraitParameters &operator=(const StringTraitParameters &a_g)
-        {
-            if (this != &a_g)
-            {
-                set = a_g.set;
-                probs = a_g.probs;
-            }
-            return *this;
-        }
+        StringTraitParameters& operator=(const StringTraitParameters&) = default;
     };
 
     class IntSetTraitParameters
@@ -132,15 +90,7 @@ namespace NEAT
         std::vector<intsetelement> set; // the set of possible ints
         std::vector<double> probs;      // their respective probabilities for appearance
 
-        IntSetTraitParameters &operator=(const IntSetTraitParameters &a_g)
-        {
-            if (this != &a_g)
-            {
-                set = a_g.set;
-                probs = a_g.probs;
-            }
-            return *this;
-        }
+        IntSetTraitParameters& operator=(const IntSetTraitParameters&) = default;
     };
 
     class FloatSetTraitParameters
@@ -149,15 +99,8 @@ namespace NEAT
         std::vector<floatsetelement> set; // the set of possible floats
         std::vector<double> probs;        // their respective probabilities for appearance
 
-        FloatSetTraitParameters &operator=(const FloatSetTraitParameters &a_g)
-        {
-            if (this != &a_g)
-            {
-                set = a_g.set;
-                probs = a_g.probs;
-            }
-            return *this;
-        }
+        FloatSetTraitParameters& operator=(
+            const FloatSetTraitParameters&) = default;
     };
 
     // Holds parameters describing how a given trait mutates,
@@ -182,28 +125,13 @@ namespace NEAT
         std::vector<TraitType> dep_values; // allowed values of that dependency trait for this trait to apply
 
         TraitParameters()
+          : m_ImportanceCoeff(0.0), m_MutationProb(0.0), type("int"),
+            m_Details(IntTraitParameters()), dep_key(""),
+            dep_values{std::string("")}
         {
-            m_ImportanceCoeff = 0.0;
-            m_MutationProb = 0.0;
-            type = "int";
-            m_Details = IntTraitParameters();
-            dep_key = "";
-            dep_values.emplace_back(std::string(""));
         }
 
-        TraitParameters &operator=(const TraitParameters &a_g)
-        {
-            if (this != &a_g)
-            {
-                m_ImportanceCoeff = a_g.m_ImportanceCoeff;
-                m_MutationProb = a_g.m_MutationProb;
-                type = a_g.type;
-                m_Details = a_g.m_Details;
-                dep_key = a_g.dep_key;
-                dep_values = a_g.dep_values;
-            }
-            return *this;
-        }
+        TraitParameters& operator=(const TraitParameters&) = default;
     };
 
     // Represents an actual trait instance on a LinkGene, NeuronGene, or GenomeGene
@@ -214,23 +142,11 @@ namespace NEAT
         std::string dep_key;  // if non-empty, we only consider this trait if dep_key is matched
         std::vector<TraitType> dep_values;
 
-        Trait()
+        Trait() : value(0), dep_key(""), dep_values{0}
         {
-            value = 0; // default is int=0
-            dep_key = "";
-            dep_values.emplace_back(0); 
         }
 
-        Trait &operator=(const Trait &a_g)
-        {
-            if (this != &a_g)
-            {
-                value = a_g.value;
-                dep_values = a_g.dep_values;
-                dep_key = a_g.dep_key;
-            }
-            return *this;
-        }
+        Trait& operator=(const Trait&) = default;
     };
 
 } // namespace NEAT

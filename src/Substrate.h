@@ -20,8 +20,7 @@ public:
     // the substrate is made from leaky integrator neurons?
     bool m_leaky;
 
-    // the additional distance input is used?
-    // NOTE: don't use it, not working yet
+    // Whether to provide Euclidean distance as an additional CPPN input.
     bool m_with_distance;
 
     // these flags control the connectivity of the substrate

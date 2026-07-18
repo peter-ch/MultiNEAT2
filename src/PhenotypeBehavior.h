@@ -24,13 +24,13 @@ public:
     // This method acquires behavior data based on the genome given
     // May return true if a successful behavior was encountered during
     // evaluation
-    virtual bool   Acquire(Genome* a_Genome)
+    virtual bool   Acquire(Genome*)
     {
         return false;
     }
 
     // Overload this method to calcluate distance between behaviors
-    virtual double Distance_To(PhenotypeBehavior* a_Other)
+    virtual double Distance_To(PhenotypeBehavior*)
     {
         return 0;
     }

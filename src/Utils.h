@@ -87,9 +87,7 @@ inline void Clamp(int &a_Arg, const int a_Min, const int a_Max)
 
 inline int Rounded(const double a_Val)
 {
-    int t_Integral = static_cast<int>(a_Val);
-    double t_Mantissa = a_Val - t_Integral;
-    return (t_Mantissa < 0.5) ? t_Integral : t_Integral + 1;
+    return static_cast<int>(std::lround(a_Val));
 }
 
 inline int RoundUnderOffset(const double a_Val, const double a_Offset)
@@ -129,7 +127,7 @@ inline void Scale(float& a,
 {
     if (a_tr_min == a_tr_max)
     {
-        a = a_tr_min;
+        a = static_cast<float>(a_tr_min);
         return;
     }
     if (fabs(a_max - a_min) < std::numeric_limits<double>::epsilon())
@@ -147,5 +145,9 @@ inline double Abs(double x)
 {
     return (x < 0) ? -x : x;
 }
+
+void Scale(vector<double>& a_Values,
+           double a_tr_min = 0.0,
+           double a_tr_max = 1.0);
 
 #endif

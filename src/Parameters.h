@@ -2,7 +2,11 @@
 #define _PARAMETERS_H
 
 
+#include <cstdio>
+#include <fstream>
+#include <functional>
 #include <map>
+#include <string>
 #include "Traits.h"
 
 namespace NEAT
@@ -131,8 +135,13 @@ public:
     // For tournament selection
     unsigned int TournamentSize;
 
-    // Fraction of individuals to be copied unchanged
-    double EliteFraction;
+    // Fraction of individuals to be copied unchanged. Elitism is retained as
+    // a source-compatible spelling used by older MultiNEAT clients.
+    union
+    {
+        double EliteFraction;
+        double Elitism;
+    };
 
 
 
@@ -452,8 +461,21 @@ public:
 
     // resets the parameters to built-in defaults
     void Reset();
-    
 
+    // Complete, round-trippable persistence used by Python pickling and
+    // population checkpoints. Function callbacks are intentionally omitted.
+    std::string Serialize() const;
+    static Parameters Deserialize(const std::string& data);
+
+    // Python callbacks cannot be represented by the legacy function-pointer
+    // field. These helpers preserve that field for existing C++ users while
+    // allowing each Parameters instance to own an independent callable.
+    void SetCustomConstraintsFunction(std::function<bool(Genome&)> callback);
+    std::function<bool(Genome&)> GetCustomConstraintsFunction() const;
+    bool FailsCustomConstraints(Genome& genome) const;
+
+private:
+    std::function<bool(Genome&)> m_CustomConstraintsFunction;
     };
 
 

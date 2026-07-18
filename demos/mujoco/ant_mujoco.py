@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # ant_neat.py
 
+import argparse
 import gymnasium as gym
 import pymultineat as pnt
 import numpy as np
@@ -96,8 +97,6 @@ def evaluate_genome(genome, env=None, render=False, max_steps=1000):
     # Adjust for negative rewards and add fitness shift
     fitness = total_reward + abs(min_reward) + 1 + FITNESS_SHIFT
     return fitness
-
-import argparse
 
 def main():
     # Parse command-line arguments
@@ -287,7 +286,7 @@ def main():
             population_bars = ax2.bar(range(len(fitness_data)), fitness_data, color=colors)
             
             # Update statistics
-            stats = f"Population Stats:\n"
+            stats = "Population Stats:\n"
             stats += f"Max Neurons: {max(neurons_data)}\n"
             stats += f"Min Neurons: {min(neurons_data)}\n"
             stats += f"Max Links: {max(links_data)}\n"

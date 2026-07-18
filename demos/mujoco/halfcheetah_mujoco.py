@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # half_cheetah_neat.py
 
+import argparse
 import gymnasium as gym
 import pymultineat as pnt
-import numpy as np
 import time
 import multiprocessing
 from tqdm import tqdm
@@ -90,8 +90,6 @@ def evaluate_genome(genome, env=None, render=False, max_steps=500):
     # Adjust for negative rewards (NEAT requires non-negative fitness)
     fitness = total_reward + abs(min_reward) + 1
     return fitness
-
-import argparse
 
 def main():
     # Parse command-line arguments

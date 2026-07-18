@@ -1,84 +1,42 @@
-#ifndef ASSERT_H
-#define ASSERT_H
+#ifndef MULTINEAT_LEGACY_ASSERT_H
+#define MULTINEAT_LEGACY_ASSERT_H
 
+// This filename is part of MultiNEAT's historical public interface. On
+// case-insensitive filesystems it also shadows the C runtime's <assert.h>.
+// Define the standard macro here so <cassert>, Python, and pybind11 continue
+// to work when the MultiNEAT include directory appears first on the path.
+#include <cstdlib>
 #include <iostream>
-#include <cassert>
-#include <exception>
 
-// kill any existing declarations
+#ifndef assert
+#  ifdef NDEBUG
+#    define assert(expression) ((void)0)
+#  else
+#    define assert(expression)                                                \
+        ((expression)                                                        \
+             ? static_cast<void>(0)                                          \
+             : (std::cerr << "Assertion failed: " #expression << " ("       \
+                          << __FILE__ << ':' << __LINE__ << ")\n",            \
+                std::abort()))
+#  endif
+#endif
+
 #ifdef ASSERT
-#undef ASSERT
+#  undef ASSERT
 #endif
 
 #ifdef VERIFY
-#undef VERIFY
+#  undef VERIFY
 #endif
 
-#ifdef DEBUG
-
-#if 1
-
-//--------------
-//  debug macros
-//--------------
-#define BREAK_CPU()            //__asm { int 3 }
-
-#define ASSERT(expr)\
-        {\
-            if( !(expr) )\
-            {\
-                std::cout << "\n*** ASSERT! ***\n" << \
-                __FILE__ ", line " << __LINE__ << ": " << \
-                #expr << " is false\n\n";\
-                throw std::exception();\
-            }\
-        }
-
-#define VERIFY(expr)\
-        {\
-            if( !(expr) )\
-            {\
-                std::cout << "\n*** VERIFY FAILED ***\n" << \
-                __FILE__ ", line " << __LINE__ << ": " << \
-                #expr << " is false\n\n";\
-                BREAK_CPU();\
-            }\
-        }
+// Preserve the established release behavior of ASSERT while ensuring VERIFY
+// always evaluates its expression. This avoids silently dropping side effects.
+#ifdef NDEBUG
+#  define ASSERT(expression) ((void)0)
+#  define VERIFY(expression) static_cast<void>(expression)
 #else
-
-#define ASSERT(expr)\
-        {\
-            if( !(expr) )\
-            {\
-                std::cout << "\n*** ASSERT ***\n"; \
-                assert(expr);\
-            }\
-        }
-
-
-#define VERIFY(expr)\
-        {\
-            if( !(expr) )\
-            {\
-                std::cout << "\n*** VERIFY FAILED ***\n"; \
-                assert(expr);\
-            }\
-        }
-
+#  define ASSERT(expression) assert(expression)
+#  define VERIFY(expression) assert(expression)
 #endif
 
-#else // _DEBUG
-
-//--------------
-//  release macros
-//--------------
-
-// ASSERT gets optimised out completely
-#define ASSERT(expr)
-
-// verify has expression evaluated, but no further action taken
-#define VERIFY(expr) //if( expr ) {}
-
 #endif
-
-#endif // INCLUDE_GUARD_Assert_h

@@ -6,7 +6,7 @@
 #include <map>
 #include <string>
 #include <stdexcept>
-#include <variant>    
+#include <variant>
 #include "Parameters.h"
 #include "Traits.h"
 #include "Random.h"
@@ -57,14 +57,7 @@ namespace NEAT
         // Arbitrary traits
         std::map<std::string, Trait> m_Traits;
 
-        Gene &operator=(const Gene &a_g)
-        {
-            if (this != &a_g)
-            {
-                m_Traits = a_g.m_Traits;
-            }
-            return *this;
-        }
+        Gene& operator=(const Gene&) = default;
 
         // Initialize traits (randomize) based on parameters
         void InitTraits(const std::map<std::string, TraitParameters> &tp, RNG &a_RNG)
@@ -76,11 +69,19 @@ namespace NEAT
                 if (it->second.type == "int")
                 {
                     IntTraitParameters itp = std::get<IntTraitParameters>(it->second.m_Details);
+                    if (itp.min > itp.max)
+                    {
+                        throw std::invalid_argument("Integer trait minimum exceeds maximum");
+                    }
                     t = a_RNG.RandInt(itp.min, itp.max);
                 }
                 else if (it->second.type == "float")
                 {
                     FloatTraitParameters itp = std::get<FloatTraitParameters>(it->second.m_Details);
+                    if (itp.min > itp.max)
+                    {
+                        throw std::invalid_argument("Floating-point trait minimum exceeds maximum");
+                    }
                     double x = a_RNG.RandFloat();
                     Scale(x, 0, 1, itp.min, itp.max);
                     t = x;
@@ -123,8 +124,7 @@ namespace NEAT
                 }
                 else
                 {
-                    // fallback
-                    t = 0;
+                    throw std::invalid_argument("Unknown trait type: " + it->second.type);
                 }
 
                 Trait tr;
@@ -141,7 +141,12 @@ namespace NEAT
             for (auto it = t.begin(); it != t.end(); ++it)
             {
                 // Both must share the key
-                TraitType mine = m_Traits[it->first].value;
+                const auto mine_it = m_Traits.find(it->first);
+                if (mine_it == m_Traits.end())
+                {
+                    continue;
+                }
+                TraitType mine = mine_it->second.value;
                 TraitType yours = it->second.value;
 
                 // Type must match
@@ -196,6 +201,12 @@ namespace NEAT
             bool did_mutate = false;
             for (auto it = tp.begin(); it != tp.end(); ++it)
             {
+                auto trait_it = m_Traits.find(it->first);
+                if (trait_it == m_Traits.end())
+                {
+                    continue;
+                }
+
                 // check if we should consider the trait given any dependency
                 bool doit = false;
                 if (!it->second.dep_key.empty())
@@ -204,9 +215,9 @@ namespace NEAT
                     if (m_Traits.count(it->second.dep_key) != 0)
                     {
                         // see if the dep trait matches
-                        for (auto &dv : it->second.dep_values)
+                        for (const auto &dv : it->second.dep_values)
                         {
-                            if (m_Traits[it->second.dep_key].value == dv)
+                            if (m_Traits.at(it->second.dep_key).value == dv)
                             {
                                 doit = true;
                                 break;
@@ -229,96 +240,164 @@ namespace NEAT
                         if (ty == "int")
                         {
                             IntTraitParameters itp = std::get<IntTraitParameters>(it->second.m_Details);
-                            int val = std::get<int>(m_Traits[it->first].value);
+                            if (itp.min > itp.max)
+                            {
+                                throw std::invalid_argument("Integer trait minimum exceeds maximum");
+                            }
+                            int val = std::get<int>(trait_it->second.value);
                             int original = val;
                             if (a_RNG.RandFloat() < itp.mut_replace_prob)
                             {
-                                // replace
-                                while (val == original)
+                                if (itp.min == itp.max)
+                                {
+                                    continue;
+                                }
+                                if (original >= itp.min && original <= itp.max)
+                                {
+                                    val = a_RNG.RandInt(itp.min, itp.max - 1);
+                                    if (val >= original)
+                                    {
+                                        ++val;
+                                    }
+                                }
+                                else
                                 {
                                     val = a_RNG.RandInt(itp.min, itp.max);
                                 }
-                                m_Traits[it->first].value = val;
+                                trait_it->second.value = val;
                                 did_mutate = true;
                             }
                             else
                             {
-                                // modify
-                                while (val == original)
+                                if (itp.mut_power <= 0 || itp.min == itp.max)
                                 {
-                                    val += a_RNG.RandInt(-itp.mut_power, itp.mut_power);
+                                    continue;
+                                }
+                                for (int attempt = 0; attempt < 32 && val == original; ++attempt)
+                                {
+                                    val = original + a_RNG.RandInt(-itp.mut_power, itp.mut_power);
                                     Clamp(val, itp.min, itp.max);
                                 }
-                                m_Traits[it->first].value = val;
+                                if (val == original)
+                                {
+                                    val = (original > itp.min) ? original - 1 : original + 1;
+                                    Clamp(val, itp.min, itp.max);
+                                }
+                                trait_it->second.value = val;
                                 did_mutate = true;
                             }
                         }
                         else if (ty == "float")
                         {
                             FloatTraitParameters itp = std::get<FloatTraitParameters>(it->second.m_Details);
-                            double val = std::get<double>(m_Traits[it->first].value);
+                            if (itp.min > itp.max)
+                            {
+                                throw std::invalid_argument("Floating-point trait minimum exceeds maximum");
+                            }
+                            double val = std::get<double>(trait_it->second.value);
                             double original = val;
                             if (a_RNG.RandFloat() < itp.mut_replace_prob)
                             {
-                                while (val == original)
+                                if (itp.min == itp.max)
                                 {
-                                    val = a_RNG.RandFloat();
-                                    Scale(val, 0.0, 1.0, itp.min, itp.max);
+                                    continue;
                                 }
-                                m_Traits[it->first].value = val;
+                                val = a_RNG.RandFloat();
+                                Scale(val, 0.0, 1.0, itp.min, itp.max);
+                                if (val == original)
+                                {
+                                    val = std::nextafter(original,
+                                                         original < itp.max ? itp.max : itp.min);
+                                }
+                                trait_it->second.value = val;
                                 did_mutate = true;
                             }
                             else
                             {
-                                while (val == original)
+                                if (itp.mut_power <= 0.0 || itp.min == itp.max)
                                 {
-                                    val += a_RNG.RandFloatSigned() * itp.mut_power;
+                                    continue;
+                                }
+                                for (int attempt = 0; attempt < 32 && val == original; ++attempt)
+                                {
+                                    val = original + a_RNG.RandFloatSigned() * itp.mut_power;
                                     Clamp(val, itp.min, itp.max);
                                 }
-                                m_Traits[it->first].value = val;
+                                if (val == original)
+                                {
+                                    val = std::nextafter(original,
+                                                         original < itp.max ? itp.max : itp.min);
+                                }
+                                trait_it->second.value = val;
                                 did_mutate = true;
                             }
                         }
                         else if (ty == "str")
                         {
                             StringTraitParameters itp = std::get<StringTraitParameters>(it->second.m_Details);
-                            std::vector<double> probs = itp.probs;
-                            probs.resize(itp.set.size());
-                            std::string original = std::get<std::string>(m_Traits[it->first].value);
-                            int idx = a_RNG.Roulette(probs);
-                            while (original == itp.set[idx])
+                            const std::string original = std::get<std::string>(trait_it->second.value);
+                            std::vector<std::string> alternatives;
+                            std::vector<double> probs;
+                            for (std::size_t i = 0; i < itp.set.size(); ++i)
                             {
-                                idx = a_RNG.Roulette(probs);
+                                if (itp.set[i] != original)
+                                {
+                                    alternatives.push_back(itp.set[i]);
+                                    probs.push_back(i < itp.probs.size() ? itp.probs[i] : 0.0);
+                                }
                             }
-                            m_Traits[it->first].value = itp.set[idx];
+                            if (alternatives.empty())
+                            {
+                                continue;
+                            }
+                            trait_it->second.value = alternatives[
+                                static_cast<std::size_t>(a_RNG.Roulette(probs))];
                             did_mutate = true;
                         }
                         else if (ty == "intset")
                         {
                             IntSetTraitParameters itp = std::get<IntSetTraitParameters>(it->second.m_Details);
-                            std::vector<double> probs = itp.probs;
-                            probs.resize(itp.set.size());
-                            intsetelement original = std::get<intsetelement>(m_Traits[it->first].value);
-                            int idx = a_RNG.Roulette(probs);
-                            while (original.value == itp.set[idx].value)
+                            const intsetelement original =
+                                std::get<intsetelement>(trait_it->second.value);
+                            std::vector<intsetelement> alternatives;
+                            std::vector<double> probs;
+                            for (std::size_t i = 0; i < itp.set.size(); ++i)
                             {
-                                idx = a_RNG.Roulette(probs);
+                                if (itp.set[i].value != original.value)
+                                {
+                                    alternatives.push_back(itp.set[i]);
+                                    probs.push_back(i < itp.probs.size() ? itp.probs[i] : 0.0);
+                                }
                             }
-                            m_Traits[it->first].value = itp.set[idx];
+                            if (alternatives.empty())
+                            {
+                                continue;
+                            }
+                            trait_it->second.value = alternatives[
+                                static_cast<std::size_t>(a_RNG.Roulette(probs))];
                             did_mutate = true;
                         }
                         else if (ty == "floatset")
                         {
                             FloatSetTraitParameters itp = std::get<FloatSetTraitParameters>(it->second.m_Details);
-                            std::vector<double> probs = itp.probs;
-                            probs.resize(itp.set.size());
-                            floatsetelement original = std::get<floatsetelement>(m_Traits[it->first].value);
-                            int idx = a_RNG.Roulette(probs);
-                            while (original.value == itp.set[idx].value)
+                            const floatsetelement original =
+                                std::get<floatsetelement>(trait_it->second.value);
+                            std::vector<floatsetelement> alternatives;
+                            std::vector<double> probs;
+                            for (std::size_t i = 0; i < itp.set.size(); ++i)
                             {
-                                idx = a_RNG.Roulette(probs);
+                                if (itp.set[i].value != original.value)
+                                {
+                                    alternatives.push_back(itp.set[i]);
+                                    probs.push_back(i < itp.probs.size() ? itp.probs[i] : 0.0);
+                                }
                             }
-                            m_Traits[it->first].value = itp.set[idx];
+                            if (alternatives.empty())
+                            {
+                                continue;
+                            }
+                            trait_it->second.value = alternatives[
+                                static_cast<std::size_t>(a_RNG.Roulette(probs))];
                             did_mutate = true;
                         }
                     }
@@ -333,7 +412,12 @@ namespace NEAT
             std::map<std::string, double> dist;
             for (auto it = other.begin(); it != other.end(); ++it)
             {
-                TraitType mine = m_Traits[it->first].value;
+                const auto mine_it = m_Traits.find(it->first);
+                if (mine_it == m_Traits.end())
+                {
+                    continue;
+                }
+                TraitType mine = mine_it->second.value;
                 TraitType yours = it->second.value;
 
                 if (mine.index() != yours.index())
@@ -346,12 +430,14 @@ namespace NEAT
                 if (!it->second.dep_key.empty())
                 {
                     // check the parent's trait
-                    if (m_Traits.count(it->second.dep_key) != 0)
+                    const auto mine_dep = m_Traits.find(it->second.dep_key);
+                    const auto other_dep = other.find(it->second.dep_key);
+                    if (mine_dep != m_Traits.end() && other_dep != other.end())
                     {
-                        for (auto &dv : it->second.dep_values)
+                        for (const auto &dv : it->second.dep_values)
                         {
-                            if ((m_Traits[it->second.dep_key].value == dv) &&
-                                (other.at(it->second.dep_key).value == dv))
+                            if ((mine_dep->second.value == dv) &&
+                                (other_dep->second.value == dv))
                             {
                                 doit = true;
                                 break;
@@ -424,19 +510,7 @@ namespace NEAT
             m_IsRecurrent = a_Recurrent;
         }
 
-        LinkGene &operator=(const LinkGene &a_g)
-        {
-            if (this != &a_g)
-            {
-                m_FromNeuronID = a_g.m_FromNeuronID;
-                m_ToNeuronID = a_g.m_ToNeuronID;
-                m_Weight = a_g.m_Weight;
-                m_IsRecurrent = a_g.m_IsRecurrent;
-                m_InnovationID = a_g.m_InnovationID;
-                m_Traits = a_g.m_Traits;
-            }
-            return *this;
-        }
+        LinkGene& operator=(const LinkGene&) = default;
 
         double GetWeight() const { return m_Weight; }
         void SetWeight(double w)  { m_Weight = w; }
@@ -526,27 +600,7 @@ namespace NEAT
                     lhs.m_ActFunction == rhs.m_ActFunction);
         }
 
-        NeuronGene &operator=(const NeuronGene &a_g)
-        {
-            if (this != &a_g)
-            {
-                m_ID = a_g.m_ID;
-                m_Type = a_g.m_Type;
-                m_SplitY = a_g.m_SplitY;
-                if ((m_Type != INPUT) && (m_Type != BIAS))
-                {
-                    x = a_g.x;
-                    y = a_g.y;
-                    m_A = a_g.m_A;
-                    m_B = a_g.m_B;
-                    m_TimeConstant = a_g.m_TimeConstant;
-                    m_Bias = a_g.m_Bias;
-                    m_ActFunction = a_g.m_ActFunction;
-                    m_Traits = a_g.m_Traits;
-                }
-            }
-            return *this;
-        }
+        NeuronGene& operator=(const NeuronGene&) = default;
 
         int ID() const        { return m_ID; }
         NeuronType Type() const { return m_Type; }

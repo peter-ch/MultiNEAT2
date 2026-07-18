@@ -1,7 +1,5 @@
-// fix an assert error on Windows build
-#define assert(x) (x)
-
 // Must include Python.h first on Linux
+#include <cassert>
 #include <Python.h>
 
 // Then include pybind11 headers
@@ -9,6 +7,8 @@
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
 #include <pybind11/operators.h>
+
+#include <utility>
 
 namespace py = pybind11;
 
@@ -26,6 +26,31 @@ namespace py = pybind11;
 #include "Substrate.h"         
 #include "Traits.h"            
 #include "Utils.h"             
+
+namespace
+{
+class PyPhenotypeBehavior : public NEAT::PhenotypeBehavior
+{
+public:
+    using NEAT::PhenotypeBehavior::PhenotypeBehavior;
+
+    bool Acquire(NEAT::Genome* genome) override
+    {
+        PYBIND11_OVERRIDE(bool, NEAT::PhenotypeBehavior, Acquire, genome);
+    }
+
+    double Distance_To(NEAT::PhenotypeBehavior* other) override
+    {
+        PYBIND11_OVERRIDE(
+            double, NEAT::PhenotypeBehavior, Distance_To, other);
+    }
+
+    bool Successful() override
+    {
+        PYBIND11_OVERRIDE(bool, NEAT::PhenotypeBehavior, Successful);
+    }
+};
+}
 
 
 // Create a pybind11 module called "pymultineat"
@@ -67,6 +92,12 @@ PYBIND11_MODULE(pymultineat, m) {
     py::enum_<NEAT::InnovationType>(m, "InnovationType")
         .value("NEW_NEURON", NEAT::NEW_NEURON)
         .value("NEW_LINK", NEAT::NEW_LINK)
+        .export_values();
+
+    py::enum_<NEAT::SearchMode>(m, "SearchMode")
+        .value("COMPLEXIFYING", NEAT::COMPLEXIFYING)
+        .value("SIMPLIFYING", NEAT::SIMPLIFYING)
+        .value("BLENDED", NEAT::BLENDED)
         .export_values();
 
 
@@ -116,7 +147,7 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite("m_ImportanceCoeff", &NEAT::TraitParameters::m_ImportanceCoeff)
         .def_readwrite("m_MutationProb", &NEAT::TraitParameters::m_MutationProb)
         .def_readwrite("type", &NEAT::TraitParameters::type)
-        // Note: m_Details is a variant – binding it directly may require additional work.
+        .def_readwrite("m_Details", &NEAT::TraitParameters::m_Details)
         .def_readwrite("dep_key", &NEAT::TraitParameters::dep_key)
         .def_readwrite("dep_values", &NEAT::TraitParameters::dep_values);
 
@@ -191,6 +222,10 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("GetLinkByIndex", &NEAT::Genome::GetLinkByIndex)
         .def("GetNeuronIndex", &NEAT::Genome::GetNeuronIndex)
         .def("GetLinkIndex", &NEAT::Genome::GetLinkIndex)
+        .def("NumNeurons", &NEAT::Genome::NumNeurons)
+        .def("NumLinks", &NEAT::Genome::NumLinks)
+        .def("NumInputs", &NEAT::Genome::NumInputs)
+        .def("NumOutputs", &NEAT::Genome::NumOutputs)
         .def("SetNeuronXY", &NEAT::Genome::SetNeuronXY)
         .def("SetNeuronX", &NEAT::Genome::SetNeuronX)
         .def("SetNeuronY", &NEAT::Genome::SetNeuronY)
@@ -198,13 +233,30 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("GetAdjFitness", &NEAT::Genome::GetAdjFitness)
         .def("SetFitness", &NEAT::Genome::SetFitness)
         .def("SetAdjFitness", &NEAT::Genome::SetAdjFitness)
+        .def("IsEvaluated", &NEAT::Genome::IsEvaluated)
         .def("SetEvaluated", &NEAT::Genome::SetEvaluated)
+        .def("ResetEvaluated", &NEAT::Genome::ResetEvaluated)
         .def("GetID", &NEAT::Genome::GetID)
+        .def("SetID", &NEAT::Genome::SetID)
         .def("GetDepth", &NEAT::Genome::GetDepth)
+        .def("SetDepth", &NEAT::Genome::SetDepth)
+        .def("CalculateDepth", &NEAT::Genome::CalculateDepth)
         .def("HasDeadEnds", &NEAT::Genome::HasDeadEnds)
+        .def("HasLoops", &NEAT::Genome::HasLoops)
+        .def("FailsConstraints", &NEAT::Genome::FailsConstraints)
+        .def("IsIdenticalTo", &NEAT::Genome::IsIdenticalTo)
+        .def("Validate",
+             [](const NEAT::Genome &genome) {
+                 std::string error;
+                 return py::make_tuple(genome.Validate(&error), error);
+             })
+        .def("GetOffspringAmount", &NEAT::Genome::GetOffspringAmount)
+        .def("SetOffspringAmount", &NEAT::Genome::SetOffspringAmount)
         .def("GetLastNeuronID", &NEAT::Genome::GetLastNeuronID)
         .def("GetLastInnovationID", &NEAT::Genome::GetLastInnovationID)
         .def("BuildPhenotype", &NEAT::Genome::BuildPhenotype)
+        .def("BuildHyperNEATPhenotype",
+             &NEAT::Genome::BuildHyperNEATPhenotype)
         .def("DerivePhenotypicChanges", &NEAT::Genome::DerivePhenotypicChanges)
         .def("CompatibilityDistance", &NEAT::Genome::CompatibilityDistance)
         .def("IsCompatibleWith", &NEAT::Genome::IsCompatibleWith)
@@ -226,6 +278,10 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("Cleanup", &NEAT::Genome::Cleanup)
         .def("Mate", &NEAT::Genome::Mate)
         .def("SortGenes", &NEAT::Genome::SortGenes)
+        .def("Save",
+             py::overload_cast<const char*>(&NEAT::Genome::Save))
+        .def("Serialize", &NEAT::Genome::Serialize)
+        .def_static("Deserialize", &NEAT::Genome::Deserialize)
         .def_readwrite("m_NeuronGenes", &NEAT::Genome::m_NeuronGenes)
         .def_readwrite("m_LinkGenes", &NEAT::Genome::m_LinkGenes)
         .def_readwrite("m_GenomeGene", &NEAT::Genome::m_GenomeGene)
@@ -263,6 +319,7 @@ PYBIND11_MODULE(pymultineat, m) {
     // ========================
 
     py::class_<NEAT::Innovation>(m, "Innovation")
+        .def(py::init<>())
         .def(py::init<int, NEAT::InnovationType, int, int, NEAT::NeuronType, int>(),
              py::arg("a_ID"), py::arg("a_InnovType"), py::arg("a_From"), py::arg("a_To"),
              py::arg("a_NType"), py::arg("a_NID"))
@@ -286,7 +343,22 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("FindLastNeuronID", &NEAT::InnovationDatabase::FindLastNeuronID)
         .def("AddLinkInnovation", &NEAT::InnovationDatabase::AddLinkInnovation)
         .def("AddNeuronInnovation", &NEAT::InnovationDatabase::AddNeuronInnovation)
-        .def("Flush", &NEAT::InnovationDatabase::Flush);
+        .def("Flush", &NEAT::InnovationDatabase::Flush)
+        .def("GetInnovationByIdx",
+             &NEAT::InnovationDatabase::GetInnovationByIdx)
+        .def_readwrite("m_Innovations",
+                       &NEAT::InnovationDatabase::m_Innovations)
+        .def("Serialize", &NEAT::InnovationDatabase::Serialize)
+        .def_static(
+            "Deserialize", &NEAT::InnovationDatabase::Deserialize)
+        .def(py::pickle(
+            [](const NEAT::InnovationDatabase &database) {
+                return database.Serialize();
+            },
+            [](const std::string &state) {
+                return NEAT::InnovationDatabase::Deserialize(state);
+            }
+        ));
 
     // ========================
     // Bindings for NeuralNetwork (and its inner classes)
@@ -324,18 +396,46 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite("m_sensitivity_matrix", &NEAT::Neuron::m_sensitivity_matrix);
 
         py::class_<NEAT::NeuralNetwork>(m, "NeuralNetwork")
-        .def(py::init<bool>(), py::arg("a_Minimal")=false)
+        .def(py::init<bool>(), py::arg("a_Minimal"))
         .def(py::init<>())
+        .def("InitRTRLMatrix", &NEAT::NeuralNetwork::InitRTRLMatrix)
         .def("ActivateFast", &NEAT::NeuralNetwork::ActivateFast)
         .def("Activate", &NEAT::NeuralNetwork::Activate)
         .def("ActivateUseInternalBias", &NEAT::NeuralNetwork::ActivateUseInternalBias)
         .def("ActivateLeaky", &NEAT::NeuralNetwork::ActivateLeaky)
+        .def("RTRL_update_gradients",
+             &NEAT::NeuralNetwork::RTRL_update_gradients)
+        .def("RTRL_update_error",
+             &NEAT::NeuralNetwork::RTRL_update_error)
+        .def("RTRL_update_weights",
+             &NEAT::NeuralNetwork::RTRL_update_weights)
+        .def("Adapt", &NEAT::NeuralNetwork::Adapt)
+        .def("ConnectionExists",
+             &NEAT::NeuralNetwork::ConnectionExists)
         .def("Flush", &NEAT::NeuralNetwork::Flush)
         .def("FlushCube", &NEAT::NeuralNetwork::FlushCube)
         .def("Input", &NEAT::NeuralNetwork::Input)
         .def("Output", &NEAT::NeuralNetwork::Output)
+        .def("AddNeuron", &NEAT::NeuralNetwork::AddNeuron)
+        .def("AddConnection", &NEAT::NeuralNetwork::AddConnection)
+        .def("GetNeuronByIndex", &NEAT::NeuralNetwork::GetNeuronByIndex)
+        .def("GetConnectionByIndex", &NEAT::NeuralNetwork::GetConnectionByIndex)
+        .def("SetInputOutputDimentions",
+             &NEAT::NeuralNetwork::SetInputOutputDimentions)
+        .def("SetInputOutputDimensions",
+             &NEAT::NeuralNetwork::SetInputOutputDimensions)
+        .def("NumInputs", &NEAT::NeuralNetwork::NumInputs)
+        .def("NumOutputs", &NEAT::NeuralNetwork::NumOutputs)
+        .def("GetConnectionLenght",
+             &NEAT::NeuralNetwork::GetConnectionLenght)
+        .def("GetConnectionLength",
+             &NEAT::NeuralNetwork::GetConnectionLength)
+        .def("GetTotalConnectionLength",
+             &NEAT::NeuralNetwork::GetTotalConnectionLength)
         .def("Save", (void (NEAT::NeuralNetwork::*)(const char*)) &NEAT::NeuralNetwork::Save)
         .def("Load", (bool (NEAT::NeuralNetwork::*)(const char*)) &NEAT::NeuralNetwork::Load)
+        .def("Serialize", &NEAT::NeuralNetwork::Serialize)
+        .def_static("Deserialize", &NEAT::NeuralNetwork::Deserialize)
         .def_readwrite("m_num_inputs", &NEAT::NeuralNetwork::m_num_inputs)
         .def_readwrite("m_num_outputs", &NEAT::NeuralNetwork::m_num_outputs)
         .def_readwrite("m_connections", &NEAT::NeuralNetwork::m_connections)
@@ -357,6 +457,8 @@ PYBIND11_MODULE(pymultineat, m) {
             .def("Save", (void (NEAT::Parameters::*)(const char*)) &NEAT::Parameters::Save, py::arg("filename"))
             .def("SaveToStream", (void (NEAT::Parameters::*)(FILE*)) &NEAT::Parameters::Save, py::arg("fstream"))
             .def("Reset", &NEAT::Parameters::Reset)
+            .def("Serialize", &NEAT::Parameters::Serialize)
+            .def_static("Deserialize", &NEAT::Parameters::Deserialize)
             // Public members – Basic parameters
             .def_readwrite("PopulationSize", &NEAT::Parameters::PopulationSize)
             .def_readwrite("Speciation", &NEAT::Parameters::Speciation)
@@ -367,25 +469,15 @@ PYBIND11_MODULE(pymultineat, m) {
             .def_readwrite("AllowClones", &NEAT::Parameters::AllowClones)
             .def_readwrite("ArchiveEnforcement", &NEAT::Parameters::ArchiveEnforcement)
             .def_readwrite("NormalizeGenomeSize", &NEAT::Parameters::NormalizeGenomeSize)
-                .def_property("CustomConstraints",
-                    [](NEAT::Parameters &p) { 
-                        if (p.CustomConstraints) {
-                            return std::function<bool(NEAT::Genome&)>([&p](NEAT::Genome& g) { 
-                                return p.CustomConstraints(g); 
-                            });
-                        }
-                        return std::function<bool(NEAT::Genome&)>();
+                .def_property(
+                    "CustomConstraints",
+                    [](const NEAT::Parameters &parameters) {
+                        return parameters.GetCustomConstraintsFunction();
                     },
-                    [](NEAT::Parameters &p, std::function<bool(NEAT::Genome&)> func) { 
-                        if (func) {
-                            // Store the std::function in a persistent object
-                            static auto persistent_func = func;
-                            p.CustomConstraints = [](NEAT::Genome& g) { 
-                                return persistent_func(g); 
-                            };
-                        } else {
-                            p.CustomConstraints = nullptr;
-                        }
+                    [](NEAT::Parameters &parameters,
+                       std::function<bool(NEAT::Genome&)> callback) {
+                        parameters.SetCustomConstraintsFunction(
+                            std::move(callback));
                     })
             // GA Parameters
             .def_readwrite("YoungAgeTreshold", &NEAT::Parameters::YoungAgeTreshold)
@@ -408,6 +500,7 @@ PYBIND11_MODULE(pymultineat, m) {
             .def_readwrite("TournamentSelection", &NEAT::Parameters::TournamentSelection)
             .def_readwrite("TournamentSize", &NEAT::Parameters::TournamentSize)
             .def_readwrite("EliteFraction", &NEAT::Parameters::EliteFraction)
+            .def_readwrite("Elitism", &NEAT::Parameters::Elitism)
             // Phased Search parameters
             .def_readwrite("PhasedSearching", &NEAT::Parameters::PhasedSearching)
             .def_readwrite("DeltaCoding", &NEAT::Parameters::DeltaCoding)
@@ -519,14 +612,24 @@ PYBIND11_MODULE(pymultineat, m) {
             .def_readwrite("MutateNeuronTraitsProb", &NEAT::Parameters::MutateNeuronTraitsProb)
             .def_readwrite("MutateLinkTraitsProb", &NEAT::Parameters::MutateLinkTraitsProb)
             .def_readwrite("MutateGenomeTraitsProb", &NEAT::Parameters::MutateGenomeTraitsProb)
-            ;
+            .def(py::pickle(
+                [](const NEAT::Parameters &parameters) {
+                    return parameters.Serialize();
+                },
+                [](const std::string &state) {
+                    return NEAT::Parameters::Deserialize(state);
+                }
+            ));
     //};
 
     // ========================
     // Bindings for PhenotypeBehavior
     // ========================
 
-    py::class_<NEAT::PhenotypeBehavior, std::shared_ptr<NEAT::PhenotypeBehavior>>(m, "PhenotypeBehavior")
+    py::class_<
+        NEAT::PhenotypeBehavior,
+        PyPhenotypeBehavior,
+        std::shared_ptr<NEAT::PhenotypeBehavior>>(m, "PhenotypeBehavior")
         .def(py::init<>())
         .def("Acquire", &NEAT::PhenotypeBehavior::Acquire)
         .def("Distance_To", &NEAT::PhenotypeBehavior::Distance_To)
@@ -538,12 +641,23 @@ PYBIND11_MODULE(pymultineat, m) {
     // ========================
 
     py::class_<NEAT::Population>(m, "Population")
+        .def(py::init<>())
         .def(py::init<const NEAT::Genome&, const NEAT::Parameters&, bool, double, int>(),
             py::arg("genome"), py::arg("parameters"), py::arg("randomizeWeights"), py::arg("randomizationRange"), py::arg("rng_seed"))
         .def(py::init<const std::string>())
         .def("GetGeneration", &NEAT::Population::GetGeneration)
+        .def("NumGenomes", &NEAT::Population::NumGenomes)
+        .def("GetSearchMode", &NEAT::Population::GetSearchMode)
+        .def("GetCurrentMPC", &NEAT::Population::GetCurrentMPC)
+        .def("GetBaseMPC", &NEAT::Population::GetBaseMPC)
         .def("GetBestFitnessEver", &NEAT::Population::GetBestFitnessEver)
         .def("GetBestGenome", &NEAT::Population::GetBestGenome)
+        .def("Validate",
+             [](const NEAT::Population& population) {
+                 std::string error;
+                 return py::make_tuple(
+                     population.Validate(&error), error);
+             })
         .def("GetStagnation", &NEAT::Population::GetStagnation)
         .def("GetMPCStagnation", &NEAT::Population::GetMPCStagnation)
         .def("GetNextGenomeID", &NEAT::Population::GetNextGenomeID)
@@ -553,8 +667,20 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("AccessGenomeByID", &NEAT::Population::AccessGenomeByID, py::return_value_policy::reference)
         .def("Epoch", &NEAT::Population::Epoch)
         .def("Save", &NEAT::Population::Save)
+        .def("SaveState", &NEAT::Population::SaveState)
         .def("Tick", &NEAT::Population::Tick, py::return_value_policy::reference)
         .def("NoveltySearchTick", &NEAT::Population::NoveltySearchTick)
+        .def(
+            "InitPhenotypeBehaviorData",
+            py::overload_cast<
+                const std::vector<
+                    std::shared_ptr<NEAT::PhenotypeBehavior>>&>(
+                &NEAT::Population::InitPhenotypeBehaviorData))
+        .def(
+            "GetBehaviorArchive",
+            &NEAT::Population::GetBehaviorArchive)
+        .def("Serialize", &NEAT::Population::Serialize)
+        .def_static("Deserialize", &NEAT::Population::Deserialize)
         .def_readwrite("m_GenomeArchive", &NEAT::Population::m_GenomeArchive)
         .def_readwrite("m_RNG", &NEAT::Population::m_RNG)
         .def_readwrite("m_Parameters", &NEAT::Population::m_Parameters)
@@ -575,8 +701,9 @@ PYBIND11_MODULE(pymultineat, m) {
         .def(py::init<const NEAT::Genome&, const NEAT::Parameters&, int>(),
              py::arg("seed"), py::arg("parameters"), py::arg("id"))
         .def("GetBestFitness", &NEAT::Species::GetBestFitness)
-        .def("NumIndividuals", &NEAT::Species::NumIndividuals)
-        .def("ID", &NEAT::Species::ID)
+        .def("NumIndividuals",
+             py::overload_cast<>(&NEAT::Species::NumIndividuals))
+        .def("ID", py::overload_cast<>(&NEAT::Species::ID))
         .def("GensNoImprovement", &NEAT::Species::GensNoImprovement)
         .def("EvalsNoImprovement", &NEAT::Species::EvalsNoImprovement)
         .def("AgeGens", &NEAT::Species::AgeGens)
@@ -584,11 +711,14 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("GetIndividualByIdx", &NEAT::Species::GetIndividualByIdx)
         .def("IsBestSpecies", &NEAT::Species::IsBestSpecies)
         .def("IsWorstSpecies", &NEAT::Species::IsWorstSpecies)
-        .def("NumEvaluated", &NEAT::Species::NumEvaluated)
+        .def("NumEvaluated",
+             py::overload_cast<>(&NEAT::Species::NumEvaluated))
         .def("GetLeader", &NEAT::Species::GetLeader, py::return_value_policy::reference)
         .def("GetRepresentative", &NEAT::Species::GetRepresentative, py::return_value_policy::reference)
         .def("GetIndividual", &NEAT::Species::GetIndividual, py::return_value_policy::reference)
         .def("GetRandomIndividual", &NEAT::Species::GetRandomIndividual, py::return_value_policy::reference)
+        .def("Serialize", &NEAT::Species::Serialize)
+        .def_static("Deserialize", &NEAT::Species::Deserialize)
         .def_readwrite("m_BestGenome", &NEAT::Species::m_BestGenome)
         .def_readwrite("m_GensNoImprovement", &NEAT::Species::m_GensNoImprovement)
         .def_readwrite("m_EvalsNoImprovement", &NEAT::Species::m_EvalsNoImprovement)
@@ -615,7 +745,17 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("RandFloat", &NEAT::RNG::RandFloat)
         .def("RandFloatSigned", &NEAT::RNG::RandFloatSigned)
         .def("RandGaussSigned", &NEAT::RNG::RandGaussSigned)
-        .def("Roulette", &NEAT::RNG::Roulette);
+        .def("Roulette", &NEAT::RNG::Roulette)
+        .def("Serialize", &NEAT::RNG::Serialize)
+        .def("Deserialize", &NEAT::RNG::Deserialize)
+        .def(py::pickle(
+            [](const NEAT::RNG &rng) { return rng.Serialize(); },
+            [](const std::string &state) {
+                NEAT::RNG rng;
+                rng.Deserialize(state);
+                return rng;
+            }
+        ));
 
     // ========================
     // Bindings for Substrate

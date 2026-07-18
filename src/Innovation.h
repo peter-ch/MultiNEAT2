@@ -5,6 +5,7 @@
 
 #include <vector>
 #include <fstream>
+#include <string>
 
 #include "Genes.h"
 #include "Genome.h"
@@ -67,9 +68,11 @@ public:
     Innovation()
     {
         m_ID           = 0;
+        m_InnovType = NEW_LINK;
         m_FromNeuronID = 0;
         m_ToNeuronID = 0;
         m_NeuronID   = 0;
+        m_NeuronType = NONE;
     }
 
     ////////////////////////////
@@ -188,11 +191,14 @@ public:
 
     Innovation GetInnovationByIdx(int idx) const
     {
-        return m_Innovations[idx];
+        return m_Innovations.at(static_cast<std::size_t>(idx));
     };
 
     // Saves the database to an already opened file
     void Save(FILE* a_file);
+
+    std::string Serialize() const;
+    static InnovationDatabase Deserialize(const std::string& data);
 };
 
 

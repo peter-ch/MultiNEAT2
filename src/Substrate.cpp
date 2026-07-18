@@ -1,4 +1,5 @@
 #include <vector>
+#include <stdexcept>
 #include "NeuralNetwork.h"
 #include "Utils.h"
 #include "Substrate.h"
@@ -61,21 +62,45 @@ Substrate::Substrate(std::vector<std::vector<double> >& a_inputs,
 
 void Substrate::SetCustomConnectivity(std::vector< std::vector<int> >& a_conns)
 {
-    for(unsigned int i=0; i<a_conns.size(); i++)
+    auto coordinate_count = [this](NeuronType type) -> std::size_t
     {
-    	NeuronType src_type = (NeuronType) a_conns[i][0];
-    	int src_idx = a_conns[i][1];
-    	NeuronType dst_type = (NeuronType) a_conns[i][2];
-    	int dst_idx = a_conns[i][3];
+        switch (type)
+        {
+        case INPUT:
+        case BIAS:
+            return m_input_coords.size();
+        case HIDDEN:
+            return m_hidden_coords.size();
+        case OUTPUT:
+            return m_output_coords.size();
+        default:
+            throw std::invalid_argument(
+                "Substrate::SetCustomConnectivity: invalid neuron type.");
+        }
+    };
 
-    	std::vector<int> c;
-    	c.emplace_back(src_type);
-    	c.emplace_back(src_idx);
-    	c.emplace_back(dst_type);
-    	c.emplace_back(dst_idx);
+    for (const auto& connection : a_conns)
+    {
+        if (connection.size() != 4)
+            throw std::invalid_argument(
+                "Substrate::SetCustomConnectivity: every connection must "
+                "contain [source_type, source_index, target_type, target_index].");
 
-    	m_custom_connectivity.emplace_back( c );
+        const auto source_type = static_cast<NeuronType>(connection[0]);
+        const int source_index = connection[1];
+        const auto target_type = static_cast<NeuronType>(connection[2]);
+        const int target_index = connection[3];
+        if (source_index < 0 ||
+            static_cast<std::size_t>(source_index) >= coordinate_count(source_type) ||
+            target_index < 0 ||
+            static_cast<std::size_t>(target_index) >= coordinate_count(target_type))
+        {
+            throw std::out_of_range(
+                "Substrate::SetCustomConnectivity: neuron index is out of range.");
+        }
     }
+
+    m_custom_connectivity = a_conns;
 }
 
 void Substrate::ClearCustomConnectivity()
@@ -120,29 +145,29 @@ int Substrate::GetMinCPPNOutputs()
 
 int Substrate::GetMaxDims()
 {
-    unsigned int max_dims = 0;
-    for(unsigned int i=0; i<m_input_coords.size(); i++)
+    std::size_t max_dims = 0;
+    for(std::size_t i=0; i<m_input_coords.size(); i++)
     {
         if (max_dims < m_input_coords[i].size())
         {
             max_dims = m_input_coords[i].size();
         }
     }
-    for(unsigned int i=0; i<m_hidden_coords.size(); i++)
+    for(std::size_t i=0; i<m_hidden_coords.size(); i++)
     {
         if (max_dims < m_hidden_coords[i].size())
         {
             max_dims = m_hidden_coords[i].size();
         }
     }
-    for(unsigned int i=0; i<m_output_coords.size(); i++)
+    for(std::size_t i=0; i<m_output_coords.size(); i++)
     {
         if (max_dims < m_output_coords[i].size())
         {
             max_dims = m_output_coords[i].size();
         }
     }
-    return max_dims;
+    return static_cast<int>(max_dims);
 }
 
 void Substrate::PrintInfo()

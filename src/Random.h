@@ -3,6 +3,7 @@
 
 #include <vector>
 #include <random>
+#include <string>
 
 namespace NEAT
 {
@@ -21,6 +22,8 @@ namespace NEAT
         double RandFloatSigned();
         double RandGaussSigned();
         int Roulette(const std::vector<double>& a_probs);
+        std::string Serialize() const;
+        void Deserialize(const std::string& data);
     };
 }
 

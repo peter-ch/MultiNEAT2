@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # walker2d_neat.py
 
+import argparse
 import gymnasium as gym
 import pymultineat as pnt
 import numpy as np
@@ -13,7 +14,6 @@ from matplotlib import cm
 from matplotlib.colors import rgb2hex
 from neattools import DrawGenome  # Import the DrawGenome function
 from gymnasium.wrappers import RecordEpisodeStatistics, RecordVideo
-import uuid
 
 # Constant to ensure fitness is always positive
 FITNESS_SHIFT = 250.0
@@ -127,8 +127,6 @@ def evaluate_genome(args):
     fitness = (total_reward / num_trials) 
     return fitness + FITNESS_SHIFT
 
-import argparse
-
 def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description='Walker2D NEAT')
@@ -163,9 +161,6 @@ def main():
     
     # Statistics text box
     stats_text = ax2.text(0.02, 0.95, '', transform=ax2.transAxes, verticalalignment='top')
-    
-    # Create a temporary environment for serial evaluation and rendering
-    temp_env = gym.make('Walker2d-v5')
     
     params = pnt.Parameters()
     params.PopulationSize = 300
@@ -326,7 +321,7 @@ def main():
         population_bars = ax2.bar(range(len(fitness_data)), fitness_data, color=colors)
         
         # Update statistics
-        stats = f"Population Stats:\n"
+        stats = "Population Stats:\n"
         stats += f"Max Neurons: {max(neurons_data)}\n"
         stats += f"Min Neurons: {min(neurons_data)}\n"
         stats += f"Max Links: {max(links_data)}\n"

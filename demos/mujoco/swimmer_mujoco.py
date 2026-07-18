@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
 # swimmer_neat.py
 
+import argparse
 import gymnasium as gym
 import pymultineat as pnt
-import numpy as np
 import time
 import multiprocessing
 from tqdm import tqdm
 import pygame  # For key press detection
 import matplotlib.pyplot as plt
-import queue
 import networkx as nx
 
 # Worker initialization function for multiprocessing
@@ -261,7 +260,7 @@ def DrawGenome(genome, ax=None, node_size=100, with_edge_labels=False):
             ttype = "Bias"
         else:
             ttype = str(node_type)
-        labels[node] = f"{node}"
+        labels[node] = f"{node}\n{ttype}"
     nx.draw_networkx_labels(G, pos, labels=labels, font_size=8, ax=ax)
     
     if with_edge_labels:
@@ -285,8 +284,6 @@ def DrawGenome(genome, ax=None, node_size=100, with_edge_labels=False):
     if own_fig:
         plt.tight_layout()
         plt.show()
-
-import argparse
 
 def main():
     # Parse command-line arguments

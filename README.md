@@ -104,9 +104,22 @@ Run the self-contained XOR example with:
 python demos/xor.py
 ```
 
-The Box2D and MuJoCo examples under `demos/` require their corresponding
-Gymnasium extras and visualization dependencies. They are not required by
-the core library.
+The physics-control suite covers seven Box2D configurations and all eleven
+Gymnasium MuJoCo tasks through a shared trainer with reproducible seeding,
+parallel evaluation, checkpoint/resume, metrics, plots, video recording, and
+real three-step smoke modes. Existing demo filenames remain runnable.
+
+```sh
+python -m pip install -r requirements-box2d.txt
+python demos/box2d/lunar_lander_box2d.py --smoke
+
+python -m pip install -r requirements-mujoco.txt
+python demos/run_gymnasium_suite.py --family mujoco --inspect
+```
+
+See [demos/README.md](demos/README.md) for the complete task catalog and CLI
+guide. Simulator dependencies are optional and are not required by the core
+library.
 
 ## Advanced evolutionary operators
 
@@ -167,6 +180,11 @@ parameters.MutationOperatorsPerOffspring = 1.0
 parameters.AdaptiveMutationStart = 20
 parameters.AdaptiveMutationRate = 0.05
 parameters.AdaptiveMutationMaxFactor = 3.0
+
+# Stabilize species allocation against outliers without changing the
+# within-species parent selector.
+parameters.FitnessScaling = neat.SIGMA_FITNESS_SCALING
+parameters.FitnessSigmaScale = 2.0
 ```
 
 Direct experiments can use
@@ -192,6 +210,7 @@ python -m pip install -r requirements-visualization.txt
 - weight sign/magnitude encoding and curved recurrent connections;
 - activation and trait labels;
 - genome comparison and machine-readable topology statistics;
+- three-panel structural diffs for inspecting crossover and mutation;
 - population/species dashboards and an `EvolutionTracker`;
 - population health summaries with entropy-based effective diversity;
 - interactive population and evolution dashboards;
@@ -201,6 +220,7 @@ python -m pip install -r requirements-visualization.txt
 ```python
 from neattools import (
     DrawGenome,
+    DrawGenomeComparison,
     DrawPopulation,
     InteractiveGenome,
     InteractivePopulation,
@@ -208,6 +228,7 @@ from neattools import (
 )
 
 DrawGenome(genome, layout="topology", show_activation=True)
+DrawGenomeComparison(parent, offspring)
 DrawPopulation(population)
 InteractiveGenome(genome).write_html("genome.html")
 InteractivePopulation(population).write_html("population.html")
@@ -244,6 +265,9 @@ archives, and all trait data must be preserved exactly.
   deterministic tie bias, while minimum species sizes and species elitism can
   protect viable niches. Negative fitness is supported by parent and removal
   selection.
+- Population-wide shifted, linear-rank, sigma, and Boltzmann fitness scaling
+  are available for offspring allocation. Every mode remains finite across
+  the complete `double` range; shifted scaling is the compatibility default.
 - Elitism copies distinct top-ranked genomes rather than repeating one
   champion to fill a multi-elite quota.
 - Medoid representatives, proportional compatibility-threshold control, and
@@ -253,13 +277,15 @@ archives, and all trait data must be preserved exactly.
   pruning, optional LEO expression, iterative hidden discovery, deterministic
   node indexing, link deduplication, and reachability pruning. Quadtree depth
   is bounded to prevent accidental exponential allocation.
-- RTRL supports multiple outputs and configurable learning rates. Its sparse
-  topology update preserves the previous recurrent state and avoids repeated
-  connection scans from the inner gradient loops.
+- RTRL supports multiple outputs and configurable learning rates. Exact
+  derivatives are implemented for every differentiable activation. The
+  additive sparse RTRL path stores `O(neurons * connections)` sensitivities
+  instead of the legacy cubic matrix while preserving recurrent state.
 - `ActivateFast()` is the unchecked phenotype hot path and fuses signal
   calculation with accumulation. `Activate()` remains the topology-validating
   entry point. `ActivateSteps()` validates once (when requested) and advances
-  recurrent networks without repeated API crossings.
+  recurrent networks without repeated API crossings. `ActivateBatch()`
+  evaluates independent samples in one C++/Python call.
 
 Corrected convenience names such as `SetInputOutputDimensions()` and
 `GetConnectionLength()` are additive; historical misspellings remain

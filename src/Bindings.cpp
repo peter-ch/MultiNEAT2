@@ -150,6 +150,21 @@ PYBIND11_MODULE(pymultineat, m) {
             NEAT::PROPORTIONAL_COMPATIBILITY_THRESHOLD)
         .export_values();
 
+    py::enum_<NEAT::FitnessScalingMode>(m, "FitnessScalingMode")
+        .value(
+            "SHIFTED_FITNESS_SCALING",
+            NEAT::SHIFTED_FITNESS_SCALING)
+        .value(
+            "LINEAR_RANK_FITNESS_SCALING",
+            NEAT::LINEAR_RANK_FITNESS_SCALING)
+        .value(
+            "SIGMA_FITNESS_SCALING",
+            NEAT::SIGMA_FITNESS_SCALING)
+        .value(
+            "BOLTZMANN_FITNESS_SCALING",
+            NEAT::BOLTZMANN_FITNESS_SCALING)
+        .export_values();
+
 
     // ========================
     // Bindings for traits-related classes
@@ -401,6 +416,7 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("AddLinkInnovation", &NEAT::InnovationDatabase::AddLinkInnovation)
         .def("AddNeuronInnovation", &NEAT::InnovationDatabase::AddNeuronInnovation)
         .def("Flush", &NEAT::InnovationDatabase::Flush)
+        .def("RebuildIndex", &NEAT::InnovationDatabase::RebuildIndex)
         .def("GetInnovationByIdx",
              &NEAT::InnovationDatabase::GetInnovationByIdx)
         .def_readwrite("m_Innovations",
@@ -442,6 +458,7 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite("m_timeconst", &NEAT::Neuron::m_timeconst)
         .def_readwrite("m_bias", &NEAT::Neuron::m_bias)
         .def_readwrite("m_membrane_potential", &NEAT::Neuron::m_membrane_potential)
+        .def_readwrite("m_last_input", &NEAT::Neuron::m_last_input)
         .def_readwrite("m_activation_function_type", &NEAT::Neuron::m_activation_function_type)
         .def_readwrite("m_x", &NEAT::Neuron::m_x)
         .def_readwrite("m_y", &NEAT::Neuron::m_y)
@@ -458,6 +475,8 @@ PYBIND11_MODULE(pymultineat, m) {
         .def(py::init<bool>(), py::arg("a_Minimal"))
         .def(py::init<>())
         .def("InitRTRLMatrix", &NEAT::NeuralNetwork::InitRTRLMatrix)
+        .def("InitSparseRTRLMatrix",
+             &NEAT::NeuralNetwork::InitSparseRTRLMatrix)
         .def("ActivateFast", &NEAT::NeuralNetwork::ActivateFast)
         .def("Activate", &NEAT::NeuralNetwork::Activate)
         .def(
@@ -469,6 +488,8 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("ActivateLeaky", &NEAT::NeuralNetwork::ActivateLeaky)
         .def("RTRL_update_gradients",
              &NEAT::NeuralNetwork::RTRL_update_gradients)
+        .def("RTRL_update_gradients_sparse",
+             &NEAT::NeuralNetwork::RTRL_update_gradients_sparse)
         .def("RTRL_update_error",
              py::overload_cast<double>(
                  &NEAT::NeuralNetwork::RTRL_update_error))
@@ -477,6 +498,18 @@ PYBIND11_MODULE(pymultineat, m) {
                  &NEAT::NeuralNetwork::RTRL_update_error),
              py::arg("targets"),
              py::arg("learning_rate") = 0.0001)
+        .def(
+            "RTRL_update_error_sparse",
+            py::overload_cast<double, double>(
+                &NEAT::NeuralNetwork::RTRL_update_error_sparse),
+            py::arg("target"),
+            py::arg("learning_rate") = 0.0001)
+        .def(
+            "RTRL_update_error_sparse",
+            py::overload_cast<const std::vector<double>&, double>(
+                &NEAT::NeuralNetwork::RTRL_update_error_sparse),
+            py::arg("targets"),
+            py::arg("learning_rate") = 0.0001)
         .def("RTRL_update_weights",
              &NEAT::NeuralNetwork::RTRL_update_weights)
         .def("Adapt", &NEAT::NeuralNetwork::Adapt)
@@ -485,7 +518,17 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("Flush", &NEAT::NeuralNetwork::Flush)
         .def("FlushCube", &NEAT::NeuralNetwork::FlushCube)
         .def("Input", &NEAT::NeuralNetwork::Input)
+        .def("InputExact", &NEAT::NeuralNetwork::InputExact)
         .def("Output", &NEAT::NeuralNetwork::Output)
+        .def(
+            "ActivateBatch",
+            &NEAT::NeuralNetwork::ActivateBatch,
+            py::arg("inputs"),
+            py::arg("steps") = 1,
+            py::arg("use_internal_bias") = false)
+        .def(
+            "SparseRTRLStateSize",
+            &NEAT::NeuralNetwork::SparseRTRLStateSize)
         .def("AddNeuron", &NEAT::NeuralNetwork::AddNeuron)
         .def("AddConnection", &NEAT::NeuralNetwork::AddConnection)
         .def("GetNeuronByIndex", &NEAT::NeuralNetwork::GetNeuronByIndex)
@@ -717,6 +760,10 @@ PYBIND11_MODULE(pymultineat, m) {
             .def_readwrite("AdaptiveMutationStart", &NEAT::Parameters::AdaptiveMutationStart)
             .def_readwrite("AdaptiveMutationRate", &NEAT::Parameters::AdaptiveMutationRate)
             .def_readwrite("AdaptiveMutationMaxFactor", &NEAT::Parameters::AdaptiveMutationMaxFactor)
+            .def_readwrite("FitnessScaling", &NEAT::Parameters::FitnessScaling)
+            .def_readwrite("FitnessRankPressure", &NEAT::Parameters::FitnessRankPressure)
+            .def_readwrite("FitnessSigmaScale", &NEAT::Parameters::FitnessSigmaScale)
+            .def_readwrite("FitnessBoltzmannTemperature", &NEAT::Parameters::FitnessBoltzmannTemperature)
             .def(py::pickle(
                 [](const NEAT::Parameters &parameters) {
                     return parameters.Serialize();

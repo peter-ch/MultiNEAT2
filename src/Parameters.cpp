@@ -179,7 +179,11 @@ namespace
     X(MutationOperatorsPerOffspring)                                        \
     X(AdaptiveMutationStart)                                                \
     X(AdaptiveMutationRate)                                                 \
-    X(AdaptiveMutationMaxFactor)
+    X(AdaptiveMutationMaxFactor)                                            \
+    X(FitnessScaling)                                                       \
+    X(FitnessRankPressure)                                                  \
+    X(FitnessSigmaScale)                                                    \
+    X(FitnessBoltzmannTemperature)
 
 template <typename T>
 void WriteScalar(std::ostream& output, const T& value)
@@ -494,6 +498,10 @@ void Parameters::Reset()
     AdaptiveMutationStart = 0;
     AdaptiveMutationRate = 0.0;
     AdaptiveMutationMaxFactor = 1.0;
+    FitnessScaling = SHIFTED_FITNESS_SCALING;
+    FitnessRankPressure = 1.5;
+    FitnessSigmaScale = 2.0;
+    FitnessBoltzmannTemperature = 1.0;
 }
 
 int Parameters::Load(std::ifstream& input)
@@ -678,6 +686,11 @@ bool Parameters::Validate(std::string* error) const
     {
         return fail(
             "CompatibilityThresholdControl is not a supported mode");
+    }
+    if (FitnessScaling < SHIFTED_FITNESS_SCALING ||
+        FitnessScaling > BOLTZMANN_FITNESS_SCALING)
+    {
+        return fail("FitnessScaling is not a supported mode");
     }
     if (MinSpeciesSize > PopulationSize)
         return fail("MinSpeciesSize cannot exceed PopulationSize");
@@ -870,11 +883,20 @@ bool Parameters::Validate(std::string* error) const
     {
         return fail("RankSelectionPressure must be between 1 and 2");
     }
+    if (!std::isfinite(FitnessRankPressure) ||
+        FitnessRankPressure < 1.0 ||
+        FitnessRankPressure > 2.0)
+    {
+        return fail("FitnessRankPressure must be between 1 and 2");
+    }
     const std::pair<const char*, double> positive_values[] = {
         {"RankSelectionExponent", RankSelectionExponent},
         {"BoltzmannTemperature", BoltzmannTemperature},
         {"WeightMutationSigma", WeightMutationSigma},
-        {"WeightMutationCauchyScale", WeightMutationCauchyScale}};
+        {"WeightMutationCauchyScale", WeightMutationCauchyScale},
+        {"FitnessSigmaScale", FitnessSigmaScale},
+        {"FitnessBoltzmannTemperature",
+         FitnessBoltzmannTemperature}};
     for (const auto& item : positive_values)
     {
         if (!std::isfinite(item.second) || item.second <= 0.0)

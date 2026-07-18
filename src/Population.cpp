@@ -90,6 +90,247 @@ std::size_t ChooseRepresentativeIndex(
     return best_index;
 }
 
+std::vector<double> TransformFitnessValues(
+    const std::vector<double>& raw_fitness,
+    const Parameters& parameters)
+{
+    if (raw_fitness.empty())
+        return {};
+
+    constexpr long double epsilon = 1.0e-12L;
+    std::vector<double> transformed(raw_fitness.size(), 0.0);
+    std::vector<std::size_t> finite_indices;
+    finite_indices.reserve(raw_fitness.size());
+    for (std::size_t i = 0; i < raw_fitness.size(); ++i)
+    {
+        if (std::isfinite(raw_fitness[i]))
+            finite_indices.push_back(i);
+    }
+    if (finite_indices.empty())
+    {
+        std::fill(transformed.begin(), transformed.end(), 1.0);
+        return transformed;
+    }
+
+    switch (parameters.FitnessScaling)
+    {
+    case SHIFTED_FITNESS_SCALING:
+    {
+        long double minimum =
+            static_cast<long double>(raw_fitness[finite_indices.front()]);
+        long double maximum = minimum;
+        for (const std::size_t index : finite_indices)
+        {
+            minimum = std::min(
+                minimum,
+                static_cast<long double>(raw_fitness[index]));
+            maximum = std::max(
+                maximum,
+                static_cast<long double>(raw_fitness[index]));
+        }
+        if (minimum <= 0.0L)
+        {
+            constexpr long double legacy_offset = 1.0e-7L;
+            long double scale = std::max(
+                std::abs(minimum), std::abs(maximum));
+            if (scale <= 0.0L)
+                scale = 1.0L;
+            if (scale <= legacy_offset)
+            {
+                const long double normalizer =
+                    maximum - minimum + legacy_offset;
+                for (const std::size_t index : finite_indices)
+                {
+                    transformed[index] = static_cast<double>(
+                        (static_cast<long double>(
+                             raw_fitness[index]) -
+                         minimum + legacy_offset) /
+                        normalizer);
+                }
+            }
+            else
+            {
+                const long double scaled_minimum = minimum / scale;
+                const long double scaled_offset =
+                    legacy_offset / scale;
+                const long double scaled_range =
+                    maximum / scale - scaled_minimum;
+                const long double normalizer =
+                    scaled_range + scaled_offset;
+                for (const std::size_t index : finite_indices)
+                {
+                    transformed[index] = static_cast<double>(
+                        (static_cast<long double>(
+                             raw_fitness[index]) /
+                             scale -
+                         scaled_minimum + scaled_offset) /
+                        normalizer);
+                }
+            }
+        }
+        else
+        {
+            for (const std::size_t index : finite_indices)
+            {
+                transformed[index] = static_cast<double>(
+                    static_cast<long double>(raw_fitness[index]) /
+                    maximum);
+            }
+        }
+        break;
+    }
+
+    case LINEAR_RANK_FITNESS_SCALING:
+    {
+        std::stable_sort(
+            finite_indices.begin(),
+            finite_indices.end(),
+            [&raw_fitness](std::size_t lhs, std::size_t rhs)
+            {
+                return raw_fitness[lhs] > raw_fitness[rhs];
+            });
+        const long double count =
+            static_cast<long double>(finite_indices.size());
+        std::size_t first = 0;
+        while (first < finite_indices.size())
+        {
+            std::size_t last = first + 1;
+            while (last < finite_indices.size() &&
+                   raw_fitness[finite_indices[last]] ==
+                       raw_fitness[finite_indices[first]])
+            {
+                ++last;
+            }
+            const long double average_rank =
+                (static_cast<long double>(first) +
+                 static_cast<long double>(last - 1)) /
+                2.0L;
+            long double weight = 1.0L;
+            if (finite_indices.size() > 1)
+            {
+                const long double pressure =
+                    parameters.FitnessRankPressure;
+                weight =
+                    (2.0L - pressure) / count +
+                    2.0L *
+                        (count - average_rank - 1.0L) *
+                        (pressure - 1.0L) /
+                        (count * (count - 1.0L));
+            }
+            for (std::size_t rank = first; rank < last; ++rank)
+            {
+                transformed[finite_indices[rank]] =
+                    static_cast<double>(std::max(epsilon, weight));
+            }
+            first = last;
+        }
+        break;
+    }
+
+    case SIGMA_FITNESS_SCALING:
+    {
+        long double scale = 0.0L;
+        for (const std::size_t index : finite_indices)
+        {
+            scale = std::max(
+                scale,
+                std::abs(
+                    static_cast<long double>(raw_fitness[index])));
+        }
+        if (scale <= 0.0L)
+            scale = 1.0L;
+        long double mean = 0.0L;
+        long double sum_squared_deviation = 0.0L;
+        std::size_t count = 0;
+        for (const std::size_t index : finite_indices)
+        {
+            ++count;
+            const long double value =
+                static_cast<long double>(raw_fitness[index]) / scale;
+            const long double delta = value - mean;
+            mean += delta / static_cast<long double>(count);
+            sum_squared_deviation += delta * (value - mean);
+        }
+        const long double deviation =
+            count > 1
+                ? std::sqrt(
+                      sum_squared_deviation /
+                      static_cast<long double>(count))
+                : 0.0L;
+        for (const std::size_t index : finite_indices)
+        {
+            const long double weight =
+                deviation > 0.0L
+                    ? 1.0L +
+                          (static_cast<long double>(raw_fitness[index]) /
+                               scale -
+                           mean) /
+                              (static_cast<long double>(
+                                   parameters.FitnessSigmaScale) *
+                               deviation)
+                    : 1.0L;
+            transformed[index] =
+                static_cast<double>(std::max(epsilon, weight));
+        }
+        break;
+    }
+
+    case BOLTZMANN_FITNESS_SCALING:
+    {
+        long double maximum =
+            static_cast<long double>(raw_fitness[finite_indices.front()]);
+        for (const std::size_t index : finite_indices)
+        {
+            maximum = std::max(
+                maximum,
+                static_cast<long double>(raw_fitness[index]));
+        }
+        for (const std::size_t index : finite_indices)
+        {
+            const long double exponent =
+                (static_cast<long double>(raw_fitness[index]) - maximum) /
+                static_cast<long double>(
+                    parameters.FitnessBoltzmannTemperature);
+            transformed[index] = static_cast<double>(
+                std::max(epsilon, std::exp(exponent)));
+        }
+        break;
+    }
+    }
+
+    double maximum = 0.0;
+    for (const std::size_t index : finite_indices)
+    {
+        const double value = transformed[index];
+        if (std::isfinite(value))
+            maximum = std::max(maximum, value);
+    }
+    if (maximum <= 0.0)
+    {
+        for (const std::size_t index : finite_indices)
+            transformed[index] = 1.0;
+    }
+    else
+    {
+        for (const std::size_t index : finite_indices)
+        {
+            const double value = transformed[index];
+            transformed[index] =
+                std::isfinite(value)
+                    ? std::max(
+                          static_cast<double>(epsilon),
+                          value / maximum)
+                    : 1.0;
+        }
+    }
+    for (std::size_t i = 0; i < raw_fitness.size(); ++i)
+    {
+        if (!std::isfinite(raw_fitness[i]))
+            transformed[i] = static_cast<double>(epsilon);
+    }
+    return transformed;
+}
+
 } // namespace
 
 bool Population::Validate(std::string* error) const
@@ -521,29 +762,59 @@ void Population::AdjustFitness()
             "Cannot adjust fitness for an empty population");
     }
 
-    double minimum_fitness = 0.0;
-    bool found_finite = false;
+    std::vector<double> raw_fitness;
+    raw_fitness.reserve(NumGenomes());
     for (const auto &species : m_Species)
     {
         for (const auto &genome : species.m_Individuals)
+            raw_fitness.push_back(genome.GetFitness());
+    }
+    const std::vector<double> transformed =
+        TransformFitnessValues(raw_fitness, m_Parameters);
+
+    std::size_t offset = 0;
+    for (auto &species : m_Species)
+    {
+        const std::size_t species_size =
+            species.m_Individuals.size();
+        species.AdjustFitness(
+            m_Parameters,
+            std::vector<double>(
+                transformed.begin() +
+                    static_cast<std::ptrdiff_t>(offset),
+                transformed.begin() +
+                    static_cast<std::ptrdiff_t>(
+                        offset + species_size)));
+        offset += species_size;
+    }
+
+    // Age and stagnation multipliers are user configurable. Normalize their
+    // result before summation so even very large finite settings cannot
+    // overflow CountOffspring; common scaling leaves allocation unchanged.
+    double maximum_adjusted = 0.0;
+    for (const auto& species : m_Species)
+    {
+        for (const auto& genome : species.m_Individuals)
         {
-            if (std::isfinite(genome.GetFitness()))
+            if (std::isfinite(genome.GetAdjFitness()))
             {
-                minimum_fitness = found_finite
-                    ? std::min(minimum_fitness, genome.GetFitness())
-                    : genome.GetFitness();
-                found_finite = true;
+                maximum_adjusted =
+                    std::max(maximum_adjusted, genome.GetAdjFitness());
             }
         }
     }
-    const double offset =
-        !found_finite || minimum_fitness <= 0.0
-            ? -minimum_fitness + 1.0e-7
-            : 0.0;
-
-    for (auto &species : m_Species)
+    if (maximum_adjusted <= 0.0)
+        maximum_adjusted = 1.0;
+    for (auto& species : m_Species)
     {
-        species.AdjustFitness(m_Parameters, offset);
+        for (auto& genome : species.m_Individuals)
+        {
+            const double adjusted = genome.GetAdjFitness();
+            genome.SetAdjFitness(
+                std::isfinite(adjusted) && adjusted > 0.0
+                    ? adjusted / maximum_adjusted
+                    : 1.0e-12);
+        }
     }
 }
 

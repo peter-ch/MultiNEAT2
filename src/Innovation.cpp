@@ -88,6 +88,48 @@ void ValidateInnovationState(const InnovationDatabase& database,
 }
 }
 
+std::uint64_t InnovationDatabase::EndpointKey(int a_In, int a_Out)
+{
+    return (static_cast<std::uint64_t>(
+                static_cast<std::uint32_t>(a_In))
+            << 32U) |
+           static_cast<std::uint32_t>(a_Out);
+}
+
+void InnovationDatabase::AppendToIndex(std::size_t a_Index) const
+{
+    const Innovation& innovation = m_Innovations.at(a_Index);
+    auto& index =
+        innovation.InnovType() == NEW_LINK
+            ? m_LinkInnovationIndex
+            : m_NeuronInnovationIndex;
+    index[EndpointKey(
+              innovation.FromNeuronID(),
+              innovation.ToNeuronID())]
+        .push_back(static_cast<int>(a_Index));
+}
+
+void InnovationDatabase::RebuildIndex() const
+{
+    m_LinkInnovationIndex.clear();
+    m_NeuronInnovationIndex.clear();
+    m_LinkInnovationIndex.reserve(m_Innovations.size());
+    m_NeuronInnovationIndex.reserve(m_Innovations.size());
+    for (std::size_t index = 0; index < m_Innovations.size(); ++index)
+        AppendToIndex(index);
+    m_IndexedInnovationCount = m_Innovations.size();
+    m_IndexedInnovationData = m_Innovations.data();
+}
+
+void InnovationDatabase::EnsureIndex() const
+{
+    if (m_IndexedInnovationCount != m_Innovations.size() ||
+        m_IndexedInnovationData != m_Innovations.data())
+    {
+        RebuildIndex();
+    }
+}
+
 
 // Creates an empty database
 InnovationDatabase::InnovationDatabase()
@@ -134,7 +176,7 @@ void InnovationDatabase::Init(int a_LastInnovationNum, int a_LastNeuronID)
 // Initializes a database from a given genome
 void InnovationDatabase::Init(const Genome& a_Genome)
 {
-    m_Innovations.clear();
+    Flush();
     for(unsigned int i=0; i<a_Genome.NumLinks(); i++)
     {
         Innovation t_innov( a_Genome.GetLinkByIndex(i).InnovationID(), NEW_LINK, a_Genome.GetLinkByIndex(i).FromNeuronID(), a_Genome.GetLinkByIndex(i).ToNeuronID(), NONE, -1);
@@ -156,7 +198,7 @@ void InnovationDatabase::Init(const Genome& a_Genome)
 
 void InnovationDatabase::Init(std::ifstream& a_DataFile)
 {
-    m_Innovations.clear();
+    Flush();
     m_NextInnovationNum = 0;
     m_NextNeuronID = 0;
 
@@ -318,18 +360,17 @@ int InnovationDatabase::CheckInnovation(int a_In, int a_Out, InnovationType a_Ty
         (a_Type != NEW_NEURON && a_Type != NEW_LINK))
         throw std::invalid_argument("Invalid innovation query");
 
-    // search the list for a match
-    for(unsigned int i=0; i < m_Innovations.size(); i++)
-    {
-        if ((m_Innovations[i].FromNeuronID() == a_In) && (m_Innovations[i].ToNeuronID() == a_Out) && (m_Innovations[i].InnovType() == a_Type))
-        {
-            // match found?
-            return m_Innovations[i].ID();
-        }
-    }
-
-    // not found
-    return -1;
+    EnsureIndex();
+    const auto& index =
+        a_Type == NEW_LINK
+            ? m_LinkInnovationIndex
+            : m_NeuronInnovationIndex;
+    const auto found = index.find(EndpointKey(a_In, a_Out));
+    return found == index.end()
+        ? -1
+        : m_Innovations[static_cast<std::size_t>(
+              found->second.front())]
+              .ID();
 }
 
 
@@ -338,19 +379,17 @@ int InnovationDatabase::CheckLastInnovation(int a_In, int a_Out, InnovationType 
     if (a_In <= 0 || a_Out <= 0 ||
         (a_Type != NEW_NEURON && a_Type != NEW_LINK))
         throw std::invalid_argument("Invalid innovation query");
-    int t_ID = -1;
-
-    // search the list for a match
-    for(unsigned int i=0; i < m_Innovations.size(); i++)
-    {
-        if ((m_Innovations[i].FromNeuronID() == a_In) && (m_Innovations[i].ToNeuronID() == a_Out) && (m_Innovations[i].InnovType() == a_Type))
-        {
-            // match found?
-            t_ID = m_Innovations[i].ID();
-        }
-    }
-
-    return t_ID;
+    EnsureIndex();
+    const auto& index =
+        a_Type == NEW_LINK
+            ? m_LinkInnovationIndex
+            : m_NeuronInnovationIndex;
+    const auto found = index.find(EndpointKey(a_In, a_Out));
+    return found == index.end()
+        ? -1
+        : m_Innovations[static_cast<std::size_t>(
+              found->second.back())]
+              .ID();
 }
 
 
@@ -361,20 +400,13 @@ std::vector<int> InnovationDatabase::CheckAllInnovations(int a_In, int a_Out, In
         (a_Type != NEW_NEURON && a_Type != NEW_LINK))
         throw std::invalid_argument("Invalid innovation query");
 
-    std::vector<int> t_idxs;
-    t_idxs.clear();
-
-    // search the list for a match
-    for(unsigned int i=0; i < m_Innovations.size(); i++)
-    {
-        if ((m_Innovations[i].FromNeuronID() == a_In) && (m_Innovations[i].ToNeuronID() == a_Out) && (m_Innovations[i].InnovType() == a_Type))
-        {
-            // match found?
-            t_idxs.emplace_back( i );
-        }
-    }
-
-    return t_idxs;
+    EnsureIndex();
+    const auto& index =
+        a_Type == NEW_LINK
+            ? m_LinkInnovationIndex
+            : m_NeuronInnovationIndex;
+    const auto found = index.find(EndpointKey(a_In, a_Out));
+    return found == index.end() ? std::vector<int>{} : found->second;
 }
 
 
@@ -386,37 +418,28 @@ int InnovationDatabase::FindNeuronID(int a_In, int a_Out) const
     if (a_In <= 0 || a_Out <= 0)
         throw std::invalid_argument("Invalid neuron innovation query");
 
-    // search the list for a match
-    for(unsigned int i=0; i < m_Innovations.size(); i++)
-    {
-        if ((m_Innovations[i].FromNeuronID() == a_In) && (m_Innovations[i].ToNeuronID() == a_Out) && (m_Innovations[i].InnovType() == NEW_NEURON))
-        {
-            // match found?
-            return m_Innovations[i].NeuronID();
-        }
-    }
-
-    // Not found
-    return -1;
+    EnsureIndex();
+    const auto found = m_NeuronInnovationIndex.find(
+        EndpointKey(a_In, a_Out));
+    return found == m_NeuronInnovationIndex.end()
+        ? -1
+        : m_Innovations[static_cast<std::size_t>(
+              found->second.front())]
+              .NeuronID();
 }
 
 int InnovationDatabase::FindLastNeuronID(int a_In, int a_Out) const
 {
     if (a_In <= 0 || a_Out <= 0)
         throw std::invalid_argument("Invalid neuron innovation query");
-    int t_ID = -1;
-
-    // search the list for a match
-    for(unsigned int i=0; i < m_Innovations.size(); i++)
-    {
-        if ((m_Innovations[i].FromNeuronID() == a_In) && (m_Innovations[i].ToNeuronID() == a_Out) && (m_Innovations[i].InnovType() == NEW_NEURON))
-        {
-            // match found?
-            t_ID = m_Innovations[i].NeuronID();
-        }
-    }
-
-    return t_ID;
+    EnsureIndex();
+    const auto found = m_NeuronInnovationIndex.find(
+        EndpointKey(a_In, a_Out));
+    return found == m_NeuronInnovationIndex.end()
+        ? -1
+        : m_Innovations[static_cast<std::size_t>(
+              found->second.back())]
+              .NeuronID();
 }
 
 
@@ -429,7 +452,11 @@ int InnovationDatabase::AddLinkInnovation(int a_In, int a_Out)
     if (m_NextInnovationNum == std::numeric_limits<int>::max())
         throw std::overflow_error("Innovation ID space is exhausted");
 
+    EnsureIndex();
     m_Innovations.emplace_back( Innovation(m_NextInnovationNum, NEW_LINK, a_In, a_Out, NONE, -1) );
+    AppendToIndex(m_Innovations.size() - 1);
+    m_IndexedInnovationCount = m_Innovations.size();
+    m_IndexedInnovationData = m_Innovations.data();
     m_NextInnovationNum++;
 
     return (m_NextInnovationNum - 1);
@@ -454,7 +481,11 @@ int InnovationDatabase::AddNeuronInnovation(int a_In, int a_Out, NeuronType a_NT
             "Innovation or neuron ID space is exhausted");
     }
 
+    EnsureIndex();
     m_Innovations.emplace_back( Innovation(m_NextInnovationNum, NEW_NEURON, a_In, a_Out, a_NType, m_NextNeuronID) );
+    AppendToIndex(m_Innovations.size() - 1);
+    m_IndexedInnovationCount = m_Innovations.size();
+    m_IndexedInnovationData = m_Innovations.data();
     m_NextInnovationNum++;
     m_NextNeuronID++;
 
@@ -468,6 +499,10 @@ int InnovationDatabase::AddNeuronInnovation(int a_In, int a_Out, NeuronType a_NT
 void InnovationDatabase::Flush()
 {
     m_Innovations.clear();
+    m_LinkInnovationIndex.clear();
+    m_NeuronInnovationIndex.clear();
+    m_IndexedInnovationCount = 0;
+    m_IndexedInnovationData = m_Innovations.data();
 }
 
 

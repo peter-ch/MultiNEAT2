@@ -160,6 +160,18 @@ def genome_summary(genome: pnt.Genome) -> dict[str, Any]:
         if not data["is_recurrent"] and source != target
     )
     feed_forward.add_nodes_from(graph.nodes)
+    strongly_connected = list(nx.strongly_connected_components(graph))
+    cyclic_components = sum(
+        len(component) > 1
+        or any(graph.has_edge(node, node) for node in component)
+        for component in strongly_connected
+    )
+    condensation = nx.condensation(feed_forward)
+    feed_forward_depth = (
+        nx.dag_longest_path_length(condensation)
+        if condensation.number_of_nodes()
+        else 0
+    )
     return {
         "id": genome.GetID(),
         "fitness": genome.GetFitness(),
@@ -172,6 +184,11 @@ def genome_summary(genome: pnt.Genome) -> dict[str, Any]:
         "weight_mean": float(weights.mean()) if weights.size else 0.0,
         "weight_std": float(weights.std()) if weights.size else 0.0,
         "is_feed_forward": nx.is_directed_acyclic_graph(feed_forward),
+        "feed_forward_depth": int(feed_forward_depth),
+        "self_loops": nx.number_of_selfloops(graph),
+        "strongly_connected_components": len(strongly_connected),
+        "cyclic_components": cyclic_components,
+        "density": float(nx.density(graph)),
     }
 
 
@@ -705,6 +722,217 @@ def DrawGenomes(
     for axis in list(axes.flat)[len(genomes) :]:
         axis.set_facecolor(theme.background)
         axis.axis("off")
+    figure.patch.set_facecolor(theme.background)
+    if show:
+        plt.show()
+    return figure
+
+
+def DrawGenomeComparison(
+    left: pnt.Genome,
+    right: pnt.Genome,
+    *,
+    layout: str = "topology",
+    with_edge_labels: bool = False,
+    theme: VisualTheme = DEFAULT_THEME,
+    show: bool = True,
+) -> Any:
+    """Draw two genomes and a structural diff between them.
+
+    The center panel aligns shared neuron IDs and colors genes as unchanged,
+    weight/endpoint changed, left-only, or right-only. This makes crossover
+    and structural-mutation effects visible without losing the complete
+    parent views.
+    """
+
+    figure, axes = plt.subplots(
+        1,
+        3,
+        figsize=(20, 7),
+        constrained_layout=True,
+    )
+    DrawGenome(
+        left,
+        ax=axes[0],
+        layout=layout,
+        show_legend=False,
+        title=f"Left · genome {left.GetID()}",
+        theme=theme,
+        show=False,
+    )
+    DrawGenome(
+        right,
+        ax=axes[2],
+        layout=layout,
+        show_legend=False,
+        title=f"Right · genome {right.GetID()}",
+        theme=theme,
+        show=False,
+    )
+
+    left_graph = Genome2NX(left)
+    right_graph = Genome2NX(right)
+    union = nx.DiGraph()
+    union.add_nodes_from(left_graph.nodes(data=True))
+    for node, data in right_graph.nodes(data=True):
+        if node not in union:
+            union.add_node(node, **data)
+
+    left_positions = compute_node_positions(left, layout=layout)
+    right_positions = compute_node_positions(right, layout=layout)
+    positions = {}
+    for node in union.nodes:
+        if node in left_positions and node in right_positions:
+            positions[node] = tuple(
+                (left_value + right_value) / 2.0
+                for left_value, right_value in zip(
+                    left_positions[node], right_positions[node]
+                )
+            )
+        elif node in left_positions:
+            positions[node] = left_positions[node]
+        else:
+            positions[node] = right_positions[node]
+    if positions:
+        positions = _normalize_positions(positions, invert_y=False)
+
+    left_nodes = set(left_graph.nodes)
+    right_nodes = set(right_graph.nodes)
+    node_groups = {
+        "Shared neuron": (left_nodes & right_nodes, theme.muted),
+        "Left-only neuron": (left_nodes - right_nodes, "#f97316"),
+        "Right-only neuron": (right_nodes - left_nodes, "#a3e635"),
+    }
+    diff_axis = axes[1]
+    diff_axis.set_facecolor(theme.background)
+    for _, (nodes, color) in node_groups.items():
+        if nodes:
+            nx.draw_networkx_nodes(
+                union,
+                positions,
+                nodelist=sorted(nodes),
+                node_color=color,
+                node_size=620,
+                linewidths=1.2,
+                edgecolors=theme.foreground,
+                ax=diff_axis,
+            )
+    nx.draw_networkx_labels(
+        union,
+        positions,
+        font_size=8,
+        font_color=theme.foreground,
+        ax=diff_axis,
+    )
+
+    left_links = {
+        data["innovation_id"]: (source, target, data)
+        for source, target, data in left_graph.edges(data=True)
+    }
+    right_links = {
+        data["innovation_id"]: (source, target, data)
+        for source, target, data in right_graph.edges(data=True)
+    }
+    edge_groups: MutableMapping[str, list[tuple[int, int]]] = defaultdict(list)
+    edge_labels = {}
+    for innovation in sorted(left_links.keys() | right_links.keys()):
+        if innovation not in right_links:
+            source, target, _ = left_links[innovation]
+            status = "Left only"
+        elif innovation not in left_links:
+            source, target, _ = right_links[innovation]
+            status = "Right only"
+        else:
+            left_source, left_target, left_data = left_links[innovation]
+            right_source, right_target, right_data = right_links[innovation]
+            source, target = left_source, left_target
+            changed = (
+                (left_source, left_target) != (right_source, right_target)
+                or not math.isclose(
+                    left_data["weight"],
+                    right_data["weight"],
+                    rel_tol=1e-12,
+                    abs_tol=1e-12,
+                )
+                or left_data["is_recurrent"] != right_data["is_recurrent"]
+            )
+            status = "Changed" if changed else "Unchanged"
+            if changed:
+                edge_labels[(source, target)] = (
+                    f"#{innovation}\n"
+                    f"{left_data['weight']:.3g} → {right_data['weight']:.3g}"
+                )
+        union.add_edge(source, target)
+        edge_groups[status].append((source, target))
+
+    status_styles = {
+        "Unchanged": (theme.grid, "solid", 1.2),
+        "Changed": ("#c084fc", "solid", 3.0),
+        "Left only": ("#f97316", "dashed", 2.2),
+        "Right only": ("#a3e635", "dashed", 2.2),
+    }
+    legend_handles = []
+    for status, edges in edge_groups.items():
+        color, style, width = status_styles[status]
+        nx.draw_networkx_edges(
+            union,
+            positions,
+            edgelist=edges,
+            edge_color=color,
+            style=style,
+            width=width,
+            alpha=0.9,
+            arrows=True,
+            arrowstyle="-|>",
+            arrowsize=14,
+            connectionstyle="arc3,rad=0.05",
+            ax=diff_axis,
+        )
+        legend_handles.append(
+            mpl_lines.Line2D(
+                [],
+                [],
+                color=color,
+                linestyle=style,
+                linewidth=width,
+                label=status,
+            )
+        )
+    if with_edge_labels and edge_labels:
+        nx.draw_networkx_edge_labels(
+            union,
+            positions,
+            edge_labels=edge_labels,
+            font_size=7,
+            font_color=theme.foreground,
+            bbox={
+                "facecolor": theme.background,
+                "edgecolor": "none",
+                "alpha": 0.8,
+            },
+            ax=diff_axis,
+        )
+
+    comparison = compare_genomes(left, right)
+    diff_axis.set_title(
+        "Structural diff"
+        f" · {len(comparison['matching_innovations'])} shared"
+        f" · {len(comparison['changed_weights'])} reweighted",
+        color=theme.foreground,
+        fontsize=12,
+        pad=14,
+    )
+    diff_axis.margins(0.16)
+    diff_axis.axis("off")
+    if legend_handles:
+        legend = diff_axis.legend(
+            handles=legend_handles,
+            loc="best",
+            frameon=False,
+            fontsize=8,
+        )
+        for text in legend.get_texts():
+            text.set_color(theme.foreground)
     figure.patch.set_facecolor(theme.background)
     if show:
         plt.show()
@@ -1542,6 +1770,7 @@ __all__ = [
     "DEFAULT_THEME",
     "DrawEvolution",
     "DrawGenome",
+    "DrawGenomeComparison",
     "DrawGenomes",
     "DrawPopulation",
     "EvolutionTracker",

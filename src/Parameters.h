@@ -75,6 +75,17 @@ enum CompatibilityThresholdMode
     PROPORTIONAL_COMPATIBILITY_THRESHOLD
 };
 
+// Transformation applied to raw objective values before age adjustment and
+// explicit fitness sharing. SHIFTED_FITNESS_SCALING preserves the historical
+// behavior while computing it in an overflow-safe normalized domain.
+enum FitnessScalingMode
+{
+    SHIFTED_FITNESS_SCALING = 0,
+    LINEAR_RANK_FITNESS_SCALING,
+    SIGMA_FITNESS_SCALING,
+    BOLTZMANN_FITNESS_SCALING
+};
+
 //////////////////////////////////////////////
 // The NEAT Parameters class
 //////////////////////////////////////////////
@@ -572,6 +583,13 @@ public:
     unsigned int AdaptiveMutationStart;
     double AdaptiveMutationRate;
     double AdaptiveMutationMaxFactor;
+
+    // Population-wide objective transforms used for offspring allocation.
+    // These are independent from the within-species parent selector.
+    FitnessScalingMode FitnessScaling;
+    double FitnessRankPressure;
+    double FitnessSigmaScale;
+    double FitnessBoltzmannTemperature;
 
     /////////////////////////////////////
     // Constructors

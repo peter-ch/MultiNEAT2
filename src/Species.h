@@ -190,6 +190,9 @@ public:
     // applies extreme penalty for stagnating species over SpeciesDropoffAge generations.
     void AdjustFitness(Parameters& a_Parameters);
     void AdjustFitness(Parameters& a_Parameters, double a_FitnessOffset);
+    void AdjustFitness(
+        Parameters& a_Parameters,
+        const std::vector<double>& a_TransformedFitness);
 
     // Sorts the individuals
     void SortIndividuals();

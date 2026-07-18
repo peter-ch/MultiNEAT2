@@ -1,5 +1,6 @@
 
 #include "Random.h"
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -94,7 +95,7 @@ namespace NEAT
             throw std::invalid_argument(
                 "RNG::Roulette: probability vector is empty.");
 
-        double total = 0.0;
+        double maximum = 0.0;
         for (double p : a_probs)
         {
             if (!std::isfinite(p))
@@ -103,26 +104,38 @@ namespace NEAT
             if (p < 0.0)
                 throw std::invalid_argument(
                     "RNG::Roulette: probabilities cannot be negative.");
-            total += p;
-            if (!std::isfinite(total))
-                throw std::overflow_error(
-                    "RNG::Roulette: probability total overflowed.");
+            maximum = std::max(maximum, p);
         }
 
-        if (total <= 0.0)
+        if (maximum <= 0.0)
         {
             int maxIndex = static_cast<int>(a_probs.size()) - 1;
             std::uniform_int_distribution<int> dist(0, maxIndex);
             return dist(m_Engine);
         }
 
+        // Scaling every weight by the maximum leaves the categorical
+        // distribution unchanged and guarantees the running total cannot
+        // overflow for any realistically addressable vector.
+        long double total_wide = 0.0L;
+        for (double probability : a_probs)
+            total_wide += probability / maximum;
+        if (!std::isfinite(total_wide) || total_wide <= 0.0L ||
+            total_wide >
+                static_cast<long double>(
+                    std::numeric_limits<double>::max()))
+        {
+            throw std::overflow_error(
+                "RNG::Roulette: normalized probability total overflowed.");
+        }
+        const double total = static_cast<double>(total_wide);
         std::uniform_real_distribution<double> dist(0.0, total);
         double r = dist(m_Engine);
         double run = 0.0;
         size_t lastNonZero = 0;
         for (size_t idx = 0; idx < a_probs.size(); idx++)
         {
-            double w = a_probs[idx];
+            const double w = a_probs[idx] / maximum;
             if (w > 0.0)  // Only consider positive probabilities for selection
             {
                 lastNonZero = idx;

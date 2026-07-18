@@ -41,9 +41,28 @@ namespace NEAT
         }
         if (minimum < 0.0)
         {
+            const long double shifted_maximum =
+                static_cast<long double>(
+                    *std::max_element(weights.begin(), weights.end())) -
+                static_cast<long double>(minimum);
             for (double &weight : weights)
             {
-                weight -= minimum;
+                weight = shifted_maximum > 0.0L
+                    ? static_cast<double>(
+                          (static_cast<long double>(weight) -
+                           static_cast<long double>(minimum)) /
+                          shifted_maximum)
+                    : 1.0;
+            }
+        }
+        else
+        {
+            const double maximum =
+                *std::max_element(weights.begin(), weights.end());
+            if (maximum > 0.0)
+            {
+                for (double& weight : weights)
+                    weight /= maximum;
             }
         }
     }
@@ -613,40 +632,67 @@ namespace NEAT
     void Species::AdjustFitness(
         Parameters& a_Parameters, double a_FitnessOffset)
     {
+        std::vector<double> transformed;
+        transformed.reserve(m_Individuals.size());
+        for (const auto& genome : m_Individuals)
+        {
+            const double fitness = genome.GetFitness();
+            const long double shifted =
+                std::isfinite(fitness)
+                    ? static_cast<long double>(fitness) +
+                          static_cast<long double>(a_FitnessOffset)
+                    : 1.0e-7L;
+            transformed.push_back(static_cast<double>(std::clamp(
+                shifted,
+                1.0e-7L,
+                static_cast<long double>(
+                    std::numeric_limits<double>::max()))));
+        }
+        AdjustFitness(a_Parameters, transformed);
+    }
+
+    void Species::AdjustFitness(
+        Parameters& a_Parameters,
+        const std::vector<double>& a_TransformedFitness)
+    {
         if (m_Individuals.empty())
         {
             throw std::runtime_error(
                 "Cannot adjust fitness for an empty species");
         }
+        if (a_TransformedFitness.size() != m_Individuals.size())
+        {
+            throw std::invalid_argument(
+                "Transformed fitness count must match species size");
+        }
 
         // iterate through the members
         for (unsigned int i = 0; i < m_Individuals.size(); i++)
         {
-            double t_fitness = m_Individuals[i].GetFitness();
+            const double raw_fitness = m_Individuals[i].GetFitness();
             // Invalid fitness never becomes a champion and receives only the
             // smallest usable allocation weight.
-            const bool valid_fitness = std::isfinite(t_fitness);
-            if (!valid_fitness)
-                t_fitness = 0.0000001;
+            const bool valid_fitness = std::isfinite(raw_fitness);
 
             // update the best fitness and stagnation counter
-            if (valid_fitness && t_fitness > m_BestFitness)
+            if (valid_fitness && raw_fitness > m_BestFitness)
             {
                 if (m_BestFitness == std::numeric_limits<double>::lowest() ||
-                    t_fitness - m_BestFitness >=
+                    static_cast<long double>(raw_fitness) -
+                            static_cast<long double>(m_BestFitness) >=
                         a_Parameters.StagnationDelta)
                 {
                     m_GensNoImprovement = 0;
                 }
-                m_BestFitness = t_fitness;
+                m_BestFitness = raw_fitness;
                 m_BestGenome = m_Individuals[i];
             }
 
-            t_fitness += a_FitnessOffset;
-            if (t_fitness <= 0.0)
-            {
-                t_fitness = 0.0000001;
-            }
+            long double t_fitness =
+                static_cast<long double>(a_TransformedFitness[i]);
+            if (!std::isfinite(a_TransformedFitness[i]) ||
+                t_fitness <= 0.0L)
+                t_fitness = 1.0e-12L;
 
 
             // boost the fitness up to some young age
@@ -675,8 +721,15 @@ namespace NEAT
             }
 
             // Compute the adjusted fitness for this member
-            m_Individuals[i].SetAdjFitness(
-                t_fitness / static_cast<double>(m_Individuals.size()));
+            const long double adjusted =
+                t_fitness /
+                static_cast<long double>(m_Individuals.size());
+            m_Individuals[i].SetAdjFitness(static_cast<double>(
+                std::clamp(
+                    adjusted,
+                    0.0L,
+                    static_cast<long double>(
+                        std::numeric_limits<double>::max()))));
         }
     }
 
@@ -1033,27 +1086,51 @@ namespace NEAT
     // Real-time code
     void Species::CalculateAverageFitness()
     {
-        double t_total_fitness = 0;
+        long double scale = 0.0L;
         int t_num_individuals = 0;
 
         // consider individuals that were evaluated only!
-        for (unsigned int i = 0; i < m_Individuals.size(); i++)
+        for (const auto& individual : m_Individuals)
         {
-            if (m_Individuals[i].IsEvaluated())
+            if (individual.IsEvaluated())
             {
-                double tf = m_Individuals[i].GetFitness();
-                if (std::isinf(tf) || std::isnan(tf)) // nan/inf guard
+                const double fitness = individual.GetFitness();
+                if (std::isfinite(fitness))
                 {
-                    tf = 0.0;
+                    scale = std::max(
+                        scale,
+                        std::abs(
+                            static_cast<long double>(fitness)));
                 }
-                t_total_fitness += tf;
                 ++t_num_individuals;
             }
         }
 
         if (t_num_individuals > 0)
         {
-            m_AverageFitness = t_total_fitness / static_cast<double>(t_num_individuals);
+            if (scale <= 0.0L)
+                scale = 1.0L;
+            long double scaled_total = 0.0L;
+            for (const auto& individual : m_Individuals)
+            {
+                if (individual.IsEvaluated() &&
+                    std::isfinite(individual.GetFitness()))
+                {
+                    scaled_total +=
+                        static_cast<long double>(
+                            individual.GetFitness()) /
+                        scale;
+                }
+            }
+            const long double average =
+                scale * scaled_total /
+                static_cast<long double>(t_num_individuals);
+            m_AverageFitness = static_cast<double>(std::clamp(
+                average,
+                -static_cast<long double>(
+                    std::numeric_limits<double>::max()),
+                static_cast<long double>(
+                    std::numeric_limits<double>::max())));
         }
         else
         {

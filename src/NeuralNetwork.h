@@ -53,6 +53,9 @@ namespace NEAT
         double m_split_y = 0.0;
         NeuronType m_type = NONE;
         std::vector<std::vector<double>> m_sensitivity_matrix;
+        // Pre-activation retained for exact derivatives of non-monotonic
+        // activation functions during online learning.
+        double m_last_input = 0.0;
 
         bool operator==(Neuron const &other) const
         {
@@ -66,6 +69,7 @@ namespace NEAT
     {
         double m_total_error = 0.0;
         std::vector<double> m_total_weight_change;
+        std::vector<std::vector<double>> m_sparse_rtrl_sensitivities;
 
     public:
         unsigned int m_num_inputs = 0;
@@ -76,13 +80,21 @@ namespace NEAT
         NeuralNetwork(bool a_Minimal);
         NeuralNetwork();
         void InitRTRLMatrix();
+        void InitSparseRTRLMatrix();
         void ActivateFast();
         void Activate();
         void ActivateUseInternalBias();
         void ActivateLeaky(double step);
         void RTRL_update_gradients();
+        void RTRL_update_gradients_sparse();
         void RTRL_update_error(double a_target);
         void RTRL_update_error(
+            const std::vector<double>& targets,
+            double learning_rate = 0.0001);
+        void RTRL_update_error_sparse(
+            double a_target,
+            double learning_rate = 0.0001);
+        void RTRL_update_error_sparse(
             const std::vector<double>& targets,
             double learning_rate = 0.0001);
         void RTRL_update_weights();
@@ -91,8 +103,14 @@ namespace NEAT
         void Flush();
         void FlushCube();
         void Input(std::vector<double> &a_Inputs);
+        void InputExact(const std::vector<double>& a_Inputs);
         std::vector<double> Output();
         void ActivateSteps(unsigned int steps, bool fast = true);
+        std::vector<std::vector<double>> ActivateBatch(
+            const std::vector<std::vector<double>>& inputs,
+            unsigned int steps = 1,
+            bool use_internal_bias = false);
+        std::size_t SparseRTRLStateSize() const;
         void AddNeuron(const Neuron &a_n) { m_neurons.push_back(a_n); }
         void AddConnection(const Connection &a_c) { m_connections.push_back(a_c); }
         Connection GetConnectionByIndex(unsigned int a_idx) const
@@ -134,6 +152,7 @@ namespace NEAT
             m_neurons.clear();
             m_connections.clear();
             m_total_weight_change.clear();
+            m_sparse_rtrl_sensitivities.clear();
             m_total_error = 0.0;
             SetInputOutputDimentions(0, 0);
         }

@@ -5,7 +5,11 @@
 
 #include <vector>
 #include <fstream>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <string>
+#include <unordered_map>
 
 #include "Genes.h"
 #include "Genome.h"
@@ -130,6 +134,17 @@ private:
 
     int m_NextNeuronID;
     int m_NextInnovationNum;
+    mutable std::unordered_map<std::uint64_t, std::vector<int>>
+        m_LinkInnovationIndex;
+    mutable std::unordered_map<std::uint64_t, std::vector<int>>
+        m_NeuronInnovationIndex;
+    mutable std::size_t m_IndexedInnovationCount =
+        std::numeric_limits<std::size_t>::max();
+    mutable const Innovation* m_IndexedInnovationData = nullptr;
+
+    static std::uint64_t EndpointKey(int a_In, int a_Out);
+    void EnsureIndex() const;
+    void AppendToIndex(std::size_t a_Index) const;
 
 public:
 
@@ -188,6 +203,10 @@ public:
 
     // Clears all innovations in the database
     void Flush();
+
+    // Rebuilds lookup acceleration after direct edits to the historical
+    // public m_Innovations vector.
+    void RebuildIndex() const;
 
     Innovation GetInnovationByIdx(int idx) const
     {

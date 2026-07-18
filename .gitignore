@@ -1,0 +1,33 @@
+# CMake and native build artifacts
+/build*/
+/.codex-build*/
+/cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+CTestTestfile.cmake
+Testing/
+*.cmake.user
+
+# Compiled binaries
+*.dll
+*.dylib
+*.exe
+*.o
+*.obj
+*.pdb
+*.pyd
+*.so
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/

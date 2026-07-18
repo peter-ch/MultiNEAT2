@@ -654,20 +654,30 @@ bool Genome::IsDeadEndNeuron(int a_ID) const
 {
     bool t_no_incoming = true;
     bool t_no_outgoing = true;
+    int bias_id = -1;
+    for (const NeuronGene& neuron : m_NeuronGenes)
+    {
+        if (neuron.Type() == BIAS)
+        {
+            bias_id = neuron.ID();
+            break;
+        }
+    }
 
     for (size_t i = 0, end = m_LinkGenes.size(); i < end; ++i)
     {
         const LinkGene &l = m_LinkGenes[i];
         if ((l.ToNeuronID() == a_ID) && (!l.IsLoopedRecurrent()) &&
-            (GetNeuronByID(l.FromNeuronID()).Type() != BIAS))
+            l.FromNeuronID() != bias_id)
         {
             t_no_incoming = false;
         }
-        if ((l.FromNeuronID() == a_ID) && (!l.IsLoopedRecurrent()) &&
-            (GetNeuronByID(l.FromNeuronID()).Type() != BIAS))
+        if ((l.FromNeuronID() == a_ID) && (!l.IsLoopedRecurrent()))
         {
             t_no_outgoing = false;
         }
+        if (!t_no_incoming && !t_no_outgoing)
+            return false;
     }
 
     return (t_no_incoming || t_no_outgoing);
@@ -2462,48 +2472,64 @@ bool Genome::Mutate_AddLink(InnovationDatabase &a_Innovs, const Parameters &a_Pa
         }
     }
 
-    const auto would_create_feedforward_cycle =
-        [&feedforward_adjacency](std::size_t source,
-                                std::size_t target)
-    {
-        std::vector<unsigned char> visited(
-            feedforward_adjacency.size(), 0);
-        std::vector<std::size_t> stack{target};
-        while (!stack.empty())
-        {
-            const std::size_t current = stack.back();
-            stack.pop_back();
-            if (current == source)
-                return true;
-            if (visited[current] != 0)
-                continue;
-            visited[current] = 1;
-            for (std::size_t next : feedforward_adjacency[current])
-            {
-                if (visited[next] == 0)
-                    stack.push_back(next);
-            }
-        }
-        return false;
-    };
-
     std::vector<std::pair<std::size_t, std::size_t>> candidates;
-    std::set<std::pair<int, int>> existing_links;
+    std::unordered_set<std::uint64_t> existing_links;
+    existing_links.reserve(m_LinkGenes.size());
+    const auto endpoint_key = [](int source, int target)
+    {
+        return (static_cast<std::uint64_t>(
+                    static_cast<std::uint32_t>(source))
+                << 32U) |
+               static_cast<std::uint32_t>(target);
+    };
     for (const LinkGene& link : m_LinkGenes)
     {
-        existing_links.emplace(
-            link.FromNeuronID(), link.ToNeuronID());
+        existing_links.emplace(endpoint_key(
+            link.FromNeuronID(), link.ToNeuronID()));
     }
-    for (std::size_t source = 0; source < m_NeuronGenes.size(); ++source)
+    std::vector<unsigned char> reachable_from_target(
+        m_NeuronGenes.size(), 0);
+    for (std::size_t target = 0;
+         target < m_NeuronGenes.size();
+         ++target)
     {
-        const NeuronType source_type = m_NeuronGenes[source].Type();
-        for (std::size_t target = 0; target < m_NeuronGenes.size(); ++target)
+        const NeuronType target_type = m_NeuronGenes[target].Type();
+        if (!is_non_input(target_type))
+            continue;
+
+        if (!t_MakeRecurrent)
         {
-            const NeuronType target_type = m_NeuronGenes[target].Type();
-            if (!is_non_input(target_type) ||
-                existing_links.count(
-                    {m_NeuronGenes[source].ID(),
-                     m_NeuronGenes[target].ID()}) != 0)
+            std::fill(
+                reachable_from_target.begin(),
+                reachable_from_target.end(),
+                static_cast<unsigned char>(0));
+            std::vector<std::size_t> stack{target};
+            while (!stack.empty())
+            {
+                const std::size_t current = stack.back();
+                stack.pop_back();
+                if (reachable_from_target[current] != 0)
+                    continue;
+                reachable_from_target[current] = 1;
+                for (std::size_t next :
+                     feedforward_adjacency[current])
+                {
+                    if (reachable_from_target[next] == 0)
+                        stack.push_back(next);
+                }
+            }
+        }
+
+        for (std::size_t source = 0;
+             source < m_NeuronGenes.size();
+             ++source)
+        {
+            const NeuronType source_type =
+                m_NeuronGenes[source].Type();
+            if (existing_links.count(
+                    endpoint_key(
+                        m_NeuronGenes[source].ID(),
+                        m_NeuronGenes[target].ID())) != 0)
             {
                 continue;
             }
@@ -2516,7 +2542,7 @@ bool Genome::Mutate_AddLink(InnovationDatabase &a_Innovs, const Parameters &a_Pa
             if (!t_MakeRecurrent)
             {
                 if (source != target && source_type != OUTPUT &&
-                    !would_create_feedforward_cycle(source, target))
+                    reachable_from_target[source] == 0)
                 {
                     candidates.emplace_back(source, target);
                 }
@@ -2535,6 +2561,9 @@ bool Genome::Mutate_AddLink(InnovationDatabase &a_Innovs, const Parameters &a_Pa
             }
         }
     }
+    // Preserve the historical source-major candidate order so seeded runs
+    // retain the same random-index mapping.
+    std::sort(candidates.begin(), candidates.end());
     if (candidates.empty())
         return false;
 

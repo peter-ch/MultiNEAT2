@@ -1,0 +1,4 @@
+# SWIG is needed when pip cannot use a prebuilt Box2D wheel.
+swig>=4.1
+gymnasium[box2d]>=1.2,<2
+numpy>=1.24

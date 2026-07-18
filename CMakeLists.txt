@@ -193,6 +193,27 @@ if(BUILD_TESTING)
             ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:pymultineat>"
             SKIP_RETURN_CODE 77
         )
+
+        if(MSVC)
+            add_test(
+                NAME multineat_gymnasium_demos
+                CONFIGURATIONS Release RelWithDebInfo MinSizeRel
+                COMMAND
+                    "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_gymnasium_demos.py"
+            )
+        else()
+            add_test(
+                NAME multineat_gymnasium_demos
+                COMMAND
+                    "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_gymnasium_demos.py"
+            )
+        endif()
+        set_tests_properties(multineat_gymnasium_demos PROPERTIES
+            ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:pymultineat>"
+            SKIP_RETURN_CODE 77
+        )
     endif()
 endif()
 

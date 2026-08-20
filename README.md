@@ -1,4 +1,4 @@
-# MultiNEAT2
+# MultiNEAT 3
 
 MultiNEAT2 is a C++17 implementation of NEAT (NeuroEvolution of
 Augmenting Topologies) with optional Python bindings. It includes
@@ -16,9 +16,21 @@ its established C++ and Python names wherever possible. Compatibility
 spellings such as `SetInputOutputDimentions`, `GetConnectionLenght`, and
 `Elitism` remain available alongside corrected names.
 
-The additions are source- and checkpoint-compatible. As with any C++ library
-whose public value types gain fields, applications linking a precompiled
-MultiNEAT binary must rebuild when upgrading to 2.3.
+MultiNEAT 3 defaults to reliability-first evolution: common-case evidence,
+successive halving, deterministic bootstrap lower bounds, automatic
+epsilon-lexicase parent selection, rank-based species allocation, optional
+uncertainty-aware MAP-Elites, decayed Thompson operator control, and a
+topology-local separable weight emitter. `Parameters.ConfigureLegacyV2()`
+restores the historical mechanics, and v2 checkpoints select that profile
+automatically. Applications linking a precompiled MultiNEAT binary must
+rebuild when upgrading because public value types gained fields.
+
+No black-box optimizer can guarantee a solution to every arbitrary task.
+Here, “reliable” has a precise meaning: `validated=true` is emitted only when
+the one-sided 95% Wilson lower bound on 64 unseen success cases reaches the
+configured `ReliabilityTarget` (0.95 by default). See
+[Reliability-first evolution](docs/RELIABLE_EVOLUTION.md) for the evaluation
+protocol and API.
 
 ## Build
 
@@ -68,7 +80,7 @@ cmake --install build --config Release --prefix /your/install/prefix
 Downstream projects can use the exported target:
 
 ```cmake
-find_package(MultiNEAT 2 CONFIG REQUIRED)
+find_package(MultiNEAT 3 CONFIG REQUIRED)
 target_link_libraries(your_target PRIVATE MultiNEAT::multineat)
 ```
 
@@ -93,15 +105,26 @@ seed = neat.Genome(parameters, initial)
 population = neat.Population(seed, parameters, True, 1.0, int(time.time()))
 
 for _ in range(100):
-    for species in population.m_Species:
-        for genome in species.m_Individuals:
-            network = neat.NeuralNetwork()
-            genome.BuildPhenotype(network)
-            # Evaluate the network here. Negative fitness values are supported.
-            genome.SetFitness(evaluate(network))
-            genome.SetEvaluated()
+    requests = population.GetEvaluationRequests()
+    while requests:
+        for request in requests:  # safe to distribute across workers
+            genome = population.GetEvaluationGenome(request)
+            score, succeeded = evaluate(genome, seed=request.case_id)
+            population.SubmitEvaluation(
+                request.genome_id,
+                request.case_id,
+                score,
+                True,
+                succeeded,
+            )
+        requests = population.GetEvaluationRequests()
     population.Epoch()
 ```
+
+For a deterministic objective, set `parameters.DeterministicEvaluation = True`;
+the scheduler then requests exactly one case per genome. Existing
+`SetFitness()` callers remain supported as a deterministic one-case fallback.
+Pass `--legacy-evolution` to modern Python demos to compare against v2.
 
 Run the self-contained XOR example with:
 

@@ -99,8 +99,11 @@ class CartPole:
 def parameters(
     population_size: int,
     mcculloch_pitts: bool = False,
+    legacy_evolution: bool = False,
 ) -> neat.Parameters:
     params = neat.Parameters()
+    if legacy_evolution:
+        params.ConfigureLegacyV2()
     if mcculloch_pitts:
         params.ConfigureMcCullochPitts(True, False)
     else:
@@ -194,8 +197,11 @@ def evolve(
     max_steps: int,
     seed: int,
     mcculloch_pitts: bool = False,
+    legacy_evolution: bool = False,
 ) -> tuple[neat.Genome, list[float]]:
-    params = parameters(population_size, mcculloch_pitts)
+    params = parameters(
+        population_size, mcculloch_pitts, legacy_evolution
+    )
     population = neat.Population(
         seed_genome(params, mcculloch_pitts),
         params,
@@ -207,23 +213,67 @@ def evolve(
     history = []
     for generation in range(generations):
         generation_best = None
-        for species in population.m_Species:
-            for genome in species.m_Individuals:
-                fitness = evaluate(
-                    genome,
-                    max_steps,
-                    seed + generation * 997,
-                )
-                genome.SetFitness(fitness)
-                genome.SetEvaluated()
-                if generation_best is None or fitness > generation_best.GetFitness():
-                    generation_best = neat.Genome.Deserialize(genome.Serialize())
+        if legacy_evolution:
+            for species in population.m_Species:
+                for genome in species.m_Individuals:
+                    fitness = evaluate(
+                        genome,
+                        max_steps,
+                        seed + generation * 997,
+                    )
+                    genome.SetFitness(fitness)
+                    genome.SetEvaluated()
+                    if (
+                        generation_best is None
+                        or fitness > generation_best.GetFitness()
+                    ):
+                        generation_best = neat.Genome.Deserialize(
+                            genome.Serialize()
+                        )
+        else:
+            requests = population.GetEvaluationRequests()
+            while requests:
+                for request in requests:
+                    genome = population.GetEvaluationGenome(request)
+                    case_seed = int(
+                        (seed ^ request.case_id ^
+                         (request.case_id >> 32)) & 0x7FFFFFFF
+                    )
+                    fitness = evaluate(genome, max_steps, case_seed)
+                    population.SubmitEvaluation(
+                        request.genome_id,
+                        request.case_id,
+                        fitness,
+                        True,
+                        fitness >= 0.9 * max_steps,
+                    )
+                requests = population.GetEvaluationRequests()
+            generation_best = population.GetProvisionalChampion()
         assert generation_best is not None
         history.append(generation_best.GetFitness())
         if best is None or generation_best.GetFitness() > best.GetFitness():
             best = generation_best
         if generation + 1 < generations:
             population.Epoch()
+    if not legacy_evolution:
+        requests = population.ValidateCandidates(5)
+        while requests:
+            for request in requests:
+                genome = population.GetEvaluationGenome(request)
+                case_seed = int(
+                    (seed ^ request.case_id ^
+                     (request.case_id >> 32)) & 0x7FFFFFFF
+                )
+                fitness = evaluate(genome, max_steps, case_seed)
+                population.SubmitEvaluation(
+                    request.genome_id,
+                    request.case_id,
+                    fitness,
+                    True,
+                    fitness >= 0.9 * max_steps,
+                )
+            requests = population.GetEvaluationRequests()
+        best = population.GetValidatedChampion().genome
     assert best is not None
     return best, history
 
@@ -389,6 +439,11 @@ def main() -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument(
+        "--legacy-evolution",
+        action="store_true",
+        help="use exact MultiNEAT 2 scalar-fitness evolution",
+    )
+    parser.add_argument(
         "--mcculloch-pitts",
         action="store_true",
         help="evolve the same controller with McCulloch-Pitts neurons",
@@ -406,6 +461,7 @@ def main() -> int:
         args.max_steps,
         args.seed,
         args.mcculloch_pitts,
+        args.legacy_evolution,
     )
     _, _, recorder, survived = replay(
         best,
@@ -430,6 +486,11 @@ def main() -> int:
                 "links": best.NumLinks(),
                 "recorded_spikes": len(recorder.events),
                 "history": history,
+                "evolution_mode": (
+                    "legacy-v2"
+                    if args.legacy_evolution
+                    else "reliable-neat"
+                ),
             }
         )
     )

@@ -558,6 +558,11 @@ def main() -> None:
     parser.add_argument("--max-trial-steps", type=int, default=MAX_TRIAL_TIME)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument(
+        "--legacy-evolution",
+        action="store_true",
+        help="use exact MultiNEAT 2 scalar-fitness evolution",
+    )
+    parser.add_argument(
         "--spiking",
         action="store_true",
         help="evolve a Poisson-encoded spiking Asteroids controller",
@@ -628,6 +633,8 @@ def main() -> None:
 
     # Setup MultiNEAT parameters.
     params = pnt.Parameters()
+    if args.legacy_evolution:
+        params.ConfigureLegacyV2()
     params.PopulationSize = args.population
     params.DynamicCompatibility = True
     params.NormalizeGenomeSize = False
@@ -694,6 +701,8 @@ def main() -> None:
     )
 
     gen = 0
+    validated = False
+    success_lower_bound = 0.0
 
     # Main loop switches between two modes:
     # When FAST_MODE is True, evolution runs in fast (non-rendered) training mode.
@@ -703,29 +712,66 @@ def main() -> None:
             # Training mode: run one generation.
             total_fitness = 0.0
             num_evaluated = 0
-            for species in pop.m_Species:
-                for idx in range(len(species.m_Individuals)):
-                    genome = species.m_Individuals[idx]
+            if args.legacy_evolution:
+                evaluation_items = [
+                    (genome, None)
+                    for species in pop.m_Species
+                    for genome in species.m_Individuals
+                ]
+            else:
+                evaluation_items = [
+                    (pop.GetEvaluationGenome(request), request)
+                    for request in pop.GetEvaluationRequests()
+                ]
+            while evaluation_items and FAST_MODE:
+                for idx, (genome, request) in enumerate(evaluation_items):
+                    case_id = (
+                        request.case_id
+                        if request is not None
+                        else gen * args.population + idx
+                    )
                     simulation = AsteroidsSimulation(
                         genome,
                         screen,
                         spiking=args.spiking,
                         spiking_settings=spiking_settings,
-                        seed=seed + gen * args.population + idx,
+                        seed=int(
+                            (seed + case_id + (case_id >> 32))
+                            & 0x7FFFFFFF
+                        ),
                     )
                     fitness = simulation.run()
                     # If fast mode is turned off mid-evaluation, break out immediately.
                     if not FAST_MODE:
                         break
-                    genome.SetFitness(fitness)
-                    genome.SetEvaluated()
+                    if request is None:
+                        genome.SetFitness(fitness)
+                        genome.SetEvaluated()
+                    else:
+                        pop.SubmitEvaluation(
+                            request.genome_id,
+                            request.case_id,
+                            fitness,
+                            True,
+                            fitness >= MAX_TRIAL_TIME,
+                        )
                     total_fitness += fitness
                     num_evaluated += 1
-                if not FAST_MODE:
-                    break
+                evaluation_items = (
+                    []
+                    if args.legacy_evolution or not FAST_MODE
+                    else [
+                        (pop.GetEvaluationGenome(request), request)
+                        for request in pop.GetEvaluationRequests()
+                    ]
+                )
             # Only complete generation if still in training mode.
             if FAST_MODE:
-                bestGenome = pop.GetBestGenome()
+                bestGenome = (
+                    pop.GetBestGenome()
+                    if args.legacy_evolution
+                    else pop.GetProvisionalChampion()
+                )
                 bestFitness = bestGenome.GetFitness()
                 avgFitness = total_fitness / num_evaluated if num_evaluated > 0 else 0.0
 
@@ -742,10 +788,42 @@ def main() -> None:
                 print(f"Compatibility Threshold: {params.CompatTreshold:.2f}")
                 print("="*60 + "\n", flush=True)
 
-                pop.Epoch()
                 gen += 1
                 if args.generations and gen >= args.generations:
+                    if not args.legacy_evolution:
+                        requests = pop.ValidateCandidates(5)
+                        while requests:
+                            for request in requests:
+                                genome = pop.GetEvaluationGenome(request)
+                                case_id = request.case_id
+                                simulation = AsteroidsSimulation(
+                                    genome,
+                                    screen,
+                                    spiking=args.spiking,
+                                    spiking_settings=spiking_settings,
+                                    seed=int(
+                                        (seed + case_id + (case_id >> 32))
+                                        & 0x7FFFFFFF
+                                    ),
+                                )
+                                fitness = simulation.run()
+                                pop.SubmitEvaluation(
+                                    request.genome_id,
+                                    request.case_id,
+                                    fitness,
+                                    True,
+                                    fitness >= MAX_TRIAL_TIME,
+                                )
+                            requests = pop.GetEvaluationRequests()
+                        champion = pop.GetValidatedChampion()
+                        bestGenome = champion.genome
+                        bestFitness = champion.validation_summary.mean
+                        validated = champion.validated
+                        success_lower_bound = (
+                            champion.certification_summary.success_lower_bound
+                        )
                     break
+                pop.Epoch()
         else:
             # Demo mode: continuously replay the best genome.
             bestGenome = pop.GetBestGenome()
@@ -787,6 +865,13 @@ def main() -> None:
                 "generations": gen,
                 "population": args.population,
                 "best_fitness": bestFitness,
+                "validated": validated,
+                "success_lower_bound": success_lower_bound,
+                "evolution_mode": (
+                    "legacy-v2"
+                    if args.legacy_evolution
+                    else "reliable-neat"
+                ),
                 "neurons": bestGenome.NumNeurons(),
                 "links": bestGenome.NumLinks(),
             }

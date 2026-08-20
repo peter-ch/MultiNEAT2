@@ -184,6 +184,11 @@ def main():
     parser.add_argument("--population", type=int, default=150)
     parser.add_argument("--seed", type=int, default=None)
     parser.add_argument(
+        "--legacy-evolution",
+        action="store_true",
+        help="use exact MultiNEAT 2 scalar-fitness evolution",
+    )
+    parser.add_argument(
         "--spiking",
         action="store_true",
         help="evolve a Poisson-encoded spiking XOR variant",
@@ -225,6 +230,10 @@ def main():
 
     # Create and customize MultiNEAT parameters.
     params = pnt.Parameters()
+    if args.legacy_evolution:
+        params.ConfigureLegacyV2()
+    else:
+        params.DeterministicEvaluation = not args.spiking
     params.PopulationSize = args.population
     params.DynamicCompatibility = True
     params.NormalizeGenomeSize = False
@@ -297,26 +306,88 @@ def main():
     )
 
     for gen in range(args.generations):
-        # Evaluate all genomes in every species on the XOR task.
-        for species in pop.m_Species:
-            for i in range(len(species.m_Individuals)):
-                genome = species.m_Individuals[i]
-                fitness = xor_test(
-                    genome,
-                    spiking=args.spiking,
-                    settings=spiking_settings,
-                    seed=seed,
-                )
-                genome.SetFitness(fitness)
-                genome.SetEvaluated()
+        if args.legacy_evolution:
+            # Evaluate all genomes in every species on the XOR task.
+            for species in pop.m_Species:
+                for i in range(len(species.m_Individuals)):
+                    genome = species.m_Individuals[i]
+                    fitness = xor_test(
+                        genome,
+                        spiking=args.spiking,
+                        settings=spiking_settings,
+                        seed=seed,
+                    )
+                    genome.SetFitness(fitness)
+                    genome.SetEvaluated()
+        else:
+            requests = pop.GetEvaluationRequests()
+            while requests:
+                for request in requests:
+                    genome = pop.GetEvaluationGenome(request)
+                    case_seed = int(
+                        (seed ^ request.case_id ^
+                         (request.case_id >> 32)) & 0x7FFFFFFF
+                    )
+                    fitness = xor_test(
+                        genome,
+                        spiking=args.spiking,
+                        settings=spiking_settings,
+                        seed=case_seed,
+                    )
+                    pop.SubmitEvaluation(
+                        request.genome_id,
+                        request.case_id,
+                        fitness,
+                        True,
+                        fitness >= 15.9,
+                    )
+                requests = pop.GetEvaluationRequests()
 
         # Get the best genome in the population.
-        bestGenome = pop.GetBestGenome()
+        bestGenome = (
+            pop.GetBestGenome()
+            if args.legacy_evolution
+            else pop.GetProvisionalChampion()
+        )
         bestFitness = bestGenome.GetFitness()
         print("Generation: {}, Best Fitness: {}".format(gen, bestFitness), flush=True)
 
         # Advance one generation.
-        pop.Epoch()
+        if gen + 1 < args.generations:
+            pop.Epoch()
+
+    validated = False
+    success_lower_bound = 0.0
+    if not args.legacy_evolution:
+        requests = pop.ValidateCandidates(5)
+        while requests:
+            for request in requests:
+                genome = pop.GetEvaluationGenome(request)
+                case_seed = int(
+                    (seed ^ request.case_id ^
+                     (request.case_id >> 32)) & 0x7FFFFFFF
+                )
+                fitness = xor_test(
+                    genome,
+                    spiking=args.spiking,
+                    settings=spiking_settings,
+                    seed=case_seed,
+                )
+                pop.SubmitEvaluation(
+                    request.genome_id,
+                    request.case_id,
+                    fitness,
+                    True,
+                    fitness >= 15.9,
+                )
+            requests = pop.GetEvaluationRequests()
+        champion = pop.GetValidatedChampion()
+        bestGenome = champion.genome
+        bestFitness = champion.validation_summary.mean
+        validated = champion.validated
+        success_lower_bound = (
+            champion.certification_summary.success_lower_bound
+        )
 
     print(
         json.dumps(
@@ -330,6 +401,13 @@ def main():
                 "generations": args.generations,
                 "population": args.population,
                 "best_fitness": bestFitness,
+                "validated": validated,
+                "success_lower_bound": success_lower_bound,
+                "evolution_mode": (
+                    "legacy-v2"
+                    if args.legacy_evolution
+                    else "reliable-neat"
+                ),
                 "neurons": bestGenome.NumNeurons(),
                 "links": bestGenome.NumLinks(),
             }

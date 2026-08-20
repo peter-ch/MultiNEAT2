@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.15)
 
-project(MultiNEAT VERSION 2.3.0 LANGUAGES CXX)
+project(MultiNEAT VERSION 3.0.0 LANGUAGES CXX)
 
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
@@ -21,6 +21,7 @@ set(MULTINEAT_CORE_SOURCES
     src/PhenotypeBehavior.cpp
     src/Population.cpp
     src/Random.cpp
+    src/Reliability.cpp
     src/Species.cpp
     src/SpikingLearning.cpp
     src/Substrate.cpp
@@ -39,6 +40,7 @@ set(MULTINEAT_PUBLIC_HEADERS
     src/PhenotypeBehavior.h
     src/Population.h
     src/Random.h
+    src/Reliability.h
     src/Species.h
     src/SpikingLearning.h
     src/Substrate.h

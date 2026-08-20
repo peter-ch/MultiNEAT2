@@ -45,8 +45,11 @@ PATTERNS = make_patterns()
 def parameters(
     population_size: int,
     mcculloch_pitts: bool = False,
+    legacy_evolution: bool = False,
 ) -> neat.Parameters:
     params = neat.Parameters()
+    if legacy_evolution:
+        params.ConfigureLegacyV2()
     if mcculloch_pitts:
         params.ConfigureMcCullochPitts(True, False)
     else:
@@ -73,6 +76,8 @@ def parameters(
     params.MaxSpikingTimeConstant = 0.03
     params.MinSpikeThreshold = 0.4
     params.MaxSpikeThreshold = 1.4
+    if not legacy_evolution:
+        params.DeterministicEvaluation = True
     return params
 
 
@@ -130,8 +135,11 @@ def evolve(
     population_size: int,
     seed: int,
     mcculloch_pitts: bool = False,
+    legacy_evolution: bool = False,
 ) -> tuple[neat.Genome, list[float]]:
-    params = parameters(population_size, mcculloch_pitts)
+    params = parameters(
+        population_size, mcculloch_pitts, legacy_evolution
+    )
     population = neat.Population(
         seed_genome(params, mcculloch_pitts),
         params,
@@ -143,19 +151,55 @@ def evolve(
     history = []
     for generation in range(generations):
         generation_best = None
-        for species in population.m_Species:
-            for genome in species.m_Individuals:
-                fitness = evaluate(genome)
-                genome.SetFitness(fitness)
-                genome.SetEvaluated()
-                if generation_best is None or fitness > generation_best.GetFitness():
-                    generation_best = neat.Genome.Deserialize(genome.Serialize())
+        if legacy_evolution:
+            for species in population.m_Species:
+                for genome in species.m_Individuals:
+                    fitness = evaluate(genome)
+                    genome.SetFitness(fitness)
+                    genome.SetEvaluated()
+                    if (
+                        generation_best is None
+                        or fitness > generation_best.GetFitness()
+                    ):
+                        generation_best = neat.Genome.Deserialize(
+                            genome.Serialize()
+                        )
+        else:
+            requests = population.GetEvaluationRequests()
+            while requests:
+                for request in requests:
+                    genome = population.GetEvaluationGenome(request)
+                    fitness = evaluate(genome)
+                    population.SubmitEvaluation(
+                        request.genome_id,
+                        request.case_id,
+                        fitness,
+                        True,
+                        fitness >= 15.5,
+                    )
+                requests = population.GetEvaluationRequests()
+            generation_best = population.GetProvisionalChampion()
         assert generation_best is not None
         history.append(generation_best.GetFitness())
         if best is None or generation_best.GetFitness() > best.GetFitness():
             best = generation_best
         if generation + 1 < generations:
             population.Epoch()
+    if not legacy_evolution:
+        requests = population.ValidateCandidates(5)
+        while requests:
+            for request in requests:
+                genome = population.GetEvaluationGenome(request)
+                fitness = evaluate(genome)
+                population.SubmitEvaluation(
+                    request.genome_id,
+                    request.case_id,
+                    fitness,
+                    True,
+                    fitness >= 15.5,
+                )
+            requests = population.GetEvaluationRequests()
+        best = population.GetValidatedChampion().genome
     assert best is not None
     return best, history
 
@@ -270,6 +314,11 @@ def main() -> int:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument(
+        "--legacy-evolution",
+        action="store_true",
+        help="use exact MultiNEAT 2 scalar-fitness evolution",
+    )
+    parser.add_argument(
         "--mcculloch-pitts",
         action="store_true",
         help="evolve the same detector with McCulloch-Pitts neurons",
@@ -286,6 +335,7 @@ def main() -> int:
         args.population,
         args.seed,
         args.mcculloch_pitts,
+        args.legacy_evolution,
     )
     network, recorder = replay(best)
     payload = {
@@ -300,6 +350,9 @@ def main() -> int:
         "links": best.NumLinks(),
         "recorded_spikes": len(recorder.events),
         "history": history,
+        "evolution_mode": (
+            "legacy-v2" if args.legacy_evolution else "reliable-neat"
+        ),
     }
     print(json.dumps(payload))
     if not args.no_show or args.output is not None:

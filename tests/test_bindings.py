@@ -23,6 +23,29 @@ assert restored_parameters.PopulationSize == 4
 assert restored_parameters.MutateAddNeuronProb == 0.42
 assert restored_parameters.DivisionThreshold == 0.77
 assert parameters.Validate() == (True, "")
+assert parameters.EvolutionModeSetting == neat.RELIABLE_NEAT
+legacy_profile = neat.Parameters()
+legacy_profile.ConfigureLegacyV2()
+assert legacy_profile.EvolutionModeSetting == neat.LEGACY_V2
+assert legacy_profile.ParentSelectionMode == neat.LEGACY_SELECTION
+
+sample_a = neat.EvaluationSample()
+sample_a.case_id = 10
+sample_a.score = -1.0
+sample_a.has_success = True
+sample_a.success = False
+sample_a.behavior_descriptor = [0.25]
+sample_b = neat.EvaluationSample()
+sample_b.case_id = 11
+sample_b.score = 3.0
+sample_b.has_success = True
+sample_b.success = True
+sample_b.behavior_descriptor = [0.75]
+summary = neat.SummarizeEvaluations([sample_a, sample_b], 0.9, 128)
+assert summary.sample_count == 2
+assert summary.mean == 1.0
+assert summary.lower_confidence_bound <= summary.mean
+assert neat.WilsonLowerBound(64, 64) >= 0.95
 
 advanced = neat.Parameters()
 advanced.ParentSelectionMode = neat.SelectionMode.RANK_LINEAR
@@ -63,6 +86,14 @@ restored_genome = pickle.loads(pickle.dumps(genome))
 assert restored_genome.GetFitness() == -7.5
 assert restored_genome.IsEvaluated()
 assert restored_genome.GetNeuronByIndex(0).x == 11
+genome.ClearEvaluationSamples()
+genome.AddEvaluationSample(sample_a)
+genome.AddEvaluationSample(sample_b)
+genome.SetBehaviorDescriptor([0.5])
+evidence_round_trip = neat.Genome.Deserialize(genome.Serialize())
+assert len(evidence_round_trip.GetEvaluationSamples()) == 2
+assert evidence_round_trip.GetEvaluationSummary(0.9, 128).mean == 1.0
+assert evidence_round_trip.GetBehaviorDescriptor() == [0.5]
 
 species = neat.Species(genome, parameters, 7)
 restored_species = pickle.loads(pickle.dumps(species))
@@ -79,6 +110,29 @@ with tempfile.TemporaryDirectory() as temporary_directory:
     checkpoint = Path(temporary_directory) / "population.state"
     population.SaveState(str(checkpoint))
     assert neat.Population(str(checkpoint)).NumGenomes() == 4
+
+reliable = neat.Parameters()
+reliable.PopulationSize = 4
+reliable.Speciation = False
+reliable.EvaluationMinSamples = 2
+reliable.EvaluationMaxSamples = 4
+reliable.EvaluationBootstrapSamples = 64
+reliable_population = neat.Population(
+    make_genome(reliable), reliable, True, 1.0, 124
+)
+requests = reliable_population.GetEvaluationRequests()
+assert len(requests) == 8
+while requests:
+    for request in requests:
+        evaluated = reliable_population.GetEvaluationGenome(request)
+        reliable_population.SubmitEvaluation(
+            request.genome_id,
+            request.case_id,
+            10.0 - evaluated.GetID(),
+        )
+    requests = reliable_population.GetEvaluationRequests()
+assert reliable_population.ReadyForEpoch()
+assert reliable_population.GetProvisionalChampion().GetID() >= 0
 
 network = neat.NeuralNetwork()
 assert neat.NeuralNetwork().m_neurons == []

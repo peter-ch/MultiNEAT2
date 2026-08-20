@@ -210,7 +210,27 @@ int main()
           "FitnessScaling",
           "FitnessRankPressure",
           "FitnessSigmaScale",
-          "FitnessBoltzmannTemperature"})
+          "FitnessBoltzmannTemperature",
+          "EvolutionModeSetting",
+          "FitnessAggregationMode",
+          "DeterministicEvaluation",
+          "EvaluationMinSamples",
+          "EvaluationMaxSamples",
+          "EvaluationBootstrapSamples",
+          "EvaluationConfidence",
+          "ValidationSamples",
+          "CertificationSamples",
+          "ReliabilityTarget",
+          "QDCellDepth",
+          "QDArchiveReevaluationFraction",
+          "AdaptiveOperatorSelection",
+          "OperatorExplorationFloor",
+          "OperatorPosteriorDecay",
+          "EnableWeightEmitter",
+          "WeightEmitterStableGenerations",
+          "QDDescriptorMinimums",
+          "QDDescriptorMaximums",
+          "QDDescriptorBins"})
     {
         const std::size_t start =
             legacy_parameter_state.find(field + " ");
@@ -240,8 +260,47 @@ int main()
             legacy_advanced_defaults.MutationOperatorsPerOffspring ==
                 1.0 &&
             legacy_advanced_defaults.FitnessScaling ==
-                SHIFTED_FITNESS_SCALING,
-        "parameter checkpoints predating advanced operators load defaults");
+                SHIFTED_FITNESS_SCALING &&
+            legacy_advanced_defaults.EvolutionModeSetting == LEGACY_V2,
+        "parameter checkpoints predating reliable evolution load legacy defaults");
+
+    const std::vector<EvaluationSample> evidence{
+        {10U, -2.0, true, false, {0.1, 0.2}},
+        {11U, 0.0, true, false, {0.2, 0.3}},
+        {12U, 2.0, true, true, {0.3, 0.4}},
+        {13U, 1000.0, true, false, {0.4, 0.5}}};
+    const EvaluationSummary evidence_summary =
+        SummarizeEvaluations(evidence, 0.90, 1024);
+    const EvaluationSummary repeated_summary =
+        SummarizeEvaluations(evidence, 0.90, 1024);
+    Check(
+        evidence_summary.sample_count == evidence.size() &&
+            evidence_summary.lower_confidence_bound ==
+                repeated_summary.lower_confidence_bound &&
+            evidence_summary.lower_confidence_bound < evidence_summary.mean &&
+            evidence_summary.lower_tail_mean == -2.0,
+        "bootstrap robust fitness is deterministic and penalizes isolated outliers");
+    Check(
+        WilsonLowerBound(64, 64) >= 0.95 &&
+            WilsonLowerBound(63, 64) < 0.95 &&
+            WilsonLowerBound(1, 64) < 0.10,
+        "one-sided Wilson certification enforces the reliability target");
+
+    Genome evidence_genome = MakeGenome(parameters);
+    for (const auto& sample : evidence)
+        evidence_genome.AddEvaluationSample(sample);
+    evidence_genome.SetBehaviorDescriptor({0.25, 0.35});
+    const Genome restored_evidence_genome = Genome::Deserialize(
+        evidence_genome.Serialize());
+    Check(
+        restored_evidence_genome.GetEvaluationSamples().size() ==
+                evidence.size() &&
+            restored_evidence_genome.GetBehaviorDescriptor() ==
+                std::vector<double>({0.25, 0.35}) &&
+            restored_evidence_genome.GetEvaluationSummary(
+                0.90, 1024).lower_confidence_bound ==
+                evidence_summary.lower_confidence_bound,
+        "genome evidence and behavior descriptors round-trip exactly");
     Parameters invalid_crossover_parameters = advanced_parameters;
     invalid_crossover_parameters.MultipointCrossoverRate = 0.5;
     Check(!invalid_crossover_parameters.Validate(
@@ -1337,6 +1396,35 @@ int main()
     Check(truncation_selected_only_best,
           "explicit truncation ignores legacy selector switches");
 
+    Parameters lexicase_parameters = full_survival_parameters;
+    lexicase_parameters.ParentSelectionMode = AUTO_EPSILON_LEXICASE;
+    Species lexicase_species(genome, lexicase_parameters, 91);
+    lexicase_species.m_Individuals.clear();
+    const double lexicase_scores[3][2] = {
+        {10.0, 0.0}, {0.0, 10.0}, {4.0, 4.0}};
+    for (int candidate_index = 0; candidate_index < 3; ++candidate_index)
+    {
+        Genome candidate = genome;
+        candidate.SetID(300 + candidate_index);
+        candidate.AddEvaluationSample(
+            {1U, lexicase_scores[candidate_index][0]});
+        candidate.AddEvaluationSample(
+            {2U, lexicase_scores[candidate_index][1]});
+        candidate.SetEvaluated();
+        lexicase_species.m_Individuals.push_back(candidate);
+    }
+    bool lexicase_retained_specialists = true;
+    for (int draw = 0; draw < 100; ++draw)
+    {
+        lexicase_retained_specialists =
+            lexicase_retained_specialists &&
+            lexicase_species.GetIndividual(
+                lexicase_parameters, rng).GetID() != 302;
+    }
+    Check(
+        lexicase_retained_specialists,
+        "automatic epsilon-lexicase filters by shared cases and MAD epsilon");
+
     Population population(genome, parameters, true, 1.0, 123);
     population.m_Species.front().m_Individuals.front().SetFitness(-3.0);
     Population restored_population =
@@ -1347,6 +1435,34 @@ int main()
           "population best-genome selection handles negative fitness");
     Check(restored_population.m_Parameters.GenomeTraits.count("label") == 1,
           "population serialization preserves universal trait schemas");
+    std::string simulated_v2_checkpoint = population.Serialize();
+    const std::size_t population_format =
+        simulated_v2_checkpoint.find("PopulationFormat 3");
+    simulated_v2_checkpoint.replace(
+        population_format,
+        std::string("PopulationFormat 3").size(),
+        "PopulationFormat 2");
+    const std::size_t reliability_state =
+        simulated_v2_checkpoint.find("ReliabilityState ");
+    const std::size_t population_end =
+        simulated_v2_checkpoint.find("PopulationEnd", reliability_state);
+    simulated_v2_checkpoint.erase(
+        reliability_state, population_end - reliability_state);
+    const std::size_t evolution_mode =
+        simulated_v2_checkpoint.find("EvolutionModeSetting ");
+    if (evolution_mode != std::string::npos)
+    {
+        const std::size_t line_end =
+            simulated_v2_checkpoint.find('\n', evolution_mode);
+        simulated_v2_checkpoint.erase(
+            evolution_mode, line_end - evolution_mode + 1U);
+    }
+    const Population restored_v2_checkpoint =
+        Population::Deserialize(simulated_v2_checkpoint);
+    Check(
+        restored_v2_checkpoint.m_Parameters.EvolutionModeSetting ==
+            LEGACY_V2,
+        "v2 population checkpoints automatically select legacy evolution");
     const auto checkpoint_path =
         std::filesystem::temp_directory_path() /
         "multineat_population_checkpoint.txt";
@@ -1366,6 +1482,204 @@ int main()
     Check(
         legacy_population.NumGenomes() == population.NumGenomes(),
         "legacy population files remain loadable");
+
+    Parameters reliable_parameters;
+    reliable_parameters.PopulationSize = 4;
+    reliable_parameters.Speciation = false;
+    reliable_parameters.EvaluationMinSamples = 2;
+    reliable_parameters.EvaluationMaxSamples = 8;
+    reliable_parameters.EvaluationBootstrapSamples = 128;
+    reliable_parameters.ValidationSamples = 4;
+    reliable_parameters.CertificationSamples = 64;
+    reliable_parameters.QDArchiveReevaluationFraction = 0.0;
+    Genome reliable_seed = MakeGenome(reliable_parameters);
+    Population reliable_population(
+        reliable_seed, reliable_parameters, true, 1.0, 991);
+    std::vector<EvaluationRequest> reliable_requests =
+        reliable_population.GetEvaluationRequests();
+    Check(
+        reliable_requests.size() == 8 &&
+            reliable_requests.front().stage == 0,
+        "successive halving starts all genomes on two shared cases");
+    reliable_population.SubmitEvaluation(
+        reliable_requests.front().genome_id,
+        reliable_requests.front().case_id,
+        10.0);
+    Population resumed_race = Population::Deserialize(
+        reliable_population.Serialize());
+    const auto resumed_requests = resumed_race.GetEvaluationRequests();
+    bool request_state_matches =
+        resumed_requests.size() == reliable_requests.size() - 1U;
+    for (std::size_t index = 0;
+         request_state_matches && index < resumed_requests.size();
+         ++index)
+    {
+        const auto& expected = reliable_requests[index + 1U];
+        const auto& actual = resumed_requests[index];
+        request_state_matches =
+            expected.genome_id == actual.genome_id &&
+            expected.case_id == actual.case_id &&
+            expected.stage == actual.stage &&
+            expected.phase == actual.phase;
+    }
+    Check(request_state_matches,
+          "checkpoint resume preserves the exact racing request position");
+    reliable_population = std::move(resumed_race);
+    std::size_t training_interactions = 1U;
+    while (!(reliable_requests =
+                 reliable_population.GetEvaluationRequests()).empty())
+    {
+        const auto batch = reliable_requests;
+        for (const auto& request : batch)
+        {
+            const double score =
+                100.0 - static_cast<double>(request.genome_id) +
+                0.01 * static_cast<double>(request.case_id & 0xffU);
+            reliable_population.SubmitEvaluation(
+                request.genome_id, request.case_id, score);
+            ++training_interactions;
+        }
+    }
+    Check(
+        reliable_population.ReadyForEpoch() &&
+            training_interactions == 16U,
+        "successive halving spends 2/4/8 cases only on surviving candidates");
+
+    auto validation_requests = reliable_population.ValidateCandidates(2);
+    while (!validation_requests.empty())
+    {
+        const auto batch = validation_requests;
+        for (const auto& request : batch)
+        {
+            const bool lone_success =
+                request.phase == CERTIFICATION_EVALUATION &&
+                (request.case_id & 0xffffffU) == 0U;
+            reliable_population.SubmitEvaluation(
+                request.genome_id,
+                request.case_id,
+                lone_success ? 1.0e9 : -1.0,
+                true,
+                lone_success);
+        }
+        validation_requests = reliable_population.GetEvaluationRequests();
+    }
+    Check(
+        !reliable_population.GetValidatedChampion().validated &&
+            reliable_population.GetValidatedChampion()
+                    .certification_summary.success_count == 1U,
+        "one extreme lucky episode cannot produce a validated champion");
+
+    validation_requests = reliable_population.ValidateCandidates(2);
+    while (!validation_requests.empty())
+    {
+        const auto batch = validation_requests;
+        for (const auto& request : batch)
+        {
+            reliable_population.SubmitEvaluation(
+                request.genome_id,
+                request.case_id,
+                1.0,
+                true,
+                true);
+        }
+        validation_requests = reliable_population.GetEvaluationRequests();
+    }
+    Check(
+        reliable_population.GetValidatedChampion().validated &&
+            reliable_population.GetValidatedChampion()
+                    .certification_summary.success_lower_bound >= 0.95,
+        "64 unseen successes certify a champion at the default target");
+
+    Parameters qd_parameters = reliable_parameters;
+    qd_parameters.EvolutionModeSetting = ROBUST_QD_NEAT;
+    qd_parameters.QDDescriptorMinimums = {0.0};
+    qd_parameters.QDDescriptorMaximums = {1.0};
+    qd_parameters.QDDescriptorBins = {2U};
+    Population qd_population(
+        MakeGenome(qd_parameters), qd_parameters, true, 1.0, 992);
+    auto qd_requests = qd_population.GetEvaluationRequests();
+    while (!qd_requests.empty())
+    {
+        const auto batch = qd_requests;
+        for (const auto& request : batch)
+        {
+            const double descriptor =
+                request.genome_id % 2 == 0 ? 0.25 : 0.75;
+            qd_population.SubmitEvaluation(
+                request.genome_id,
+                request.case_id,
+                10.0 - request.genome_id,
+                false,
+                false,
+                {descriptor});
+        }
+        qd_requests = qd_population.GetEvaluationRequests();
+    }
+    std::vector<unsigned int> cells_before_rebin;
+    for (const auto& entry : qd_population.GetQDArchive())
+        cells_before_rebin.push_back(entry.cell.front());
+    qd_population.m_Parameters.QDDescriptorBins = {4U};
+    qd_population.RebinQDArchive();
+    std::vector<unsigned int> cells_after_rebin;
+    for (const auto& entry : qd_population.GetQDArchive())
+        cells_after_rebin.push_back(entry.cell.front());
+    Check(
+        !cells_before_rebin.empty() &&
+            cells_before_rebin != cells_after_rebin &&
+            std::find(
+                cells_after_rebin.begin(), cells_after_rebin.end(), 3U) !=
+                cells_after_rebin.end(),
+        "QD archive entries are deterministically re-binned after bounds change");
+
+    Parameters controller_parameters = reliable_parameters;
+    controller_parameters.PopulationSize = 2;
+    Population controller_population(
+        MakeGenome(controller_parameters),
+        controller_parameters,
+        true,
+        1.0,
+        993);
+    const int controller_species_id =
+        controller_population.m_Species.front().ID();
+    for (auto& candidate :
+         controller_population.m_Species.front().m_Individuals)
+    {
+        candidate.SetFitness(1.0);
+        candidate.SetEvaluated();
+        LineageRecord lineage;
+        lineage.origin_species_id = controller_species_id;
+        lineage.best_parent_score = 0.0;
+        lineage.operators = {WEIGHT_MUTATION_OPERATOR};
+        lineage.archive_replacement = true;
+        candidate.SetLineage(lineage);
+    }
+    auto& controller_species = controller_population.m_Species.front();
+    const double alpha_before = controller_species.GetOperatorAlpha()[
+        WEIGHT_MUTATION_OPERATOR];
+    controller_species.UpdateAdaptiveState(
+        controller_population,
+        controller_population.m_Parameters,
+        controller_population.m_RNG);
+    Check(
+        controller_species.GetOperatorAlpha()[WEIGHT_MUTATION_OPERATOR] >
+            alpha_before,
+        "archive replacement credit updates the species operator posterior");
+    controller_species.UpdateAdaptiveState(
+        controller_population,
+        controller_population.m_Parameters,
+        controller_population.m_RNG);
+    const unsigned int stable_before_change =
+        controller_species.GetEmitterStableGenerations();
+    controller_species.m_Individuals.front().m_LinkGenes.pop_back();
+    controller_species.UpdateAdaptiveState(
+        controller_population,
+        controller_population.m_Parameters,
+        controller_population.m_RNG);
+    Check(
+        stable_before_change >= 2U &&
+            controller_species.GetEmitterStableGenerations() == 1U,
+        "the topology-local emitter resets immediately on structural change");
+
     std::string population_validation_error;
     Check(population.Validate(&population_validation_error),
           "a constructed population passes global validation");

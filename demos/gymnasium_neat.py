@@ -70,6 +70,7 @@ class TaskConfig:
     crop_bottom: int = 0
     sparse_seed: bool = False
     recurrent: bool = True
+    success_threshold: float | None = None
 
 
 def _task(
@@ -94,6 +95,7 @@ TASKS: dict[str, TaskConfig] = {
         default_generations=300,
         default_max_steps=1000,
         recurrent=False,
+        success_threshold=200.0,
     ),
     "box2d_lunar_lander_continuous": _task(
         "box2d_lunar_lander_continuous",
@@ -105,6 +107,7 @@ TASKS: dict[str, TaskConfig] = {
         default_generations=300,
         default_max_steps=1000,
         recurrent=False,
+        success_threshold=200.0,
     ),
     "box2d_lunar_lander_wind": _task(
         "box2d_lunar_lander_wind",
@@ -121,6 +124,7 @@ TASKS: dict[str, TaskConfig] = {
         default_generations=400,
         default_max_steps=1000,
         default_episodes=3,
+        success_threshold=200.0,
     ),
     "box2d_bipedal_walker": _task(
         "box2d_bipedal_walker",
@@ -131,6 +135,7 @@ TASKS: dict[str, TaskConfig] = {
         default_population=192,
         default_generations=600,
         default_max_steps=1600,
+        success_threshold=300.0,
     ),
     "box2d_bipedal_walker_hardcore": _task(
         "box2d_bipedal_walker_hardcore",
@@ -142,6 +147,7 @@ TASKS: dict[str, TaskConfig] = {
         default_generations=1000,
         default_max_steps=2000,
         default_episodes=2,
+        success_threshold=300.0,
     ),
     "box2d_car_racing": _task(
         "box2d_car_racing",
@@ -155,6 +161,7 @@ TASKS: dict[str, TaskConfig] = {
         image_size=(12, 12),
         crop_bottom=12,
         sparse_seed=True,
+        success_threshold=900.0,
     ),
     "box2d_car_racing_discrete": _task(
         "box2d_car_racing_discrete",
@@ -168,6 +175,7 @@ TASKS: dict[str, TaskConfig] = {
         image_size=(12, 12),
         crop_bottom=12,
         sparse_seed=True,
+        success_threshold=900.0,
     ),
     # MuJoCo
     "mujoco_ant": _task(
@@ -658,10 +666,16 @@ def configure_parameters(
     profile: str,
     spiking: bool = False,
     mcculloch_pitts: bool = False,
+    legacy_evolution: bool = False,
+    reliability_target: float = 0.95,
 ) -> Any:
     """Return modern but conservative parameters for control problems."""
 
     params = neat.Parameters()
+    if legacy_evolution:
+        params.ConfigureLegacyV2()
+    else:
+        params.ReliabilityTarget = reliability_target
     params.PopulationSize = population_size
     params.DynamicCompatibility = population_size >= 8
     params.MinSpecies = 1
@@ -729,7 +743,11 @@ def configure_parameters(
 
     # These operators are additive in MultiNEAT2. Attribute checks retain
     # compatibility with binaries built from older MultiNEAT releases.
-    if profile == "ranked" and hasattr(params, "ParentSelectionMode"):
+    if (
+        legacy_evolution
+        and profile == "ranked"
+        and hasattr(params, "ParentSelectionMode")
+    ):
         params.ParentSelectionMode = neat.RANK_LINEAR
         params.RankSelectionPressure = 1.7
     elif profile == "exploratory" and hasattr(params, "ParentSelectionMode"):
@@ -743,8 +761,11 @@ def configure_parameters(
             params.AdaptiveMutationMaxFactor = 3.0
 
     if hasattr(params, "FitnessScaling"):
-        params.FitnessScaling = neat.SIGMA_FITNESS_SCALING
-        params.FitnessSigmaScale = 2.0
+        if legacy_evolution:
+            params.FitnessScaling = neat.SIGMA_FITNESS_SCALING
+            params.FitnessSigmaScale = 2.0
+        else:
+            params.FitnessScaling = neat.LINEAR_RANK_FITNESS_SCALING
     if hasattr(params, "OffspringAllocation"):
         params.OffspringAllocation = neat.STOCHASTIC_REMAINDER
     if hasattr(params, "SpeciesRepresentativeSelection"):
@@ -770,6 +791,8 @@ def create_population(
     initial_connectivity: str,
     spiking: bool = False,
     mcculloch_pitts: bool = False,
+    legacy_evolution: bool = False,
+    reliability_target: float = 0.95,
 ) -> Any:
     recurrent = config.recurrent or profile == "exploratory"
     params = configure_parameters(
@@ -778,6 +801,8 @@ def create_population(
         profile,
         spiking,
         mcculloch_pitts,
+        legacy_evolution,
+        reliability_target,
     )
     initial = neat.GenomeInitStruct()
     initial.NumInputs = shape.input_size + 1
@@ -818,6 +843,9 @@ class TrainOptions:
     activation_steps: int
     profile: str
     initial_connectivity: str
+    legacy_evolution: bool = False
+    reliability_target: float = 0.95
+    success_threshold: float | None = None
     spiking: bool = False
     mcculloch_pitts: bool = False
     spiking_steps: int = 8
@@ -840,6 +868,8 @@ class TrainResult:
     best_fitness: float
     best_genome: Any
     history: list[dict[str, Any]]
+    validated: bool = False
+    success_lower_bound: float = 0.0
 
 
 def _spiking_settings(options: TrainOptions) -> SpikingPolicySettings | None:
@@ -865,6 +895,21 @@ def _copy_genome(genome: Any) -> Any:
     if hasattr(neat.Genome, "Deserialize") and hasattr(genome, "Serialize"):
         return neat.Genome.Deserialize(genome.Serialize())
     return pickle.loads(pickle.dumps(genome))
+
+
+def _evaluation_seed(base_seed: int, case_id: int) -> int:
+    """Map disjoint 64-bit evidence streams onto Gymnasium's seed range."""
+
+    value = (int(case_id) + 0x9E3779B97F4A7C15 + int(base_seed)) & (
+        (1 << 64) - 1
+    )
+    value = ((value ^ (value >> 30)) * 0xBF58476D1CE4E5B9) & (
+        (1 << 64) - 1
+    )
+    value = ((value ^ (value >> 27)) * 0x94D049BB133111EB) & (
+        (1 << 64) - 1
+    )
+    return int((value ^ (value >> 31)) & 0x7FFFFFFF)
 
 
 def _save_genome(genome: Any, path: Path) -> Path:
@@ -1334,7 +1379,13 @@ def train(options: TrainOptions) -> TrainResult:
             options.initial_connectivity,
             options.spiking,
             options.mcculloch_pitts,
+            options.legacy_evolution,
+            options.reliability_target,
         )
+    use_legacy_evolution = options.legacy_evolution or (
+        hasattr(population.m_Parameters, "EvolutionModeSetting")
+        and population.m_Parameters.EvolutionModeSetting == neat.LEGACY_V2
+    )
 
     start_generation = int(population.GetGeneration())
     serial_env = None
@@ -1357,45 +1408,105 @@ def train(options: TrainOptions) -> TrainResult:
     history = []
     best_fitness = -math.inf
     best_genome = None
+    validated = False
+    success_lower_bound = 0.0
+    environment_interactions = int(population.m_NumEvaluations)
+    success_threshold = (
+        options.success_threshold
+        if options.success_threshold is not None
+        else config.success_threshold
+    )
     started = time.perf_counter()
     try:
         for offset in range(options.generations):
             generation = start_generation + offset
             genomes = _genomes(population)
-            episode_seeds = tuple(
-                options.seed
-                + generation * options.episodes
-                + episode
-                for episode in range(options.episodes)
-            )
-            if pool is not None:
-                fitnesses = pool.map(
-                    _worker_evaluate,
-                    [(genome, episode_seeds) for genome in genomes],
+            interaction_scores: list[float] = []
+            if use_legacy_evolution:
+                episode_seeds = tuple(
+                    options.seed
+                    + generation * options.episodes
+                    + episode
+                    for episode in range(options.episodes)
                 )
-            else:
-                fitnesses = [
-                    evaluate_on_environment(
-                        genome,
-                        serial_env,
-                        config,
-                        episode_seeds,
-                        options.max_steps,
-                        options.activation_steps,
-                        _spiking_settings(options),
+                if pool is not None:
+                    fitnesses = pool.map(
+                        _worker_evaluate,
+                        [(genome, episode_seeds) for genome in genomes],
                     )
-                    for genome in genomes
-                ]
+                else:
+                    fitnesses = [
+                        evaluate_on_environment(
+                            genome,
+                            serial_env,
+                            config,
+                            episode_seeds,
+                            options.max_steps,
+                            options.activation_steps,
+                            _spiking_settings(options),
+                        )
+                        for genome in genomes
+                    ]
+                environment_interactions += len(genomes) * len(episode_seeds)
+                for genome, fitness in zip(genomes, fitnesses):
+                    genome.SetFitness(float(fitness))
+                    genome.SetEvaluated()
+                best_index = int(np.argmax(fitnesses))
+                generation_champion = genomes[best_index]
+                generation_best = float(fitnesses[best_index])
+            else:
+                requests = population.GetEvaluationRequests()
+                while requests:
+                    batch = list(requests)
+                    request_genomes = [
+                        population.GetEvaluationGenome(request)
+                        for request in batch
+                    ]
+                    request_seeds = [
+                        (_evaluation_seed(options.seed, request.case_id),)
+                        for request in batch
+                    ]
+                    if pool is not None:
+                        scores = pool.map(
+                            _worker_evaluate,
+                            list(zip(request_genomes, request_seeds)),
+                        )
+                    else:
+                        scores = [
+                            evaluate_on_environment(
+                                genome,
+                                serial_env,
+                                config,
+                                seeds,
+                                options.max_steps,
+                                options.activation_steps,
+                                _spiking_settings(options),
+                            )
+                            for genome, seeds in zip(
+                                request_genomes, request_seeds
+                            )
+                        ]
+                    for request, score in zip(batch, scores):
+                        score = float(score)
+                        interaction_scores.append(score)
+                        population.SubmitEvaluation(
+                            request.genome_id,
+                            request.case_id,
+                            score,
+                            success_threshold is not None,
+                            success_threshold is not None
+                            and score >= success_threshold,
+                        )
+                    environment_interactions += len(batch)
+                    requests = population.GetEvaluationRequests()
+                genomes = _genomes(population)
+                fitnesses = [float(genome.GetFitness()) for genome in genomes]
+                generation_champion = population.GetProvisionalChampion()
+                generation_best = float(generation_champion.GetFitness())
 
-            for genome, fitness in zip(genomes, fitnesses):
-                genome.SetFitness(float(fitness))
-                genome.SetEvaluated()
-
-            best_index = int(np.argmax(fitnesses))
-            generation_best = float(fitnesses[best_index])
             if generation_best > best_fitness:
                 best_fitness = generation_best
-                best_genome = _copy_genome(genomes[best_index])
+                best_genome = _copy_genome(generation_champion)
                 if options.output_dir is not None:
                     _save_genome(
                         best_genome,
@@ -1403,12 +1514,37 @@ def train(options: TrainOptions) -> TrainResult:
                     )
 
             elapsed = time.perf_counter() - started
+            sorted_interactions = sorted(interaction_scores)
+            lower_count = max(
+                1, int(math.ceil(0.2 * len(sorted_interactions)))
+            ) if sorted_interactions else 0
             row = {
                 "generation": generation,
                 "best_fitness": generation_best,
                 "best_ever": best_fitness,
                 "mean_fitness": float(np.mean(fitnesses)),
                 "median_fitness": float(np.median(fitnesses)),
+                "lower_20_return": (
+                    float(np.mean(sorted_interactions[:lower_count]))
+                    if lower_count
+                    else float(np.min(fitnesses))
+                ),
+                "success_rate": (
+                    float(
+                        np.mean(
+                            np.asarray(interaction_scores)
+                            >= success_threshold
+                        )
+                    )
+                    if interaction_scores and success_threshold is not None
+                    else None
+                ),
+                "environment_interactions": environment_interactions,
+                "archive_coverage": (
+                    len(population.GetQDArchive())
+                    if hasattr(population, "GetQDArchive")
+                    else 0
+                ),
                 "species": len(population.m_Species),
                 "genomes": len(genomes),
                 "elapsed_seconds": elapsed,
@@ -1441,7 +1577,85 @@ def train(options: TrainOptions) -> TrainResult:
                     record=False,
                 )
 
-            population.Epoch()
+            is_final_generation = offset + 1 == options.generations
+            if is_final_generation and not use_legacy_evolution:
+                validation_requests = population.ValidateCandidates(5)
+                while validation_requests:
+                    batch = list(validation_requests)
+                    request_genomes = [
+                        population.GetEvaluationGenome(request)
+                        for request in batch
+                    ]
+                    request_seeds = [
+                        (_evaluation_seed(options.seed, request.case_id),)
+                        for request in batch
+                    ]
+                    if pool is not None:
+                        scores = pool.map(
+                            _worker_evaluate,
+                            list(zip(request_genomes, request_seeds)),
+                        )
+                    else:
+                        scores = [
+                            evaluate_on_environment(
+                                genome,
+                                serial_env,
+                                config,
+                                seeds,
+                                options.max_steps,
+                                options.activation_steps,
+                                _spiking_settings(options),
+                            )
+                            for genome, seeds in zip(
+                                request_genomes, request_seeds
+                            )
+                        ]
+                    for request, score in zip(batch, scores):
+                        score = float(score)
+                        population.SubmitEvaluation(
+                            request.genome_id,
+                            request.case_id,
+                            score,
+                            success_threshold is not None,
+                            success_threshold is not None
+                            and score >= success_threshold,
+                        )
+                    environment_interactions += len(batch)
+                    validation_requests = population.GetEvaluationRequests()
+                champion = population.GetValidatedChampion()
+                best_genome = _copy_genome(champion.genome)
+                best_fitness = float(champion.validation_summary.mean)
+                validated = bool(champion.validated)
+                success_lower_bound = float(
+                    champion.certification_summary.success_lower_bound
+                )
+                history[-1].update(
+                    {
+                        "validated": validated,
+                        "validation_mean": float(
+                            champion.validation_summary.mean
+                        ),
+                        "test_mean": float(
+                            champion.certification_summary.mean
+                        ),
+                        "test_lower_20_return": float(
+                            champion.certification_summary.lower_tail_mean
+                        ),
+                        "test_success_rate": float(
+                            champion.certification_summary.success_rate
+                        ),
+                        "test_success_lower_bound": success_lower_bound,
+                        "environment_interactions": environment_interactions,
+                    }
+                )
+                _append_metrics(options.output_dir, history[-1])
+                if options.output_dir is not None:
+                    _save_genome(
+                        best_genome,
+                        options.output_dir / "best_genome.txt",
+                    )
+            else:
+                population.Epoch()
             if (
                 options.output_dir is not None
                 and options.checkpoint_every
@@ -1468,6 +1682,8 @@ def train(options: TrainOptions) -> TrainResult:
         best_fitness=best_fitness,
         best_genome=best_genome,
         history=history,
+        validated=validated,
+        success_lower_bound=success_lower_bound,
     )
     if options.record_video:
         _render_or_record(
@@ -1495,6 +1711,9 @@ def smoke_task(
     quiet: bool = False,
     spiking: bool = False,
     mcculloch_pitts: bool = False,
+    legacy_evolution: bool = False,
+    reliability_target: float = 0.95,
+    success_threshold: float | None = None,
 ) -> TrainResult:
     """Run a tiny real environment/evolution integration test."""
 
@@ -1511,6 +1730,9 @@ def smoke_task(
             activation_steps=1,
             profile="default",
             initial_connectivity="sparse",
+            legacy_evolution=legacy_evolution,
+            reliability_target=reliability_target,
+            success_threshold=success_threshold,
             spiking=spiking,
             mcculloch_pitts=mcculloch_pitts,
             spiking_steps=4,
@@ -1561,7 +1783,27 @@ def _parser(default_task: str | None) -> argparse.ArgumentParser:
         "--episodes",
         type=int,
         default=config.default_episodes if config else None,
-        help="common-seed episodes per genome and generation",
+        help=(
+            "legacy-mode episodes per genome; reliable mode uses "
+            "successive-halving stages of 2/4/8/16 cases"
+        ),
+    )
+    parser.add_argument(
+        "--legacy-evolution",
+        action="store_true",
+        help="use exact MultiNEAT 2 scalar-fitness evolution",
+    )
+    parser.add_argument(
+        "--reliability-target",
+        type=float,
+        default=0.95,
+        help="required one-sided Wilson lower bound for validated=true",
+    )
+    parser.add_argument(
+        "--success-threshold",
+        type=float,
+        default=None,
+        help="episode return counted as success (task default when omitted)",
     )
     parser.add_argument(
         "--workers",
@@ -1668,6 +1910,9 @@ def main(default_task: str | None = None) -> int:
                 args.quiet,
                 args.spiking,
                 args.mcculloch_pitts,
+                args.legacy_evolution,
+                args.reliability_target,
+                args.success_threshold,
             )
         else:
             generations = (
@@ -1702,6 +1947,9 @@ def main(default_task: str | None = None) -> int:
                     activation_steps=args.activation_steps,
                     profile=args.profile,
                     initial_connectivity=args.initial_connectivity,
+                    legacy_evolution=args.legacy_evolution,
+                    reliability_target=args.reliability_target,
+                    success_threshold=args.success_threshold,
                     spiking=args.spiking,
                     mcculloch_pitts=args.mcculloch_pitts,
                     spiking_steps=args.spiking_steps,
@@ -1720,6 +1968,8 @@ def main(default_task: str | None = None) -> int:
         print(
             f"completed task={result.task} generations={result.generations} "
             f"best_fitness={result.best_fitness:.6g} "
+            f"validated={str(result.validated).lower()} "
+            f"success_lcb={result.success_lower_bound:.6g} "
             f"policy={'mcculloch-pitts' if args.mcculloch_pitts else ('lif' if args.spiking else 'rate')}",
             flush=True,
         )

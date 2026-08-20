@@ -400,6 +400,660 @@ bool Population::Validate(std::string* error) const
     return true;
 }
 
+namespace
+{
+std::uint64_t TrainingCaseID(unsigned int generation, unsigned int index)
+{
+    return (static_cast<std::uint64_t>(generation) << 32U) |
+           static_cast<std::uint64_t>(index);
+}
+
+std::uint64_t ValidationCaseID(unsigned int generation, unsigned int index)
+{
+    return 0x8000000000000000ULL |
+           (static_cast<std::uint64_t>(generation) << 24U) |
+           static_cast<std::uint64_t>(index);
+}
+
+std::uint64_t CertificationCaseID(unsigned int generation, unsigned int index)
+{
+    return 0xc000000000000000ULL |
+           (static_cast<std::uint64_t>(generation) << 24U) |
+           static_cast<std::uint64_t>(index);
+}
+
+std::uint64_t ArchiveCaseID(
+    unsigned int generation,
+    std::size_t archive_index,
+    unsigned int reevaluations)
+{
+    return 0x4000000000000000ULL |
+           (static_cast<std::uint64_t>(generation) << 28U) |
+           ((static_cast<std::uint64_t>(archive_index) & 0xfffffULL) << 8U) |
+           static_cast<std::uint64_t>(reevaluations & 0xffU);
+}
+
+bool HasCase(const Genome& genome, std::uint64_t case_id)
+{
+    const auto& samples = genome.GetEvaluationSamples();
+    return std::any_of(
+        samples.begin(), samples.end(),
+        [case_id](const EvaluationSample& sample)
+        { return sample.case_id == case_id; });
+}
+
+EvaluationSummary MatchedEvidenceSummary(
+    const Genome& genome,
+    std::size_t evidence_count,
+    const Parameters& parameters)
+{
+    const auto& samples = genome.GetEvaluationSamples();
+    if (evidence_count == 0 || samples.empty())
+        return {};
+    const std::size_t retained = std::min(evidence_count, samples.size());
+    std::vector<EvaluationSample> matched(
+        samples.end() - static_cast<std::ptrdiff_t>(retained),
+        samples.end());
+    return SummarizeEvaluations(
+        matched,
+        parameters.EvaluationConfidence,
+        parameters.EvaluationBootstrapSamples);
+}
+}
+
+void Population::RefreshBehaviorDescriptor(Genome& genome)
+{
+    std::size_t dimensions = 0;
+    std::size_t descriptor_samples = 0;
+    std::vector<long double> totals;
+    for (const auto& sample : genome.GetEvaluationSamples())
+    {
+        if (sample.behavior_descriptor.empty())
+            continue;
+        if (dimensions == 0)
+        {
+            dimensions = sample.behavior_descriptor.size();
+            totals.assign(dimensions, 0.0L);
+        }
+        if (sample.behavior_descriptor.size() != dimensions)
+        {
+            throw std::invalid_argument(
+                "A genome's behavior descriptors must have equal dimensions");
+        }
+        for (std::size_t index = 0; index < dimensions; ++index)
+            totals[index] += sample.behavior_descriptor[index];
+        ++descriptor_samples;
+    }
+    if (descriptor_samples == 0)
+        return;
+    std::vector<double> descriptor(dimensions, 0.0);
+    for (std::size_t index = 0; index < dimensions; ++index)
+    {
+        descriptor[index] = static_cast<double>(
+            totals[index] / static_cast<long double>(descriptor_samples));
+    }
+    genome.SetBehaviorDescriptor(descriptor);
+}
+
+std::vector<unsigned int> Population::DescriptorCell(
+    const std::vector<double>& descriptor) const
+{
+    const std::size_t dimensions = m_Parameters.QDDescriptorBins.size();
+    if (dimensions == 0 || descriptor.size() != dimensions)
+        return {};
+    std::vector<unsigned int> cell(dimensions, 0U);
+    for (std::size_t index = 0; index < dimensions; ++index)
+    {
+        const double minimum = m_Parameters.QDDescriptorMinimums[index];
+        const double maximum = m_Parameters.QDDescriptorMaximums[index];
+        const unsigned int bins = m_Parameters.QDDescriptorBins[index];
+        const double normalized = std::clamp(
+            (descriptor[index] - minimum) / (maximum - minimum),
+            0.0,
+            std::nextafter(1.0, 0.0));
+        cell[index] = std::min(
+            bins - 1U,
+            static_cast<unsigned int>(normalized * bins));
+    }
+    return cell;
+}
+
+void Population::RebuildQDArchive()
+{
+    std::map<std::vector<unsigned int>, std::vector<QDArchiveEntry>> cells;
+    for (auto& entry : m_QDArchive)
+    {
+        RefreshBehaviorDescriptor(entry.genome);
+        entry.cell = DescriptorCell(entry.genome.GetBehaviorDescriptor());
+        if (entry.cell.empty())
+            continue;
+        entry.summary = entry.genome.GetEvaluationSummary(
+            m_Parameters.EvaluationConfidence,
+            m_Parameters.EvaluationBootstrapSamples);
+        cells[entry.cell].push_back(entry);
+    }
+    m_QDArchive.clear();
+    for (auto& cell : cells)
+    {
+        auto& entries = cell.second;
+        std::stable_sort(
+            entries.begin(), entries.end(),
+            [](const QDArchiveEntry& lhs, const QDArchiveEntry& rhs)
+            {
+                if (lhs.summary.lower_confidence_bound !=
+                    rhs.summary.lower_confidence_bound)
+                {
+                    return lhs.summary.lower_confidence_bound >
+                           rhs.summary.lower_confidence_bound;
+                }
+                return lhs.genome.NumLinks() < rhs.genome.NumLinks();
+            });
+        const std::size_t retained = std::min<std::size_t>(
+            entries.size(), m_Parameters.QDCellDepth);
+        m_QDArchive.insert(
+            m_QDArchive.end(), entries.begin(),
+            entries.begin() + static_cast<std::ptrdiff_t>(retained));
+    }
+}
+
+void Population::UpdateQDArchive()
+{
+    if (m_Parameters.EvolutionModeSetting != ROBUST_QD_NEAT)
+        return;
+    for (auto& species : m_Species)
+    {
+        for (auto& genome : species.m_Individuals)
+        {
+            const std::vector<unsigned int> cell = DescriptorCell(
+                genome.GetBehaviorDescriptor());
+            if (cell.empty())
+                continue;
+            const EvaluationSummary summary = genome.GetEvaluationSummary(
+                m_Parameters.EvaluationConfidence,
+                m_Parameters.EvaluationBootstrapSamples);
+            std::vector<std::size_t> occupants;
+            for (std::size_t index = 0; index < m_QDArchive.size(); ++index)
+            {
+                if (m_QDArchive[index].cell == cell)
+                    occupants.push_back(index);
+            }
+            if (occupants.size() < m_Parameters.QDCellDepth)
+            {
+                m_QDArchive.push_back({cell, genome, summary, 0U});
+                LineageRecord lineage = genome.GetLineage();
+                lineage.archive_replacement = true;
+                genome.SetLineage(lineage);
+                continue;
+            }
+            const auto worst = *std::min_element(
+                occupants.begin(), occupants.end(),
+                [&](std::size_t lhs, std::size_t rhs)
+                {
+                    return m_QDArchive[lhs].summary.lower_confidence_bound <
+                           m_QDArchive[rhs].summary.lower_confidence_bound;
+                });
+            const auto& incumbent = m_QDArchive[worst];
+            const std::size_t matched_count = std::min(
+                summary.sample_count, incumbent.summary.sample_count);
+            const EvaluationSummary challenger_matched =
+                MatchedEvidenceSummary(
+                    genome, matched_count, m_Parameters);
+            const EvaluationSummary incumbent_matched =
+                MatchedEvidenceSummary(
+                    incumbent.genome, matched_count, m_Parameters);
+            if (matched_count > 0 &&
+                challenger_matched.lower_confidence_bound >
+                    incumbent_matched.lower_confidence_bound)
+            {
+                m_QDArchive[worst] = {cell, genome, summary, 0U};
+                LineageRecord lineage = genome.GetLineage();
+                lineage.archive_replacement = true;
+                genome.SetLineage(lineage);
+            }
+        }
+    }
+    RebuildQDArchive();
+}
+
+void Population::StartEvaluationCycle()
+{
+    if (m_Parameters.EvolutionModeSetting == LEGACY_V2 ||
+        m_EvaluationCycleComplete || !m_PendingEvaluationRequests.empty())
+    {
+        return;
+    }
+    m_EvaluationStage = 0;
+    m_EvaluationTargetSamples = m_Parameters.DeterministicEvaluation
+        ? 1U
+        : m_Parameters.EvaluationMinSamples;
+    m_RacingCandidates.clear();
+    for (auto& species : m_Species)
+    {
+        for (auto& genome : species.m_Individuals)
+        {
+            m_RacingCandidates.push_back(genome.GetID());
+            genome.ResetEvaluated();
+            for (unsigned int sample = 0;
+                 sample < m_EvaluationTargetSamples;
+                 ++sample)
+            {
+                const std::uint64_t case_id = TrainingCaseID(
+                    m_Generation, sample);
+                if (!HasCase(genome, case_id))
+                {
+                    m_PendingEvaluationRequests.push_back(
+                        {genome.GetID(), case_id, m_EvaluationStage,
+                         TRAINING_EVALUATION, false,
+                         std::numeric_limits<std::size_t>::max()});
+                }
+            }
+        }
+    }
+    if (m_PendingEvaluationRequests.empty())
+        AdvanceEvaluationCycle();
+}
+
+void Population::AdvanceEvaluationCycle()
+{
+    if (!m_PendingEvaluationRequests.empty())
+        return;
+    const bool final_stage = m_Parameters.DeterministicEvaluation ||
+        m_EvaluationTargetSamples >= m_Parameters.EvaluationMaxSamples;
+    if (!final_stage)
+    {
+        std::vector<int> survivors;
+        for (auto& species : m_Species)
+        {
+            std::vector<Genome*> candidates;
+            for (auto& genome : species.m_Individuals)
+            {
+                if (std::find(
+                        m_RacingCandidates.begin(),
+                        m_RacingCandidates.end(),
+                        genome.GetID()) != m_RacingCandidates.end())
+                {
+                    genome.RefreshReliableFitness(
+                        m_Parameters.FitnessAggregationMode,
+                        m_Parameters.EvaluationConfidence,
+                        m_Parameters.EvaluationBootstrapSamples);
+                    candidates.push_back(&genome);
+                }
+            }
+            std::stable_sort(
+                candidates.begin(), candidates.end(),
+                [](const Genome* lhs, const Genome* rhs)
+                {
+                    if (lhs->GetFitness() != rhs->GetFitness())
+                        return lhs->GetFitness() > rhs->GetFitness();
+                    if (lhs->GetEvaluationSummary().mean !=
+                        rhs->GetEvaluationSummary().mean)
+                    {
+                        return lhs->GetEvaluationSummary().mean >
+                               rhs->GetEvaluationSummary().mean;
+                    }
+                    return lhs->NumLinks() < rhs->NumLinks();
+                });
+            const std::size_t retained = std::max<std::size_t>(
+                1U, (candidates.size() + 1U) / 2U);
+            for (std::size_t index = 0; index < candidates.size(); ++index)
+            {
+                if (index < retained)
+                    survivors.push_back(candidates[index]->GetID());
+                else
+                    candidates[index]->SetEvaluated();
+            }
+        }
+        m_RacingCandidates = std::move(survivors);
+        ++m_EvaluationStage;
+        const unsigned int old_target = m_EvaluationTargetSamples;
+        m_EvaluationTargetSamples = std::min(
+            m_Parameters.EvaluationMaxSamples,
+            std::max(old_target + 1U, old_target * 2U));
+        for (int genome_id : m_RacingCandidates)
+        {
+            for (unsigned int sample = old_target;
+                 sample < m_EvaluationTargetSamples;
+                 ++sample)
+            {
+                m_PendingEvaluationRequests.push_back(
+                    {genome_id, TrainingCaseID(m_Generation, sample),
+                     m_EvaluationStage, TRAINING_EVALUATION, false,
+                     std::numeric_limits<std::size_t>::max()});
+            }
+        }
+        return;
+    }
+
+    for (auto& species : m_Species)
+    {
+        for (auto& genome : species.m_Individuals)
+        {
+            genome.RefreshReliableFitness(
+                m_Parameters.FitnessAggregationMode,
+                m_Parameters.EvaluationConfidence,
+                m_Parameters.EvaluationBootstrapSamples);
+            RefreshBehaviorDescriptor(genome);
+            genome.SetEvaluated();
+        }
+    }
+    UpdateQDArchive();
+
+    if (m_Parameters.EvolutionModeSetting == ROBUST_QD_NEAT &&
+        !m_QDArchive.empty() && !m_ArchiveReevaluationScheduled &&
+        m_Parameters.QDArchiveReevaluationFraction > 0.0)
+    {
+        std::map<std::vector<unsigned int>, std::vector<std::size_t>> cells;
+        for (std::size_t index = 0; index < m_QDArchive.size(); ++index)
+            cells[m_QDArchive[index].cell].push_back(index);
+        std::vector<std::vector<std::size_t>> occupied_cells;
+        occupied_cells.reserve(cells.size());
+        for (auto& cell : cells)
+            occupied_cells.push_back(std::move(cell.second));
+        const std::size_t count = std::max<std::size_t>(
+            1U, static_cast<std::size_t>(std::ceil(
+                m_Parameters.QDArchiveReevaluationFraction *
+                static_cast<double>(occupied_cells.size()))));
+        const std::size_t start = m_Generation % occupied_cells.size();
+        for (std::size_t offset = 0;
+             offset < std::min(count, occupied_cells.size());
+             ++offset)
+        {
+            const auto& cell = occupied_cells[
+                (start + offset) % occupied_cells.size()];
+            const std::size_t index = cell[
+                static_cast<std::size_t>(m_Generation) % cell.size()];
+            auto& entry = m_QDArchive[index];
+            m_PendingEvaluationRequests.push_back(
+                {entry.genome.GetID(),
+                 ArchiveCaseID(m_Generation, index, entry.reevaluations),
+                 m_EvaluationStage + 1U, TRAINING_EVALUATION, true, index});
+        }
+        m_ArchiveReevaluationScheduled = true;
+        return;
+    }
+    if (m_ArchiveReevaluationScheduled)
+        RebuildQDArchive();
+    m_EvaluationCycleComplete = true;
+}
+
+std::vector<EvaluationRequest> Population::GetEvaluationRequests()
+{
+    if (m_PendingEvaluationRequests.empty() &&
+        !m_EvaluationCycleComplete && m_ValidationEvidence.empty() &&
+        m_CertificationEvidence.empty())
+    {
+        StartEvaluationCycle();
+    }
+    return m_PendingEvaluationRequests;
+}
+
+Genome Population::GetEvaluationGenome(
+    const EvaluationRequest& request) const
+{
+    if (request.archive_evaluation)
+    {
+        if (request.archive_index >= m_QDArchive.size())
+            throw std::out_of_range("QD archive evaluation index is invalid");
+        return m_QDArchive[request.archive_index].genome;
+    }
+    for (const auto& species : m_Species)
+    {
+        for (const auto& genome : species.m_Individuals)
+        {
+            if (genome.GetID() == request.genome_id)
+                return genome;
+        }
+    }
+    throw std::out_of_range("Evaluation request genome is not available");
+}
+
+void Population::SubmitEvaluation(
+    int genome_id,
+    std::uint64_t case_id,
+    double score,
+    bool has_success,
+    bool success,
+    const std::vector<double>& descriptor)
+{
+    if (!std::isfinite(score))
+        throw std::invalid_argument("Submitted evaluation score must be finite");
+    const auto request = std::find_if(
+        m_PendingEvaluationRequests.begin(),
+        m_PendingEvaluationRequests.end(),
+        [genome_id, case_id](const EvaluationRequest& value)
+        { return value.genome_id == genome_id && value.case_id == case_id; });
+    if (request == m_PendingEvaluationRequests.end())
+        throw std::invalid_argument("Evaluation was not requested or was already submitted");
+    const EvaluationRequest submitted_request = *request;
+    EvaluationSample sample{case_id, score, has_success, success, descriptor};
+
+    if (submitted_request.archive_evaluation)
+    {
+        if (submitted_request.archive_index >= m_QDArchive.size())
+            throw std::out_of_range("QD archive evaluation index is invalid");
+        auto& entry = m_QDArchive[submitted_request.archive_index];
+        entry.genome.AddEvaluationSample(sample);
+        entry.genome.RefreshReliableFitness(
+            m_Parameters.FitnessAggregationMode,
+            m_Parameters.EvaluationConfidence,
+            m_Parameters.EvaluationBootstrapSamples);
+        RefreshBehaviorDescriptor(entry.genome);
+        entry.summary = entry.genome.GetEvaluationSummary(
+            m_Parameters.EvaluationConfidence,
+            m_Parameters.EvaluationBootstrapSamples);
+        ++entry.reevaluations;
+    }
+    else if (submitted_request.phase == VALIDATION_EVALUATION)
+    {
+        m_ValidationEvidence[genome_id].push_back(std::move(sample));
+    }
+    else if (submitted_request.phase == CERTIFICATION_EVALUATION)
+    {
+        m_CertificationEvidence[genome_id].push_back(std::move(sample));
+    }
+    else
+    {
+        Genome& genome = AccessGenomeByID(genome_id);
+        genome.AddEvaluationSample(sample);
+        ++m_NumEvaluations;
+    }
+    m_PendingEvaluationRequests.erase(request);
+    if (!m_PendingEvaluationRequests.empty())
+        return;
+
+    if (submitted_request.phase == VALIDATION_EVALUATION)
+    {
+        int best_id = -1;
+        EvaluationSummary best_summary;
+        for (const auto& candidate : m_ValidationEvidence)
+        {
+            const EvaluationSummary summary = SummarizeEvaluations(
+                candidate.second,
+                m_Parameters.EvaluationConfidence,
+                m_Parameters.EvaluationBootstrapSamples);
+            if (best_id < 0 || summary.lower_confidence_bound >
+                    best_summary.lower_confidence_bound)
+            {
+                best_id = candidate.first;
+                best_summary = summary;
+            }
+        }
+        if (best_id < 0)
+            throw std::runtime_error("Champion validation produced no candidate");
+        m_ValidatedChampion = ValidatedChampion{};
+        m_ValidatedChampion.genome = AccessGenomeByID(best_id);
+        m_ValidatedChampion.validation_summary = best_summary;
+        m_CertificationEvidence.clear();
+        for (unsigned int index = 0;
+             index < m_Parameters.CertificationSamples;
+             ++index)
+        {
+            m_PendingEvaluationRequests.push_back(
+                {best_id, CertificationCaseID(m_Generation, index), 0U,
+                 CERTIFICATION_EVALUATION, false,
+                 std::numeric_limits<std::size_t>::max()});
+        }
+    }
+    else if (submitted_request.phase == CERTIFICATION_EVALUATION)
+    {
+        const int best_id = m_ValidatedChampion.genome.GetID();
+        const auto found = m_CertificationEvidence.find(best_id);
+        if (found == m_CertificationEvidence.end())
+            throw std::runtime_error("Champion certification evidence is missing");
+        m_ValidatedChampion.certification_summary = SummarizeEvaluations(
+            found->second, 0.95, m_Parameters.EvaluationBootstrapSamples);
+        const auto& summary = m_ValidatedChampion.certification_summary;
+        m_ValidatedChampion.validated =
+            summary.success_sample_count ==
+                m_Parameters.CertificationSamples &&
+            summary.success_lower_bound >= m_Parameters.ReliabilityTarget;
+    }
+    else
+    {
+        AdvanceEvaluationCycle();
+    }
+}
+
+bool Population::ReadyForEpoch() const
+{
+    if (!m_PendingEvaluationRequests.empty())
+        return false;
+    if (m_Parameters.EvolutionModeSetting == LEGACY_V2)
+        return true;
+    if (m_EvaluationCycleComplete)
+        return true;
+    return std::all_of(
+        m_Species.begin(), m_Species.end(),
+        [](const Species& species)
+        {
+            return std::all_of(
+                species.m_Individuals.begin(), species.m_Individuals.end(),
+                [](const Genome& genome) { return genome.IsEvaluated(); });
+        });
+}
+
+Genome Population::GetProvisionalChampion() const
+{
+    const Genome* best = nullptr;
+    double best_score = std::numeric_limits<double>::lowest();
+    double best_mean = std::numeric_limits<double>::lowest();
+    for (const auto& species : m_Species)
+    {
+        for (const auto& genome : species.m_Individuals)
+        {
+            if (!genome.IsEvaluated())
+                continue;
+            const EvaluationSummary summary = genome.GetEvaluationSummary(
+                m_Parameters.EvaluationConfidence,
+                m_Parameters.EvaluationBootstrapSamples);
+            const double score = genome.GetReliableFitness(
+                m_Parameters.FitnessAggregationMode,
+                m_Parameters.EvaluationConfidence,
+                m_Parameters.EvaluationBootstrapSamples);
+            if (best == nullptr || score > best_score ||
+                (score == best_score && summary.mean > best_mean) ||
+                (score == best_score && summary.mean == best_mean &&
+                 genome.NumLinks() < best->NumLinks()))
+            {
+                best = &genome;
+                best_score = score;
+                best_mean = summary.mean;
+            }
+        }
+    }
+    if (best == nullptr)
+        throw std::runtime_error("No evaluated provisional champion is available");
+    return *best;
+}
+
+std::vector<EvaluationRequest> Population::ValidateCandidates(
+    unsigned int candidate_count)
+{
+    if (!ReadyForEpoch())
+        throw std::runtime_error("Training evaluations must finish before validation");
+    if (candidate_count == 0)
+        throw std::invalid_argument("Validation candidate count must be positive");
+    std::vector<Genome*> candidates;
+    for (auto& species : m_Species)
+    {
+        for (auto& genome : species.m_Individuals)
+        {
+            if (genome.IsEvaluated())
+                candidates.push_back(&genome);
+        }
+    }
+    std::stable_sort(
+        candidates.begin(), candidates.end(),
+        [&](const Genome* lhs, const Genome* rhs)
+        {
+            return lhs->GetReliableFitness(
+                       m_Parameters.FitnessAggregationMode,
+                       m_Parameters.EvaluationConfidence,
+                       m_Parameters.EvaluationBootstrapSamples) >
+                   rhs->GetReliableFitness(
+                       m_Parameters.FitnessAggregationMode,
+                       m_Parameters.EvaluationConfidence,
+                       m_Parameters.EvaluationBootstrapSamples);
+        });
+    candidates.resize(std::min<std::size_t>(candidate_count, candidates.size()));
+    m_PendingEvaluationRequests.clear();
+    m_ValidationEvidence.clear();
+    m_CertificationEvidence.clear();
+    m_ValidatedChampion = ValidatedChampion{};
+    for (Genome* candidate : candidates)
+    {
+        m_ValidationEvidence.emplace(
+            candidate->GetID(), std::vector<EvaluationSample>{});
+        for (unsigned int index = 0;
+             index < m_Parameters.ValidationSamples;
+             ++index)
+        {
+            m_PendingEvaluationRequests.push_back(
+                {candidate->GetID(), ValidationCaseID(m_Generation, index),
+                 0U, VALIDATION_EVALUATION, false,
+                 std::numeric_limits<std::size_t>::max()});
+        }
+    }
+    return m_PendingEvaluationRequests;
+}
+
+ValidatedChampion Population::GetValidatedChampion() const
+{
+    return m_ValidatedChampion;
+}
+
+bool Population::TryGetQDParent(
+    const Genome& reference,
+    Genome& result)
+{
+    if (m_Parameters.EvolutionModeSetting != ROBUST_QD_NEAT ||
+        m_QDArchive.empty())
+    {
+        return false;
+    }
+    std::map<std::vector<unsigned int>, std::vector<std::size_t>>
+        compatible_cells;
+    for (std::size_t index = 0; index < m_QDArchive.size(); ++index)
+    {
+        Genome candidate = m_QDArchive[index].genome;
+        Genome reference_copy = reference;
+        if (candidate.IsCompatibleWith(reference_copy, m_Parameters))
+            compatible_cells[m_QDArchive[index].cell].push_back(index);
+    }
+    if (compatible_cells.empty())
+        return false;
+    auto cell = compatible_cells.begin();
+    std::advance(
+        cell,
+        m_RNG.RandInt(
+            0, static_cast<int>(compatible_cells.size() - 1U)));
+    const auto& compatible = cell->second;
+    const std::size_t selected = compatible[static_cast<std::size_t>(
+        m_RNG.RandInt(0, static_cast<int>(compatible.size() - 1U)))];
+    result = m_QDArchive[selected].genome;
+    return true;
+}
+
 // The constructor
 Population::Population(const Genome& a_Seed, const Parameters& a_Parameters,
 		               bool a_RandomizeWeights, double a_RandomizationRange, int a_RNG_seed)
@@ -941,8 +1595,9 @@ void Population::UpdateSpecies()
                 t_oldbestidx = i;
             }
         }
-        ASSERT(t_oldbestid  != -1);
-        ASSERT(t_oldbestidx != -1);
+        // A checkpoint taken before the first best-species mark (or a legacy
+        // checkpoint without that state) legitimately has no old marker.
+        // The current pass will establish one from evaluated fitness.
     }
 
     for(unsigned int i=0; i<m_Species.size(); i++)
@@ -996,6 +1651,20 @@ void Population::Epoch()
     {
         throw std::runtime_error("Cannot run Epoch on an empty population");
     }
+    if (m_Parameters.EvolutionModeSetting != LEGACY_V2)
+    {
+        for (auto& species : m_Species)
+        {
+            for (auto& genome : species.m_Individuals)
+            {
+                genome.RefreshReliableFitness(
+                    m_Parameters.FitnessAggregationMode,
+                    m_Parameters.EvaluationConfidence,
+                    m_Parameters.EvaluationBootstrapSamples);
+            }
+        }
+    }
+
     // Historical Epoch() treated every member as evaluated. Strict modes are
     // additive and let experiments fail early instead of silently selecting
     // missing or non-finite measurements.
@@ -1026,7 +1695,11 @@ void Population::Epoch()
     }
 
     // Sort the population first
-    Sort(); 
+    Sort();
+    for (auto& species : m_Species)
+    {
+        species.UpdateAdaptiveState(*this, m_Parameters, m_RNG);
+    }
         
     // Update species stagnation info & stuff
     UpdateSpecies();
@@ -1505,6 +2178,15 @@ void Population::Epoch()
     
     // Increase generation number
     m_Generation++;
+    m_PendingEvaluationRequests.clear();
+    m_RacingCandidates.clear();
+    m_EvaluationStage = 0;
+    m_EvaluationTargetSamples = 0;
+    m_EvaluationCycleComplete = false;
+    m_ArchiveReevaluationScheduled = false;
+    m_ValidationEvidence.clear();
+    m_CertificationEvidence.clear();
+    m_ValidatedChampion = ValidatedChampion{};
 
     // At this point we may also empty our innovation database
     // This is the place where we control whether we want to
@@ -2340,6 +3022,99 @@ std::string ReadDelimitedBlock(std::istream& input,
     throw std::runtime_error(
         "Population::Deserialize: missing " + end + " marker.");
 }
+
+void WriteEvaluationSample(
+    std::ostream& output,
+    const EvaluationSample& sample)
+{
+    output << "EvaluationSample " << sample.case_id << ' ' << sample.score
+           << ' ' << sample.has_success << ' ' << sample.success << ' '
+           << sample.behavior_descriptor.size();
+    for (double value : sample.behavior_descriptor)
+        output << ' ' << value;
+    output << '\n';
+}
+
+EvaluationSample ReadEvaluationSample(std::istream& input)
+{
+    std::string token;
+    input >> token;
+    if (token != "EvaluationSample")
+    {
+        throw std::runtime_error(
+            "Population::Deserialize: missing EvaluationSample marker.");
+    }
+    EvaluationSample sample;
+    std::size_t descriptor_size = 0;
+    input >> sample.case_id >> sample.score >> sample.has_success
+          >> sample.success >> descriptor_size;
+    sample.behavior_descriptor.resize(descriptor_size);
+    for (double& value : sample.behavior_descriptor)
+        input >> value;
+    if (!input || !std::isfinite(sample.score) ||
+        std::any_of(
+            sample.behavior_descriptor.begin(),
+            sample.behavior_descriptor.end(),
+            [](double value) { return !std::isfinite(value); }))
+    {
+        throw std::runtime_error(
+            "Population::Deserialize: invalid evaluation sample.");
+    }
+    return sample;
+}
+
+void WriteEvidence(
+    std::ostream& output,
+    const char* marker,
+    const std::map<int, std::vector<EvaluationSample>>& evidence)
+{
+    output << marker << ' ' << evidence.size() << '\n';
+    for (const auto& candidate : evidence)
+    {
+        output << "EvidenceCandidate " << candidate.first << ' '
+               << candidate.second.size() << '\n';
+        for (const auto& sample : candidate.second)
+            WriteEvaluationSample(output, sample);
+    }
+}
+
+std::map<int, std::vector<EvaluationSample>> ReadEvidence(
+    std::istream& input,
+    const char* marker)
+{
+    std::string token;
+    std::size_t candidate_count = 0;
+    input >> token >> candidate_count;
+    if (token != marker)
+    {
+        throw std::runtime_error(
+            "Population::Deserialize: missing " + std::string(marker) +
+            " marker.");
+    }
+    std::map<int, std::vector<EvaluationSample>> evidence;
+    for (std::size_t candidate_index = 0;
+         candidate_index < candidate_count;
+         ++candidate_index)
+    {
+        int genome_id = -1;
+        std::size_t sample_count = 0;
+        input >> token >> genome_id >> sample_count;
+        if (token != "EvidenceCandidate" || genome_id < 0)
+        {
+            throw std::runtime_error(
+                "Population::Deserialize: invalid evidence candidate.");
+        }
+        auto& samples = evidence[genome_id];
+        samples.reserve(sample_count);
+        for (std::size_t sample_index = 0;
+             sample_index < sample_count;
+             ++sample_index)
+        {
+            samples.push_back(ReadEvaluationSample(input));
+        }
+    }
+    return evidence;
+}
 }
 
 std::string Population::Serialize() const
@@ -2353,7 +3128,7 @@ std::string Population::Serialize() const
     std::ostringstream output;
     output << std::setprecision(std::numeric_limits<double>::max_digits10);
     output << "PopulationStart\n";
-    output << "PopulationFormat 2\n";
+    output << "PopulationFormat 3\n";
     output << "PopulationState " << m_Generation << ' ' << m_NumEvaluations
            << ' ' << m_NextGenomeID << ' ' << m_NextSpeciesID << ' '
            << m_BestFitnessEver << ' ' << m_ID << ' '
@@ -2374,6 +3149,40 @@ std::string Population::Serialize() const
     output << "Species " << m_Species.size() << '\n';
     for (const auto &species : m_Species)
         output << species.Serialize();
+    output << "ReliabilityState " << m_EvaluationStage << ' '
+           << m_EvaluationTargetSamples << ' ' << m_EvaluationCycleComplete
+           << ' ' << m_ArchiveReevaluationScheduled << '\n';
+    output << "PendingEvaluations "
+           << m_PendingEvaluationRequests.size() << '\n';
+    for (const auto& request : m_PendingEvaluationRequests)
+    {
+        output << "EvaluationRequest " << request.genome_id << ' '
+               << request.case_id << ' ' << request.stage << ' '
+               << static_cast<int>(request.phase) << ' '
+               << request.archive_evaluation << ' '
+               << request.archive_index << '\n';
+    }
+    output << "RacingCandidates " << m_RacingCandidates.size();
+    for (int genome_id : m_RacingCandidates)
+        output << ' ' << genome_id;
+    output << '\n';
+    WriteEvidence(output, "ValidationEvidence", m_ValidationEvidence);
+    WriteEvidence(output, "CertificationEvidence", m_CertificationEvidence);
+    const bool has_validated_champion =
+        m_ValidatedChampion.genome.NumNeurons() > 0;
+    output << "ValidatedChampion " << has_validated_champion << ' '
+           << m_ValidatedChampion.validated << '\n';
+    if (has_validated_champion)
+        output << m_ValidatedChampion.genome.Serialize();
+    output << "QDArchive " << m_QDArchive.size() << '\n';
+    for (const auto& entry : m_QDArchive)
+    {
+        output << "QDEntry " << entry.cell.size();
+        for (unsigned int coordinate : entry.cell)
+            output << ' ' << coordinate;
+        output << ' ' << entry.reevaluations << '\n';
+        output << entry.genome.Serialize();
+    }
     output << "PopulationEnd\n";
     return output.str();
 }
@@ -2417,7 +3226,7 @@ Population Population::Deserialize(const std::string &data)
     {
         int version = 0;
         input >> version;
-        if (version != 2)
+        if (version != 2 && version != 3)
             throw std::runtime_error(
                 "Population::Deserialize: unsupported format.");
         input >> token;
@@ -2496,6 +3305,126 @@ Population Population::Deserialize(const std::string &data)
         {
             population.m_Species.push_back(Species::Deserialize(
                 ReadDelimitedBlock(input, "SpeciesStart", "SpeciesEnd")));
+        }
+
+        if (version >= 3)
+        {
+            input >> token >> population.m_EvaluationStage
+                  >> population.m_EvaluationTargetSamples
+                  >> population.m_EvaluationCycleComplete
+                  >> population.m_ArchiveReevaluationScheduled;
+            if (token != "ReliabilityState")
+            {
+                throw std::runtime_error(
+                    "Population::Deserialize: missing ReliabilityState marker.");
+            }
+
+            std::size_t request_count = 0;
+            input >> token >> request_count;
+            if (token != "PendingEvaluations")
+            {
+                throw std::runtime_error(
+                    "Population::Deserialize: missing PendingEvaluations marker.");
+            }
+            population.m_PendingEvaluationRequests.clear();
+            population.m_PendingEvaluationRequests.reserve(request_count);
+            for (std::size_t index = 0; index < request_count; ++index)
+            {
+                EvaluationRequest request;
+                int phase = 0;
+                input >> token >> request.genome_id >> request.case_id
+                      >> request.stage >> phase >> request.archive_evaluation
+                      >> request.archive_index;
+                if (token != "EvaluationRequest" ||
+                    phase < TRAINING_EVALUATION ||
+                    phase > CERTIFICATION_EVALUATION)
+                {
+                    throw std::runtime_error(
+                        "Population::Deserialize: invalid evaluation request.");
+                }
+                request.phase = static_cast<EvaluationPhase>(phase);
+                population.m_PendingEvaluationRequests.push_back(request);
+            }
+
+            std::size_t racing_count = 0;
+            input >> token >> racing_count;
+            if (token != "RacingCandidates")
+            {
+                throw std::runtime_error(
+                    "Population::Deserialize: missing RacingCandidates marker.");
+            }
+            population.m_RacingCandidates.resize(racing_count);
+            for (int& genome_id : population.m_RacingCandidates)
+                input >> genome_id;
+            population.m_ValidationEvidence = ReadEvidence(
+                input, "ValidationEvidence");
+            population.m_CertificationEvidence = ReadEvidence(
+                input, "CertificationEvidence");
+
+            bool has_validated_champion = false;
+            input >> token >> has_validated_champion
+                  >> population.m_ValidatedChampion.validated;
+            if (token != "ValidatedChampion")
+            {
+                throw std::runtime_error(
+                    "Population::Deserialize: missing ValidatedChampion marker.");
+            }
+            if (has_validated_champion)
+            {
+                population.m_ValidatedChampion.genome = Genome(input);
+                const int champion_id =
+                    population.m_ValidatedChampion.genome.GetID();
+                const auto validation =
+                    population.m_ValidationEvidence.find(champion_id);
+                if (validation != population.m_ValidationEvidence.end())
+                {
+                    population.m_ValidatedChampion.validation_summary =
+                        SummarizeEvaluations(
+                            validation->second,
+                            population.m_Parameters.EvaluationConfidence,
+                            population.m_Parameters.EvaluationBootstrapSamples);
+                }
+                const auto certification =
+                    population.m_CertificationEvidence.find(champion_id);
+                if (certification != population.m_CertificationEvidence.end())
+                {
+                    population.m_ValidatedChampion.certification_summary =
+                        SummarizeEvaluations(
+                            certification->second,
+                            0.95,
+                            population.m_Parameters.EvaluationBootstrapSamples);
+                }
+            }
+
+            std::size_t qd_archive_count = 0;
+            input >> token >> qd_archive_count;
+            if (token != "QDArchive")
+            {
+                throw std::runtime_error(
+                    "Population::Deserialize: missing QDArchive marker.");
+            }
+            population.m_QDArchive.clear();
+            population.m_QDArchive.reserve(qd_archive_count);
+            for (std::size_t index = 0; index < qd_archive_count; ++index)
+            {
+                QDArchiveEntry entry;
+                std::size_t cell_size = 0;
+                input >> token >> cell_size;
+                if (token != "QDEntry")
+                {
+                    throw std::runtime_error(
+                        "Population::Deserialize: missing QDEntry marker.");
+                }
+                entry.cell.resize(cell_size);
+                for (unsigned int& coordinate : entry.cell)
+                    input >> coordinate;
+                input >> entry.reevaluations;
+                entry.genome = Genome(input);
+                entry.summary = entry.genome.GetEvaluationSummary(
+                    population.m_Parameters.EvaluationConfidence,
+                    population.m_Parameters.EvaluationBootstrapSamples);
+                population.m_QDArchive.push_back(std::move(entry));
+            }
         }
     }
 

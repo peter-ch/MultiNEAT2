@@ -2,8 +2,10 @@
 #define _SPECIES_H
 
 #include <cmath>
+#include <array>
 #include <cstddef>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "Innovation.h"
@@ -42,6 +44,28 @@ private:
     // how many of this species should be spawned for
     // the next population
     double m_OffspringRqd;
+
+    std::array<double, OPERATOR_KIND_COUNT> m_OperatorAlpha{};
+    std::array<double, OPERATOR_KIND_COUNT> m_OperatorBeta{};
+    std::array<double, OPERATOR_KIND_COUNT> m_OperatorPriorAlpha{};
+    std::array<double, OPERATOR_KIND_COUNT> m_OperatorPriorBeta{};
+    std::string m_EmitterTopologySignature;
+    unsigned int m_EmitterStableGenerations = 0;
+    std::vector<double> m_EmitterMean;
+    std::vector<double> m_EmitterDeviation;
+    double m_EmitterSigma = 0.5;
+
+    void InitializeOperatorPriors(const Parameters& parameters);
+    double SampleOperatorPreference(OperatorKind operation, RNG& rng) const;
+    double AdaptiveCrossoverRate(
+        const Parameters& parameters,
+        RNG& rng) const;
+    unsigned int EmitterBatchSize() const;
+    bool CreateEmitterOffspring(
+        Genome& baby,
+        LineageRecord& lineage,
+        const Parameters& parameters,
+        RNG& rng);
 
 public:
 
@@ -82,6 +106,10 @@ public:
         m_GensNoImprovement = 0;
         m_EvalsNoImprovement = 0;
         m_R = m_G = m_B = 0;
+        m_OperatorAlpha.fill(1.0);
+        m_OperatorBeta.fill(1.0);
+        m_OperatorPriorAlpha.fill(1.0);
+        m_OperatorPriorBeta.fill(1.0);
     };
 
     // initializes a species with a leader genome and an ID number
@@ -209,7 +237,27 @@ public:
     // Reproduction.
     void Reproduce(Population& a_Pop, Parameters& a_Parameters, RNG& a_RNG);
 
-    void MutateGenome( bool t_baby_is_clone, Population &a_Pop, Genome &t_baby, Parameters& a_Parameters, RNG& a_RNG);
+    void MutateGenome(
+        bool t_baby_is_clone,
+        Population& a_Pop,
+        Genome& t_baby,
+        Parameters& a_Parameters,
+        RNG& a_RNG,
+        std::vector<OperatorKind>* applied_operators = nullptr);
+
+    void UpdateAdaptiveState(
+        const Population& population,
+        const Parameters& parameters,
+        RNG& rng);
+
+    const std::array<double, OPERATOR_KIND_COUNT>& GetOperatorAlpha() const
+    {
+        return m_OperatorAlpha;
+    }
+    unsigned int GetEmitterStableGenerations() const
+    {
+        return m_EmitterStableGenerations;
+    }
 
     // Removes all individuals
     void Clear()

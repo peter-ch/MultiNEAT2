@@ -236,7 +236,24 @@ namespace
     X(FitnessScaling)                                                       \
     X(FitnessRankPressure)                                                  \
     X(FitnessSigmaScale)                                                    \
-    X(FitnessBoltzmannTemperature)
+    X(FitnessBoltzmannTemperature)                                         \
+    X(EvolutionModeSetting)                                                 \
+    X(FitnessAggregationMode)                                              \
+    X(DeterministicEvaluation)                                             \
+    X(EvaluationMinSamples)                                                \
+    X(EvaluationMaxSamples)                                                \
+    X(EvaluationBootstrapSamples)                                          \
+    X(EvaluationConfidence)                                                \
+    X(ValidationSamples)                                                    \
+    X(CertificationSamples)                                                 \
+    X(ReliabilityTarget)                                                    \
+    X(QDCellDepth)                                                          \
+    X(QDArchiveReevaluationFraction)                                       \
+    X(AdaptiveOperatorSelection)                                           \
+    X(OperatorExplorationFloor)                                            \
+    X(OperatorPosteriorDecay)                                              \
+    X(EnableWeightEmitter)                                                 \
+    X(WeightEmitterStableGenerations)
 
 template <typename T>
 void WriteScalar(std::ostream& output, const T& value)
@@ -288,6 +305,17 @@ void WriteParameters(std::ostream& output, const Parameters& parameters)
     MULTINEAT_PARAMETER_FIELDS(MULTINEAT_WRITE_PARAMETER)
 #undef MULTINEAT_WRITE_PARAMETER
 
+    const auto write_vector = [&output](const char* name, const auto& values)
+    {
+        output << name << ' ' << values.size();
+        for (const auto& value : values)
+            output << ' ' << value;
+        output << '\n';
+    };
+    write_vector("QDDescriptorMinimums", parameters.QDDescriptorMinimums);
+    write_vector("QDDescriptorMaximums", parameters.QDDescriptorMaximums);
+    write_vector("QDDescriptorBins", parameters.QDDescriptorBins);
+
     Serialization::WriteTraitParameters(
         output, "NeuronTraitSchemas", parameters.NeuronTraits);
     Serialization::WriteTraitParameters(
@@ -308,7 +336,9 @@ bool ReadParameters(std::istream& input, Parameters& parameters)
     if (!input || key != "NEAT_ParametersStart")
         return false;
 
-    parameters.Reset();
+    // Missing 3.x fields identify a historical parameter block and must
+    // resume with historical behavior rather than silently changing search.
+    parameters.ConfigureLegacyV2();
     std::unordered_map<std::string, std::function<void(std::istream&)>>
         readers;
 #define MULTINEAT_MAKE_READER(name)                                      \
@@ -318,6 +348,26 @@ bool ReadParameters(std::istream& input, Parameters& parameters)
 #undef MULTINEAT_MAKE_READER
     readers.emplace("Elitism", [&parameters](std::istream& stream)
                     { ReadScalar(stream, parameters.EliteFraction); });
+    const auto read_double_vector = [](std::istream& stream, auto& values)
+    {
+        std::size_t count = 0;
+        stream >> count;
+        values.resize(count);
+        for (auto& value : values)
+            stream >> value;
+    };
+    readers.emplace(
+        "QDDescriptorMinimums",
+        [&parameters, read_double_vector](std::istream& stream)
+        { read_double_vector(stream, parameters.QDDescriptorMinimums); });
+    readers.emplace(
+        "QDDescriptorMaximums",
+        [&parameters, read_double_vector](std::istream& stream)
+        { read_double_vector(stream, parameters.QDDescriptorMaximums); });
+    readers.emplace(
+        "QDDescriptorBins",
+        [&parameters, read_double_vector](std::istream& stream)
+        { read_double_vector(stream, parameters.QDDescriptorBins); });
 
     while (input >> key)
     {
@@ -367,7 +417,7 @@ Parameters::Parameters()
     Reset();
 }
 
-void Parameters::Reset()
+void Parameters::ConfigureLegacyV2()
 {
     PopulationSize = 300;
     Speciation = true;
@@ -609,6 +659,60 @@ void Parameters::Reset()
     FitnessRankPressure = 1.5;
     FitnessSigmaScale = 2.0;
     FitnessBoltzmannTemperature = 1.0;
+
+    EvolutionModeSetting = LEGACY_V2;
+    FitnessAggregationMode = FITNESS_MEAN;
+    DeterministicEvaluation = true;
+    EvaluationMinSamples = 1;
+    EvaluationMaxSamples = 1;
+    EvaluationBootstrapSamples = 2048;
+    EvaluationConfidence = 0.90;
+    ValidationSamples = 32;
+    CertificationSamples = 64;
+    ReliabilityTarget = 0.95;
+    QDDescriptorMinimums.clear();
+    QDDescriptorMaximums.clear();
+    QDDescriptorBins.clear();
+    QDCellDepth = 2;
+    QDArchiveReevaluationFraction = 0.1;
+    AdaptiveOperatorSelection = false;
+    OperatorExplorationFloor = 0.05;
+    OperatorPosteriorDecay = 0.05;
+    EnableWeightEmitter = false;
+    WeightEmitterStableGenerations = 3;
+}
+
+void Parameters::ConfigureReliableEvolution()
+{
+    EvolutionModeSetting = RELIABLE_NEAT;
+    FitnessAggregationMode = BOOTSTRAP_LOWER_BOUND;
+    DeterministicEvaluation = false;
+    EvaluationMinSamples = 2;
+    EvaluationMaxSamples = 16;
+    EvaluationBootstrapSamples = 2048;
+    EvaluationConfidence = 0.90;
+    ValidationSamples = 32;
+    CertificationSamples = 64;
+    ReliabilityTarget = 0.95;
+    ParentSelectionMode = AUTO_EPSILON_LEXICASE;
+    FitnessScaling = LINEAR_RANK_FITNESS_SCALING;
+    OffspringAllocation = STOCHASTIC_REMAINDER;
+    SpeciesRepresentativeSelection = MEDOID_REPRESENTATIVE;
+    RepresentativeSelectionCandidates = 24;
+    RequireEvaluatedGenomes = true;
+    RejectNonFiniteFitness = true;
+    AllowClones = false;
+    AdaptiveOperatorSelection = true;
+    OperatorExplorationFloor = 0.05;
+    OperatorPosteriorDecay = 0.05;
+    EnableWeightEmitter = true;
+    WeightEmitterStableGenerations = 3;
+}
+
+void Parameters::Reset()
+{
+    ConfigureLegacyV2();
+    ConfigureReliableEvolution();
 }
 
 void Parameters::ConfigureSpiking(bool enable_stdp)
@@ -809,7 +913,7 @@ bool Parameters::Validate(std::string* error) const
             "TournamentSize must be greater than zero when tournament "
             "selection is enabled");
     if (ParentSelectionMode < LEGACY_SELECTION ||
-        ParentSelectionMode > BOLTZMANN)
+        ParentSelectionMode > AUTO_EPSILON_LEXICASE)
     {
         return fail("ParentSelectionMode is not a supported selection mode");
     }
@@ -842,6 +946,59 @@ bool Parameters::Validate(std::string* error) const
         FitnessScaling > BOLTZMANN_FITNESS_SCALING)
     {
         return fail("FitnessScaling is not a supported mode");
+    }
+    if (EvolutionModeSetting < LEGACY_V2 ||
+        EvolutionModeSetting > ROBUST_QD_NEAT)
+        return fail("EvolutionModeSetting is not a supported mode");
+    if (FitnessAggregationMode < FITNESS_MEAN ||
+        FitnessAggregationMode > BOOTSTRAP_LOWER_BOUND)
+        return fail("FitnessAggregationMode is not a supported mode");
+    if (EvaluationMinSamples == 0 ||
+        EvaluationMinSamples > EvaluationMaxSamples)
+    {
+        return fail(
+            "EvaluationMinSamples and EvaluationMaxSamples must define a "
+            "non-empty range");
+    }
+    if (EvaluationBootstrapSamples == 0)
+        return fail("EvaluationBootstrapSamples must be greater than zero");
+    if (ValidationSamples == 0 || CertificationSamples == 0)
+        return fail("Validation and certification sample counts must be positive");
+    if (!probability("EvaluationConfidence", EvaluationConfidence) ||
+        EvaluationConfidence <= 0.0 || EvaluationConfidence >= 1.0)
+    {
+        return fail("EvaluationConfidence must be strictly between zero and one");
+    }
+    if (!probability("ReliabilityTarget", ReliabilityTarget) ||
+        !probability(
+            "QDArchiveReevaluationFraction",
+            QDArchiveReevaluationFraction) ||
+        !probability("OperatorExplorationFloor", OperatorExplorationFloor) ||
+        !probability("OperatorPosteriorDecay", OperatorPosteriorDecay))
+    {
+        return false;
+    }
+    if (QDCellDepth == 0)
+        return fail("QDCellDepth must be greater than zero");
+    if (QDDescriptorMinimums.size() != QDDescriptorMaximums.size() ||
+        QDDescriptorMinimums.size() != QDDescriptorBins.size())
+    {
+        return fail("QD descriptor minimum, maximum, and bin counts must match");
+    }
+    if (EvolutionModeSetting == ROBUST_QD_NEAT &&
+        QDDescriptorBins.empty())
+    {
+        return fail("ROBUST_QD_NEAT requires at least one descriptor dimension");
+    }
+    for (std::size_t index = 0; index < QDDescriptorBins.size(); ++index)
+    {
+        if (!std::isfinite(QDDescriptorMinimums[index]) ||
+            !std::isfinite(QDDescriptorMaximums[index]) ||
+            QDDescriptorMinimums[index] >= QDDescriptorMaximums[index] ||
+            QDDescriptorBins[index] == 0)
+        {
+            return fail("QD descriptor bounds and bin counts are invalid");
+        }
     }
     if (MinSpeciesSize > PopulationSize)
         return fail("MinSpeciesSize cannot exceed PopulationSize");

@@ -179,6 +179,7 @@ PYBIND11_MODULE(pymultineat, m) {
         .value("TOURNAMENT", NEAT::TOURNAMENT)
         .value("STOCHASTIC", NEAT::STOCHASTIC)
         .value("BOLTZMANN", NEAT::BOLTZMANN)
+        .value("AUTO_EPSILON_LEXICASE", NEAT::AUTO_EPSILON_LEXICASE)
         .export_values();
 
     py::enum_<NEAT::CrossoverMode>(m, "CrossoverMode")
@@ -234,6 +235,104 @@ PYBIND11_MODULE(pymultineat, m) {
             "BOLTZMANN_FITNESS_SCALING",
             NEAT::BOLTZMANN_FITNESS_SCALING)
         .export_values();
+
+    py::enum_<NEAT::EvolutionMode>(m, "EvolutionMode")
+        .value("LEGACY_V2", NEAT::LEGACY_V2)
+        .value("RELIABLE_NEAT", NEAT::RELIABLE_NEAT)
+        .value("ROBUST_QD_NEAT", NEAT::ROBUST_QD_NEAT)
+        .export_values();
+
+    py::enum_<NEAT::FitnessAggregation>(m, "FitnessAggregation")
+        .value("FITNESS_MEAN", NEAT::FITNESS_MEAN)
+        .value("BOOTSTRAP_LOWER_BOUND", NEAT::BOOTSTRAP_LOWER_BOUND)
+        .export_values();
+
+    py::enum_<NEAT::EvaluationPhase>(m, "EvaluationPhase")
+        .value("TRAINING_EVALUATION", NEAT::TRAINING_EVALUATION)
+        .value("VALIDATION_EVALUATION", NEAT::VALIDATION_EVALUATION)
+        .value("CERTIFICATION_EVALUATION", NEAT::CERTIFICATION_EVALUATION)
+        .export_values();
+
+    py::enum_<NEAT::OperatorKind>(m, "OperatorKind")
+        .value("WEIGHT_MUTATION_OPERATOR", NEAT::WEIGHT_MUTATION_OPERATOR)
+        .value("STRUCTURAL_ADD_OPERATOR", NEAT::STRUCTURAL_ADD_OPERATOR)
+        .value("STRUCTURAL_REMOVE_OPERATOR", NEAT::STRUCTURAL_REMOVE_OPERATOR)
+        .value("PARAMETER_MUTATION_OPERATOR", NEAT::PARAMETER_MUTATION_OPERATOR)
+        .value("CROSSOVER_OPERATOR", NEAT::CROSSOVER_OPERATOR)
+        .value("WEIGHT_EMITTER_OPERATOR", NEAT::WEIGHT_EMITTER_OPERATOR)
+        .export_values();
+
+    py::class_<NEAT::EvaluationSample>(m, "EvaluationSample")
+        .def(py::init<>())
+        .def_readwrite("case_id", &NEAT::EvaluationSample::case_id)
+        .def_readwrite("score", &NEAT::EvaluationSample::score)
+        .def_readwrite("has_success", &NEAT::EvaluationSample::has_success)
+        .def_readwrite("success", &NEAT::EvaluationSample::success)
+        .def_readwrite(
+            "behavior_descriptor",
+            &NEAT::EvaluationSample::behavior_descriptor);
+
+    py::class_<NEAT::EvaluationSummary>(m, "EvaluationSummary")
+        .def(py::init<>())
+        .def_readwrite("sample_count", &NEAT::EvaluationSummary::sample_count)
+        .def_readwrite("success_count", &NEAT::EvaluationSummary::success_count)
+        .def_readwrite(
+            "success_sample_count",
+            &NEAT::EvaluationSummary::success_sample_count)
+        .def_readwrite("mean", &NEAT::EvaluationSummary::mean)
+        .def_readwrite(
+            "standard_deviation",
+            &NEAT::EvaluationSummary::standard_deviation)
+        .def_readwrite(
+            "standard_error", &NEAT::EvaluationSummary::standard_error)
+        .def_readwrite(
+            "lower_confidence_bound",
+            &NEAT::EvaluationSummary::lower_confidence_bound)
+        .def_readwrite(
+            "lower_tail_mean", &NEAT::EvaluationSummary::lower_tail_mean)
+        .def_readwrite("success_rate", &NEAT::EvaluationSummary::success_rate)
+        .def_readwrite(
+            "success_lower_bound",
+            &NEAT::EvaluationSummary::success_lower_bound);
+
+    py::class_<NEAT::EvaluationRequest>(m, "EvaluationRequest")
+        .def(py::init<>())
+        .def_readwrite("genome_id", &NEAT::EvaluationRequest::genome_id)
+        .def_readwrite("case_id", &NEAT::EvaluationRequest::case_id)
+        .def_readwrite("stage", &NEAT::EvaluationRequest::stage)
+        .def_readwrite("phase", &NEAT::EvaluationRequest::phase)
+        .def_readwrite(
+            "archive_evaluation",
+            &NEAT::EvaluationRequest::archive_evaluation)
+        .def_readwrite("archive_index", &NEAT::EvaluationRequest::archive_index);
+
+    py::class_<NEAT::LineageRecord>(m, "LineageRecord")
+        .def(py::init<>())
+        .def_readwrite("parent_ids", &NEAT::LineageRecord::parent_ids)
+        .def_readwrite("operators", &NEAT::LineageRecord::operators)
+        .def_readwrite(
+            "best_parent_score", &NEAT::LineageRecord::best_parent_score)
+        .def_readwrite(
+            "origin_species_id", &NEAT::LineageRecord::origin_species_id)
+        .def_readwrite(
+            "archive_replacement",
+            &NEAT::LineageRecord::archive_replacement)
+        .def_readwrite(
+            "emitter_parameters",
+            &NEAT::LineageRecord::emitter_parameters);
+
+    m.def(
+        "SummarizeEvaluations",
+        &NEAT::SummarizeEvaluations,
+        py::arg("samples"),
+        py::arg("confidence") = 0.90,
+        py::arg("bootstrap_samples") = 2048);
+    m.def(
+        "WilsonLowerBound",
+        &NEAT::WilsonLowerBound,
+        py::arg("successes"),
+        py::arg("samples"),
+        py::arg("z") = 1.6448536269514722);
 
 
     // ========================
@@ -419,6 +518,41 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("GetFitness", &NEAT::Genome::GetFitness)
         .def("GetAdjFitness", &NEAT::Genome::GetAdjFitness)
         .def("SetFitness", &NEAT::Genome::SetFitness)
+        .def("AddEvaluationSample", &NEAT::Genome::AddEvaluationSample)
+        .def("SetEvaluationSamples", &NEAT::Genome::SetEvaluationSamples)
+        .def("ClearEvaluationSamples", &NEAT::Genome::ClearEvaluationSamples)
+        .def(
+            "GetEvaluationSamples",
+            &NEAT::Genome::GetEvaluationSamples,
+            py::return_value_policy::reference_internal)
+        .def(
+            "GetEvaluationSummary",
+            &NEAT::Genome::GetEvaluationSummary,
+            py::arg("confidence") = 0.90,
+            py::arg("bootstrap_samples") = 2048)
+        .def(
+            "GetReliableFitness",
+            &NEAT::Genome::GetReliableFitness,
+            py::arg("aggregation") = NEAT::BOOTSTRAP_LOWER_BOUND,
+            py::arg("confidence") = 0.90,
+            py::arg("bootstrap_samples") = 2048)
+        .def(
+            "RefreshReliableFitness",
+            &NEAT::Genome::RefreshReliableFitness,
+            py::arg("aggregation") = NEAT::BOOTSTRAP_LOWER_BOUND,
+            py::arg("confidence") = 0.90,
+            py::arg("bootstrap_samples") = 2048)
+        .def("SetBehaviorDescriptor", &NEAT::Genome::SetBehaviorDescriptor)
+        .def(
+            "GetBehaviorDescriptor",
+            &NEAT::Genome::GetBehaviorDescriptor,
+            py::return_value_policy::reference_internal)
+        .def("SetLineage", &NEAT::Genome::SetLineage)
+        .def(
+            "GetLineage",
+            &NEAT::Genome::GetLineage,
+            py::return_value_policy::reference_internal)
+        .def("ClearLineage", &NEAT::Genome::ClearLineage)
         .def("SetAdjFitness", &NEAT::Genome::SetAdjFitness)
         .def("IsEvaluated", &NEAT::Genome::IsEvaluated)
         .def("SetEvaluated", &NEAT::Genome::SetEvaluated)
@@ -1088,6 +1222,10 @@ PYBIND11_MODULE(pymultineat, m) {
             .def("Save", (void (NEAT::Parameters::*)(const char*)) &NEAT::Parameters::Save, py::arg("filename"))
             .def("SaveToStream", (void (NEAT::Parameters::*)(FILE*)) &NEAT::Parameters::Save, py::arg("fstream"))
             .def("Reset", &NEAT::Parameters::Reset)
+            .def("ConfigureLegacyV2", &NEAT::Parameters::ConfigureLegacyV2)
+            .def(
+                "ConfigureReliableEvolution",
+                &NEAT::Parameters::ConfigureReliableEvolution)
             .def(
                 "ConfigureSpiking",
                 &NEAT::Parameters::ConfigureSpiking,
@@ -1352,6 +1490,26 @@ PYBIND11_MODULE(pymultineat, m) {
             .def_readwrite("FitnessRankPressure", &NEAT::Parameters::FitnessRankPressure)
             .def_readwrite("FitnessSigmaScale", &NEAT::Parameters::FitnessSigmaScale)
             .def_readwrite("FitnessBoltzmannTemperature", &NEAT::Parameters::FitnessBoltzmannTemperature)
+            .def_readwrite("EvolutionModeSetting", &NEAT::Parameters::EvolutionModeSetting)
+            .def_readwrite("FitnessAggregationMode", &NEAT::Parameters::FitnessAggregationMode)
+            .def_readwrite("DeterministicEvaluation", &NEAT::Parameters::DeterministicEvaluation)
+            .def_readwrite("EvaluationMinSamples", &NEAT::Parameters::EvaluationMinSamples)
+            .def_readwrite("EvaluationMaxSamples", &NEAT::Parameters::EvaluationMaxSamples)
+            .def_readwrite("EvaluationBootstrapSamples", &NEAT::Parameters::EvaluationBootstrapSamples)
+            .def_readwrite("EvaluationConfidence", &NEAT::Parameters::EvaluationConfidence)
+            .def_readwrite("ValidationSamples", &NEAT::Parameters::ValidationSamples)
+            .def_readwrite("CertificationSamples", &NEAT::Parameters::CertificationSamples)
+            .def_readwrite("ReliabilityTarget", &NEAT::Parameters::ReliabilityTarget)
+            .def_readwrite("QDDescriptorMinimums", &NEAT::Parameters::QDDescriptorMinimums)
+            .def_readwrite("QDDescriptorMaximums", &NEAT::Parameters::QDDescriptorMaximums)
+            .def_readwrite("QDDescriptorBins", &NEAT::Parameters::QDDescriptorBins)
+            .def_readwrite("QDCellDepth", &NEAT::Parameters::QDCellDepth)
+            .def_readwrite("QDArchiveReevaluationFraction", &NEAT::Parameters::QDArchiveReevaluationFraction)
+            .def_readwrite("AdaptiveOperatorSelection", &NEAT::Parameters::AdaptiveOperatorSelection)
+            .def_readwrite("OperatorExplorationFloor", &NEAT::Parameters::OperatorExplorationFloor)
+            .def_readwrite("OperatorPosteriorDecay", &NEAT::Parameters::OperatorPosteriorDecay)
+            .def_readwrite("EnableWeightEmitter", &NEAT::Parameters::EnableWeightEmitter)
+            .def_readwrite("WeightEmitterStableGenerations", &NEAT::Parameters::WeightEmitterStableGenerations)
             .def(py::pickle(
                 [](const NEAT::Parameters &parameters) {
                     return parameters.Serialize();
@@ -1380,6 +1538,24 @@ PYBIND11_MODULE(pymultineat, m) {
     // Bindings for Population
     // ========================
 
+    py::class_<NEAT::ValidatedChampion>(m, "ValidatedChampion")
+        .def(py::init<>())
+        .def_readwrite("genome", &NEAT::ValidatedChampion::genome)
+        .def_readwrite(
+            "validation_summary",
+            &NEAT::ValidatedChampion::validation_summary)
+        .def_readwrite(
+            "certification_summary",
+            &NEAT::ValidatedChampion::certification_summary)
+        .def_readwrite("validated", &NEAT::ValidatedChampion::validated);
+
+    py::class_<NEAT::QDArchiveEntry>(m, "QDArchiveEntry")
+        .def(py::init<>())
+        .def_readwrite("cell", &NEAT::QDArchiveEntry::cell)
+        .def_readwrite("genome", &NEAT::QDArchiveEntry::genome)
+        .def_readwrite("summary", &NEAT::QDArchiveEntry::summary)
+        .def_readwrite("reevaluations", &NEAT::QDArchiveEntry::reevaluations);
+
     py::class_<NEAT::Population>(m, "Population")
         .def(py::init<>())
         .def(py::init<const NEAT::Genome&, const NEAT::Parameters&, bool, double, int>(),
@@ -1405,6 +1581,29 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("SameGenomeIDCheck", &NEAT::Population::SameGenomeIDCheck)
         .def("AccessGenomeByIndex", &NEAT::Population::AccessGenomeByIndex, py::return_value_policy::reference)
         .def("AccessGenomeByID", &NEAT::Population::AccessGenomeByID, py::return_value_policy::reference)
+        .def("GetEvaluationRequests", &NEAT::Population::GetEvaluationRequests)
+        .def("GetEvaluationGenome", &NEAT::Population::GetEvaluationGenome)
+        .def(
+            "SubmitEvaluation",
+            &NEAT::Population::SubmitEvaluation,
+            py::arg("genome_id"),
+            py::arg("case_id"),
+            py::arg("score"),
+            py::arg("has_success") = false,
+            py::arg("success") = false,
+            py::arg("descriptor") = std::vector<double>{})
+        .def("ReadyForEpoch", &NEAT::Population::ReadyForEpoch)
+        .def("GetProvisionalChampion", &NEAT::Population::GetProvisionalChampion)
+        .def(
+            "ValidateCandidates",
+            &NEAT::Population::ValidateCandidates,
+            py::arg("candidate_count") = 5)
+        .def("GetValidatedChampion", &NEAT::Population::GetValidatedChampion)
+        .def(
+            "GetQDArchive",
+            &NEAT::Population::GetQDArchive,
+            py::return_value_policy::reference_internal)
+        .def("RebinQDArchive", &NEAT::Population::RebinQDArchive)
         .def("Epoch", &NEAT::Population::Epoch)
         .def("Save", &NEAT::Population::Save)
         .def("SaveState", &NEAT::Population::SaveState)
@@ -1441,6 +1640,10 @@ PYBIND11_MODULE(pymultineat, m) {
         .def(py::init<const NEAT::Genome&, const NEAT::Parameters&, int>(),
              py::arg("seed"), py::arg("parameters"), py::arg("id"))
         .def("GetBestFitness", &NEAT::Species::GetBestFitness)
+        .def("GetOperatorAlpha", &NEAT::Species::GetOperatorAlpha)
+        .def(
+            "GetEmitterStableGenerations",
+            &NEAT::Species::GetEmitterStableGenerations)
         .def("NumIndividuals",
              py::overload_cast<>(&NEAT::Species::NumIndividuals))
         .def("ID", py::overload_cast<>(&NEAT::Species::ID))

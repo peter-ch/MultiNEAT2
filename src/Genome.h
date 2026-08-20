@@ -12,6 +12,7 @@
 #include "Assert.h"
 #include "PhenotypeBehavior.h"
 #include "Random.h"
+#include "Reliability.h"
 
 namespace NEAT
 {
@@ -88,6 +89,12 @@ namespace NEAT
 
         // how many individuals this genome should spawn
         double m_OffspringAmount;
+
+        // Case-level evidence used by reliability-first evolution. Legacy
+        // SetFitness() callers leave this empty and retain scalar behavior.
+        std::vector<EvaluationSample> m_EvaluationSamples;
+        std::vector<double> m_BehaviorDescriptor;
+        LineageRecord m_Lineage;
 
         ////////////////////
         // Private methods
@@ -229,6 +236,39 @@ namespace NEAT
         double GetAdjFitness() const;
 
         void SetFitness(double a_f);
+
+        void AddEvaluationSample(const EvaluationSample& sample);
+        void SetEvaluationSamples(
+            const std::vector<EvaluationSample>& samples);
+        void ClearEvaluationSamples();
+        const std::vector<EvaluationSample>& GetEvaluationSamples() const
+        {
+            return m_EvaluationSamples;
+        }
+        EvaluationSummary GetEvaluationSummary(
+            double confidence = 0.90,
+            unsigned int bootstrap_samples = 2048) const;
+        double GetReliableFitness(
+            FitnessAggregation aggregation = BOOTSTRAP_LOWER_BOUND,
+            double confidence = 0.90,
+            unsigned int bootstrap_samples = 2048) const;
+        void RefreshReliableFitness(
+            FitnessAggregation aggregation = BOOTSTRAP_LOWER_BOUND,
+            double confidence = 0.90,
+            unsigned int bootstrap_samples = 2048);
+
+        void SetBehaviorDescriptor(const std::vector<double>& descriptor);
+        const std::vector<double>& GetBehaviorDescriptor() const
+        {
+            return m_BehaviorDescriptor;
+        }
+
+        void SetLineage(const LineageRecord& lineage)
+        {
+            m_Lineage = lineage;
+        }
+        const LineageRecord& GetLineage() const { return m_Lineage; }
+        void ClearLineage() { m_Lineage = LineageRecord{}; }
 
         void SetAdjFitness(double a_af);
 

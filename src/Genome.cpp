@@ -314,6 +314,9 @@ Genome::Genome(const Genome &a_G)
     m_NumOutputs(a_G.m_NumOutputs), m_Fitness(a_G.m_Fitness),
     m_AdjustedFitness(a_G.m_AdjustedFitness), m_Depth(a_G.m_Depth),
     m_OffspringAmount(a_G.m_OffspringAmount),
+    m_EvaluationSamples(a_G.m_EvaluationSamples),
+    m_BehaviorDescriptor(a_G.m_BehaviorDescriptor),
+    m_Lineage(a_G.m_Lineage),
     m_NeuronGenes(a_G.m_NeuronGenes), m_LinkGenes(a_G.m_LinkGenes),
     m_GenomeGene(a_G.m_GenomeGene), m_Evaluated(a_G.m_Evaluated),
     m_initial_num_neurons(a_G.m_initial_num_neurons),
@@ -330,6 +333,9 @@ Genome &Genome::operator=(const Genome &a_G)
         m_Fitness = a_G.m_Fitness;
         m_AdjustedFitness = a_G.m_AdjustedFitness;
         m_OffspringAmount = a_G.m_OffspringAmount;
+        m_EvaluationSamples = a_G.m_EvaluationSamples;
+        m_BehaviorDescriptor = a_G.m_BehaviorDescriptor;
+        m_Lineage = a_G.m_Lineage;
         m_Depth = a_G.m_Depth;
         m_NumInputs = a_G.m_NumInputs;
         m_NumOutputs = a_G.m_NumOutputs;
@@ -365,6 +371,33 @@ bool Genome::Validate(std::string* error) const
         !std::isfinite(m_AdjustedFitness) ||
         !std::isfinite(m_OffspringAmount))
         return fail("Genome fitness and offspring state must be finite");
+    std::set<std::uint64_t> evaluation_case_ids;
+    for (const auto& sample : m_EvaluationSamples)
+    {
+        if (!std::isfinite(sample.score))
+            return fail("Genome evaluation scores must be finite");
+        if (!evaluation_case_ids.insert(sample.case_id).second)
+            return fail("Genome evaluation case IDs must be unique");
+        for (double value : sample.behavior_descriptor)
+        {
+            if (!std::isfinite(value))
+                return fail("Genome sample descriptors must be finite");
+        }
+    }
+    for (double value : m_BehaviorDescriptor)
+    {
+        if (!std::isfinite(value))
+            return fail("Genome behavior descriptor must be finite");
+    }
+    if (!std::isfinite(m_Lineage.best_parent_score))
+        return fail("Genome lineage parent score must be finite");
+    if (std::any_of(
+            m_Lineage.emitter_parameters.begin(),
+            m_Lineage.emitter_parameters.end(),
+            [](double value) { return !std::isfinite(value); }))
+    {
+        return fail("Genome emitter parameters must be finite");
+    }
     if (static_cast<std::size_t>(m_NumInputs) +
             static_cast<std::size_t>(m_NumOutputs) >
         m_NeuronGenes.size())
@@ -727,7 +760,7 @@ Genome::Genome(std::istream &data)
         if (token == "GenomeFormat")
         {
             data >> format_version;
-            if (format_version < 1 || format_version > 4)
+            if (format_version < 1 || format_version > 6)
                 throw std::runtime_error(
                     "Genome: unsupported serialization format.");
         }
@@ -743,6 +776,77 @@ Genome::Genome(std::istream &data)
         else if (token == "GenomeTraits")
         {
             m_GenomeGene.m_Traits = Serialization::ReadTraits(data);
+        }
+        else if (token == "EvaluationSamples")
+        {
+            std::size_t count = 0;
+            data >> count;
+            m_EvaluationSamples.clear();
+            m_EvaluationSamples.reserve(count);
+            for (std::size_t index = 0; index < count; ++index)
+            {
+                data >> token;
+                if (token != "EvaluationSample")
+                    throw std::runtime_error(
+                        "Genome: missing EvaluationSample marker.");
+                EvaluationSample sample;
+                int has_success = 0;
+                int success = 0;
+                std::size_t descriptor_count = 0;
+                data >> sample.case_id >> sample.score >> has_success
+                     >> success >> descriptor_count;
+                sample.has_success = has_success != 0;
+                sample.success = success != 0;
+                sample.behavior_descriptor.resize(descriptor_count);
+                for (double& value : sample.behavior_descriptor)
+                    data >> value;
+                m_EvaluationSamples.push_back(std::move(sample));
+            }
+        }
+        else if (token == "BehaviorDescriptor")
+        {
+            std::size_t count = 0;
+            data >> count;
+            m_BehaviorDescriptor.resize(count);
+            for (double& value : m_BehaviorDescriptor)
+                data >> value;
+        }
+        else if (token == "Lineage")
+        {
+            std::size_t parent_count = 0;
+            std::size_t operator_count = 0;
+            data >> parent_count;
+            m_Lineage.parent_ids.resize(parent_count);
+            for (int& parent : m_Lineage.parent_ids)
+                data >> parent;
+            data >> operator_count;
+            m_Lineage.operators.clear();
+            m_Lineage.operators.reserve(operator_count);
+            for (std::size_t index = 0; index < operator_count; ++index)
+            {
+                int encoded = 0;
+                data >> encoded;
+                if (encoded < WEIGHT_MUTATION_OPERATOR ||
+                    encoded >= OPERATOR_KIND_COUNT)
+                {
+                    throw std::runtime_error(
+                        "Genome: invalid lineage operator.");
+                }
+                m_Lineage.operators.push_back(
+                    static_cast<OperatorKind>(encoded));
+            }
+            data >> m_Lineage.best_parent_score
+                 >> m_Lineage.origin_species_id;
+            if (format_version >= 6)
+            {
+                std::size_t emitter_parameter_count = 0;
+                data >> m_Lineage.archive_replacement
+                     >> emitter_parameter_count;
+                m_Lineage.emitter_parameters.resize(
+                    emitter_parameter_count);
+                for (double& value : m_Lineage.emitter_parameters)
+                    data >> value;
+            }
         }
         else if (token == "Neuron")
         {
@@ -910,13 +1014,42 @@ std::string Genome::Serialize() const
     std::ostringstream output;
     Serialization::UseRoundTripPrecision(output);
     output << "GenomeStart " << GetID() << "\n";
-    output << "GenomeFormat 4\n";
+    output << "GenomeFormat 6\n";
     output << "GenomeState " << m_Fitness << ' ' << m_AdjustedFitness << ' '
            << m_OffspringAmount << ' ' << m_Depth << ' ' << m_NumInputs << ' '
            << m_NumOutputs << ' ' << static_cast<int>(m_Evaluated) << ' '
            << m_initial_num_neurons << ' ' << m_initial_num_links << '\n';
     Serialization::WriteTraits(
         output, "GenomeTraits", m_GenomeGene.m_Traits);
+    output << "EvaluationSamples " << m_EvaluationSamples.size() << '\n';
+    for (const auto& sample : m_EvaluationSamples)
+    {
+        output << "EvaluationSample " << sample.case_id << ' '
+               << sample.score << ' '
+               << static_cast<int>(sample.has_success) << ' '
+               << static_cast<int>(sample.success) << ' '
+               << sample.behavior_descriptor.size();
+        for (double value : sample.behavior_descriptor)
+            output << ' ' << value;
+        output << '\n';
+    }
+    output << "BehaviorDescriptor " << m_BehaviorDescriptor.size();
+    for (double value : m_BehaviorDescriptor)
+        output << ' ' << value;
+    output << '\n';
+    output << "Lineage " << m_Lineage.parent_ids.size();
+    for (int parent : m_Lineage.parent_ids)
+        output << ' ' << parent;
+    output << ' ' << m_Lineage.operators.size();
+    for (OperatorKind operation : m_Lineage.operators)
+        output << ' ' << static_cast<int>(operation);
+    output << ' ' << m_Lineage.best_parent_score << ' '
+           << m_Lineage.origin_species_id << ' '
+           << m_Lineage.archive_replacement << ' '
+           << m_Lineage.emitter_parameters.size();
+    for (double value : m_Lineage.emitter_parameters)
+        output << ' ' << value;
+    output << '\n';
     for (const auto &neuron : m_NeuronGenes)
     {
         output << "Neuron " << neuron.m_ID << ' '
@@ -976,7 +1109,115 @@ void Genome::SetID(int a_id) { m_ID = a_id; }
 int Genome::GetID() const { return m_ID; }
 
 void Genome::SetAdjFitness(double a_af) { m_AdjustedFitness = a_af; }
-void Genome::SetFitness(double a_f) { m_Fitness = a_f; }
+void Genome::SetFitness(double a_f)
+{
+    if (!std::isfinite(a_f))
+    {
+        // Preserve the historical ability to assign non-finite values so the
+        // existing RejectNonFiniteFitness guard remains the policy boundary.
+        m_EvaluationSamples.clear();
+        m_Fitness = a_f;
+        return;
+    }
+    m_EvaluationSamples.clear();
+    m_Fitness = a_f;
+}
+
+void Genome::AddEvaluationSample(const EvaluationSample& sample)
+{
+    if (!std::isfinite(sample.score))
+        throw std::invalid_argument("Evaluation score must be finite");
+    for (double value : sample.behavior_descriptor)
+    {
+        if (!std::isfinite(value))
+            throw std::invalid_argument(
+                "Behavior descriptor values must be finite");
+    }
+    const auto existing = std::find_if(
+        m_EvaluationSamples.begin(), m_EvaluationSamples.end(),
+        [&sample](const EvaluationSample& value)
+        {
+            return value.case_id == sample.case_id;
+        });
+    if (existing == m_EvaluationSamples.end())
+        m_EvaluationSamples.push_back(sample);
+    else
+        *existing = sample;
+    m_Fitness = GetReliableFitness();
+}
+
+void Genome::SetEvaluationSamples(
+    const std::vector<EvaluationSample>& samples)
+{
+    m_EvaluationSamples.clear();
+    for (const auto& sample : samples)
+        AddEvaluationSample(sample);
+    if (samples.empty())
+        m_Fitness = 0.0;
+}
+
+void Genome::ClearEvaluationSamples()
+{
+    m_EvaluationSamples.clear();
+    m_Fitness = 0.0;
+    m_AdjustedFitness = 0.0;
+    m_Evaluated = false;
+}
+
+EvaluationSummary Genome::GetEvaluationSummary(
+    double confidence,
+    unsigned int bootstrap_samples) const
+{
+    if (m_EvaluationSamples.empty())
+    {
+        EvaluationSummary summary;
+        summary.sample_count = m_Evaluated ? 1U : 0U;
+        summary.mean = m_Fitness;
+        summary.lower_confidence_bound = m_Fitness;
+        summary.lower_tail_mean = m_Fitness;
+        return summary;
+    }
+    return SummarizeEvaluations(
+        m_EvaluationSamples, confidence, bootstrap_samples);
+}
+
+double Genome::GetReliableFitness(
+    FitnessAggregation aggregation,
+    double confidence,
+    unsigned int bootstrap_samples) const
+{
+    if (m_EvaluationSamples.empty())
+        return m_Fitness;
+    const EvaluationSummary summary = GetEvaluationSummary(
+        confidence, bootstrap_samples);
+    return aggregation == FITNESS_MEAN
+        ? summary.mean
+        : summary.lower_confidence_bound;
+}
+
+void Genome::RefreshReliableFitness(
+    FitnessAggregation aggregation,
+    double confidence,
+    unsigned int bootstrap_samples)
+{
+    if (!m_EvaluationSamples.empty())
+    {
+        m_Fitness = GetReliableFitness(
+            aggregation, confidence, bootstrap_samples);
+    }
+}
+
+void Genome::SetBehaviorDescriptor(
+    const std::vector<double>& descriptor)
+{
+    for (double value : descriptor)
+    {
+        if (!std::isfinite(value))
+            throw std::invalid_argument(
+                "Behavior descriptor values must be finite");
+    }
+    m_BehaviorDescriptor = descriptor;
+}
 double Genome::GetAdjFitness() const { return m_AdjustedFitness; }
 double Genome::GetFitness() const { return m_Fitness; }
 

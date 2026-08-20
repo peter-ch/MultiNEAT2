@@ -6,6 +6,7 @@
 #include <float.h>
 #include <limits>
 #include <memory>
+#include <map>
 #include <stdexcept>
 #include <string>
 
@@ -29,6 +30,22 @@ enum SearchMode
     COMPLEXIFYING,
     SIMPLIFYING,
     BLENDED
+};
+
+struct ValidatedChampion
+{
+    Genome genome;
+    EvaluationSummary validation_summary;
+    EvaluationSummary certification_summary;
+    bool validated = false;
+};
+
+struct QDArchiveEntry
+{
+    std::vector<unsigned int> cell;
+    Genome genome;
+    EvaluationSummary summary;
+    unsigned int reevaluations = 0;
 };
 
 class Species;
@@ -101,6 +118,25 @@ private:
 
     // The initial list of genomes
     std::vector<Genome> m_Genomes;
+
+    std::vector<EvaluationRequest> m_PendingEvaluationRequests;
+    std::vector<int> m_RacingCandidates;
+    unsigned int m_EvaluationStage = 0;
+    unsigned int m_EvaluationTargetSamples = 0;
+    bool m_EvaluationCycleComplete = false;
+    bool m_ArchiveReevaluationScheduled = false;
+    std::map<int, std::vector<EvaluationSample>> m_ValidationEvidence;
+    std::map<int, std::vector<EvaluationSample>> m_CertificationEvidence;
+    ValidatedChampion m_ValidatedChampion;
+    std::vector<QDArchiveEntry> m_QDArchive;
+
+    void StartEvaluationCycle();
+    void AdvanceEvaluationCycle();
+    void RefreshBehaviorDescriptor(Genome& genome);
+    void UpdateQDArchive();
+    void RebuildQDArchive();
+    std::vector<unsigned int> DescriptorCell(
+        const std::vector<double>& descriptor) const;
 
 public:
 
@@ -250,6 +286,30 @@ public:
 
     // Performs one generation and reproduces the genomes
     void Epoch();
+
+    // Reliability-first, callback-free evaluation orchestration. Callers
+    // evaluate the returned genomes/case IDs in any process and submit the
+    // resulting evidence before Epoch().
+    std::vector<EvaluationRequest> GetEvaluationRequests();
+    Genome GetEvaluationGenome(const EvaluationRequest& request) const;
+    void SubmitEvaluation(
+        int genome_id,
+        std::uint64_t case_id,
+        double score,
+        bool has_success = false,
+        bool success = false,
+        const std::vector<double>& descriptor = {});
+    bool ReadyForEpoch() const;
+    Genome GetProvisionalChampion() const;
+    std::vector<EvaluationRequest> ValidateCandidates(
+        unsigned int candidate_count = 5);
+    ValidatedChampion GetValidatedChampion() const;
+    const std::vector<QDArchiveEntry>& GetQDArchive() const
+    {
+        return m_QDArchive;
+    }
+    void RebinQDArchive() { RebuildQDArchive(); }
+    bool TryGetQDParent(const Genome& reference, Genome& result);
 
     // Saves the whole population to a file
     void Save(const char* a_FileName);

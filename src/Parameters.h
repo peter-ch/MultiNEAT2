@@ -7,7 +7,9 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <vector>
 #include "Traits.h"
+#include "Reliability.h"
 
 namespace NEAT
 {
@@ -28,7 +30,8 @@ enum SelectionMode
     RANK_EXP,
     TOURNAMENT,
     STOCHASTIC,
-    BOLTZMANN
+    BOLTZMANN,
+    AUTO_EPSILON_LEXICASE
 };
 
 // Link-gene recombination used for matching innovations. The historical
@@ -669,6 +672,36 @@ public:
     double FitnessBoltzmannTemperature;
 
     /////////////////////////////////////
+    // Reliability-first evolution
+    /////////////////////////////////////
+
+    EvolutionMode EvolutionModeSetting;
+    FitnessAggregation FitnessAggregationMode;
+    bool DeterministicEvaluation;
+    unsigned int EvaluationMinSamples;
+    unsigned int EvaluationMaxSamples;
+    unsigned int EvaluationBootstrapSamples;
+    double EvaluationConfidence;
+    unsigned int ValidationSamples;
+    unsigned int CertificationSamples;
+    double ReliabilityTarget;
+
+    // MAP-Elites is enabled when ROBUST_QD_NEAT is selected and these
+    // descriptor vectors define matching, non-empty dimensions.
+    std::vector<double> QDDescriptorMinimums;
+    std::vector<double> QDDescriptorMaximums;
+    std::vector<unsigned int> QDDescriptorBins;
+    unsigned int QDCellDepth;
+    double QDArchiveReevaluationFraction;
+
+    bool AdaptiveOperatorSelection;
+    double OperatorExplorationFloor;
+    // Fraction of accumulated evidence moved back toward its prior per epoch.
+    double OperatorPosteriorDecay;
+    bool EnableWeightEmitter;
+    unsigned int WeightEmitterStableGenerations;
+
+    /////////////////////////////////////
     // Constructors
     /////////////////////////////////////
 
@@ -691,6 +724,13 @@ public:
 
     // resets the parameters to built-in defaults
     void Reset();
+
+    // Applies the exact MultiNEAT 2.x algorithm defaults.
+    void ConfigureLegacyV2();
+
+    // Applies the reliability-first 3.x search policy while retaining
+    // domain-specific neuron, topology, and trait ranges.
+    void ConfigureReliableEvolution();
 
     // Opt-in preset for evolving mixed spiking topologies. Existing users
     // retain rate-network defaults until this is called or fields are set

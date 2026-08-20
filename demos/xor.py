@@ -189,6 +189,11 @@ def main():
         help="evolve a Poisson-encoded spiking XOR variant",
     )
     parser.add_argument(
+        "--mcculloch-pitts",
+        action="store_true",
+        help="use evolvable McCulloch-Pitts neurons in the spiking variant",
+    )
+    parser.add_argument(
         "--spiking-steps",
         type=int,
         default=32,
@@ -206,6 +211,11 @@ def main():
         help="run one small headless generation",
     )
     args = parser.parse_args()
+    if args.mcculloch_pitts:
+        args.spiking = True
+    neuron_model = (
+        "mcculloch-pitts" if args.mcculloch_pitts else "lif"
+    )
     if args.smoke:
         args.generations = 1
         args.population = 10
@@ -258,6 +268,7 @@ def main():
             params,
             recurrent=False,
             enable_stdp=False,
+            neuron_model=neuron_model,
         )
 
     # Create a GenomeInitStruct.
@@ -271,7 +282,9 @@ def main():
     init_struct.HiddenActType = pnt.UNSIGNED_SIGMOID
     init_struct.OutputActType = pnt.UNSIGNED_SIGMOID
     if args.spiking:
-        configure_spiking_genome(pnt, init_struct)
+        configure_spiking_genome(
+            pnt, init_struct, neuron_model=neuron_model
+        )
 
     # Create a prototype genome using the parameters and initialization struct.
     genome_prototype = pnt.Genome(params, init_struct)
@@ -309,7 +322,11 @@ def main():
         json.dumps(
             {
                 "demo": "xor",
-                "policy": "spiking" if args.spiking else "rate",
+                "policy": (
+                    "mcculloch-pitts"
+                    if args.mcculloch_pitts
+                    else ("spiking" if args.spiking else "rate")
+                ),
                 "generations": args.generations,
                 "population": args.population,
                 "best_fitness": bestFitness,

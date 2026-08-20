@@ -4,10 +4,12 @@ MultiNEAT2 is a C++17 implementation of NEAT (NeuroEvolution of
 Augmenting Topologies) with optional Python bindings. It includes
 speciation, structural and trait mutation, recurrent networks, phased
 search, novelty search, HyperNEAT substrates, and ES-HyperNEAT phenotype
-generation. It also includes evolvable mixed spiking networks with LIF,
-adaptive LIF, and Izhikevich neurons, delayed exponential synapses, Poisson
-encoding, multiple output decoders, bounded online STDP, and opt-in e-prop
-learning with surrogate gradients and AdamW.
+generation. It also includes evolvable mixed spiking networks with
+McCulloch-Pitts, LIF, adaptive LIF, and Izhikevich neurons, delayed
+exponential synapses, Poisson encoding, multiple output decoders, bounded
+online STDP, and opt-in e-prop learning with surrogate gradients and AdamW.
+HyperNEAT substrates retain real 3D neuron coordinates and axon lengths;
+ES-HyperNEAT can discover hidden neurons through octree subdivision in 3D.
 
 This repository continues the original MultiNEAT codebase while retaining
 its established C++ and Python names wherever possible. Compatibility
@@ -107,6 +109,12 @@ Run the self-contained XOR example with:
 python demos/xor.py
 ```
 
+The native C++ XOR executable has equivalent bounded variants:
+
+```sh
+build/Release/multineat_exe --smoke --mcculloch-pitts --seed 42
+```
+
 ## Spiking neural networks
 
 Spiking support is additive: rate and spiking neurons may coexist in one
@@ -152,6 +160,19 @@ exponential synapses; per-link STDP; spike recording; batch simulation; and
 complete live-state persistence. Dedicated genetic operators evolve every
 neuron and synapse parameter and include them in speciation.
 
+For canonical discrete-time McCulloch-Pitts networks, use the dedicated
+preset. It enables binary threshold firing, absolute inhibitory vetoes,
+evolvable thresholds and refractory periods, recurrent topology evolution,
+and the same delayed-synapse and recording infrastructure:
+
+```python
+params = neat.Parameters()
+params.ConfigureMcCullochPitts(inhibitory_veto=True, enable_stdp=False)
+
+initial.OutputActType = neat.MCCULLOCH_PITTS
+genome = neat.Genome(params, initial)
+```
+
 `neattools.py` includes live network rendering, moving spike rasters,
 membrane/rate plots, recording export, statistics, and synchronized
 environment animation. Three dedicated examples are included:
@@ -160,11 +181,13 @@ environment animation. Three dedicated examples are included:
 python demos/spiking_pattern.py --smoke
 python demos/spiking_cartpole.py --smoke
 python demos/spiking_eprop.py --smoke
+python demos/spiking_pattern.py --smoke --mcculloch-pitts
+python demos/hyperneat_3d.py --smoke --mcculloch-pitts
 ```
 
 The historical XOR and Asteroids demos and every Box2D/MuJoCo task also
-accept `--spiking`. They retain the same environments and NEAT workflow while
-using seeded Poisson observation encoding, adaptive-LIF/LIF phenotypes, and
+accept `--spiking` and `--mcculloch-pitts`. They retain the same environments
+and NEAT workflow while using seeded Poisson observation encoding and
 filtered firing-rate action decoding:
 
 ```sh
@@ -172,16 +195,18 @@ python demos/xor.py --smoke --spiking
 python demos/asteroid_nav.py --spiking --generations 25
 python demos/box2d/lunar_lander_box2d.py --smoke --spiking
 python demos/mujoco/inverted_pendulum_mujoco.py --spiking --plot
+python demos/xor.py --smoke --mcculloch-pitts
+python demos/run_gymnasium_suite.py --family box2d --smoke --mcculloch-pitts
 ```
 
 Their visualizations combine the demo environment with live or recorded
 topology activity, moving spike trains, membrane state, fitness, and decoded
-actions. The graphical launcher exposes the same variants with its spiking
-policy switch.
+actions. The graphical launcher exposes the same variants with separate
+spiking-policy and McCulloch-Pitts switches.
 
-See [docs/SPIKING.md](docs/SPIKING.md) for the model equations, API,
-learning and evolution controls, persistence format, visualization suite, and full
-examples.
+See [docs/SPIKING.md](docs/SPIKING.md) for the solver and learning API, and
+[docs/MCCULLOCH_PITTS.md](docs/MCCULLOCH_PITTS.md) for the threshold model,
+evolution controls, 3D HyperNEAT/ES-HyperNEAT API, and examples.
 
 For the easiest path, launch every example from the graphical menu:
 
@@ -362,10 +387,11 @@ archives, and all trait data must be preserved exactly.
 - Medoid representatives, proportional compatibility-threshold control, and
   stagnation-adaptive mutation budgets are available without changing legacy
   defaults.
-- `BuildESHyperNEATPhenotype()` implements quadtree division, variance and band
-  pruning, optional LEO expression, iterative hidden discovery, deterministic
-  node indexing, link deduplication, and reachability pruning. Quadtree depth
-  is bounded to prevent accidental exponential allocation.
+- `BuildESHyperNEATPhenotype()` implements 2D quadtree and 3D octree division,
+  variance and band pruning, optional LEO expression, iterative hidden
+  discovery, deterministic node indexing, link deduplication, reachability
+  pruning, and physical axon geometry. Tree depth is bounded to prevent
+  accidental exponential allocation.
 - RTRL supports multiple outputs and configurable learning rates. Exact
   derivatives are implemented for every differentiable activation. The
   additive sparse RTRL path stores `O(neurons * connections)` sensitivities

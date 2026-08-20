@@ -62,6 +62,7 @@ _ACTIVATION_NAMES = {
         "SPIKING_LIF",
         "SPIKING_ADAPTIVE_LIF",
         "SPIKING_IZHIKEVICH",
+        "MCCULLOCH_PITTS",
     )
     if hasattr(pnt, name)
 }
@@ -159,6 +160,9 @@ def Genome2NX(genome: pnt.Genome) -> nx.DiGraph:
                 getattr(neuron, "m_IzhikevichB", 0.2),
                 getattr(neuron, "m_IzhikevichC", -65.0),
                 getattr(neuron, "m_IzhikevichD", 8.0),
+            ),
+            mcp_inhibitory_veto=bool(
+                getattr(neuron, "m_MCPInhibitoryVeto", True)
             ),
             traits=_traits(neuron.m_Traits),
         )
@@ -2243,6 +2247,8 @@ def DrawSpikingNetwork(
             spike=bool(neuron.m_spike),
             membrane=float(neuron.m_membrane_potential),
             threshold=float(neuron.m_spike_threshold),
+            mcp_inhibitory_veto=bool(neuron.m_mcp_inhibitory_veto),
+            position=(float(neuron.m_x), float(neuron.m_y), float(neuron.m_z)),
         )
     for index, connection in enumerate(network.m_connections):
         graph.add_edge(
@@ -2254,6 +2260,7 @@ def DrawSpikingNetwork(
             current=float(connection.m_synaptic_current),
             stdp=bool(connection.m_stdp_enabled),
             recurrent=bool(connection.m_recur_flag),
+            length=float(connection.m_length),
         )
     positions = _phenotype_positions(network)
     maximum_weight = max(
@@ -2346,6 +2353,95 @@ def DrawSpikingNetwork(
     ax.set_facecolor(theme.background)
     ax.figure.patch.set_facecolor(theme.background)
     ax.axis("off")
+    if show:
+        plt.show()
+    return ax
+
+
+def DrawSpatialNetwork3D(
+    network: pnt.NeuralNetwork,
+    ax: Any = None,
+    *,
+    title: str = "3D neural substrate",
+    theme: VisualTheme = DEFAULT_THEME,
+    show_labels: bool = True,
+    show: bool = True,
+) -> Any:
+    """Draw phenotype neurons and directed axons at their real 3D positions."""
+
+    if ax is None:
+        figure = plt.figure(figsize=(11, 8), constrained_layout=True)
+        ax = figure.add_subplot(111, projection="3d")
+    positions = {
+        index: np.asarray((neuron.m_x, neuron.m_y, neuron.m_z), dtype=float)
+        for index, neuron in enumerate(network.m_neurons)
+    }
+    maximum_weight = max(
+        (abs(float(connection.m_weight)) for connection in network.m_connections),
+        default=1.0,
+    )
+    for connection in network.m_connections:
+        source = positions[connection.m_source_neuron_idx]
+        target = positions[connection.m_target_neuron_idx]
+        direction = target - source
+        color, width, alpha = _edge_style(
+            float(connection.m_weight), maximum_weight, theme
+        )
+        if np.linalg.norm(direction) > 0.0:
+            ax.quiver(
+                *source,
+                *direction,
+                color=color,
+                linewidth=width,
+                alpha=alpha,
+                arrow_length_ratio=0.08,
+            )
+
+    type_colors = {
+        INPUT: theme.input_color,
+        BIAS: theme.bias_color,
+        HIDDEN: theme.hidden_color,
+        OUTPUT: theme.output_color,
+    }
+    for neuron_type, marker in (
+        (INPUT, "s"),
+        (BIAS, "h"),
+        (HIDDEN, "o"),
+        (OUTPUT, "D"),
+    ):
+        indices = [
+            index
+            for index, neuron in enumerate(network.m_neurons)
+            if neuron.m_type == neuron_type
+        ]
+        if not indices:
+            continue
+        coordinates = np.asarray([positions[index] for index in indices])
+        ax.scatter(
+            coordinates[:, 0],
+            coordinates[:, 1],
+            coordinates[:, 2],
+            marker=marker,
+            s=[
+                105 if network.m_neurons[index].m_spike else 70
+                for index in indices
+            ],
+            c=type_colors[neuron_type],
+            edgecolors=theme.foreground,
+            linewidths=0.8,
+            depthshade=False,
+        )
+    if show_labels:
+        for index, position in positions.items():
+            ax.text(*position, f" {index}", color=theme.foreground, fontsize=8)
+
+    ax.set_title(title, color=theme.foreground)
+    ax.set_xlabel("x", color=theme.foreground)
+    ax.set_ylabel("y", color=theme.foreground)
+    ax.set_zlabel("z", color=theme.foreground)
+    ax.set_facecolor(theme.background)
+    ax.figure.patch.set_facecolor(theme.background)
+    ax.tick_params(colors=theme.muted)
     if show:
         plt.show()
     return ax
@@ -2533,6 +2629,7 @@ __all__ = [
     "PlotMembraneTraces",
     "PlotSpikeRaster",
     "DrawSpikingNetwork",
+    "DrawSpatialNetwork3D",
     "SpikingRecorder",
     "VisualTheme",
     "compare_genomes",

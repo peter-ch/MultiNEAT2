@@ -113,6 +113,7 @@ namespace
     X(ActivationFunction_SpikingLIF_Prob)                                   \
     X(ActivationFunction_SpikingAdaptiveLIF_Prob)                           \
     X(ActivationFunction_SpikingIzhikevich_Prob)                            \
+    X(ActivationFunction_McCullochPitts_Prob)                               \
     X(MutateNeuronTimeConstantsProb)                                        \
     X(MutateNeuronBiasesProb)                                               \
     X(MinNeuronTimeConstant)                                                \
@@ -123,6 +124,8 @@ namespace
     X(MutateLinkSpikingParametersProb)                                      \
     X(SpikingParameterMutationRate)                                         \
     X(SpikingParameterMutationPower)                                        \
+    X(InitialMCPInhibitoryVetoProb)                                         \
+    X(MutateMCPInhibitoryVetoProb)                                          \
     X(MinSpikingTimeConstant)                                               \
     X(MaxSpikingTimeConstant)                                               \
     X(MinSpikeThreshold)                                                    \
@@ -190,8 +193,10 @@ namespace
     X(CPPN_Bias)                                                            \
     X(Width)                                                                \
     X(Height)                                                               \
+    X(Depth)                                                                \
     X(Qtree_X)                                                              \
     X(Qtree_Y)                                                              \
+    X(Qtree_Z)                                                              \
     X(Leo)                                                                  \
     X(LeoThreshold)                                                         \
     X(LeoSeed)                                                              \
@@ -462,6 +467,7 @@ void Parameters::Reset()
     ActivationFunction_SpikingLIF_Prob = 0.0;
     ActivationFunction_SpikingAdaptiveLIF_Prob = 0.0;
     ActivationFunction_SpikingIzhikevich_Prob = 0.0;
+    ActivationFunction_McCullochPitts_Prob = 0.0;
     MutateNeuronTimeConstantsProb = 0.0;
     MutateNeuronBiasesProb = 0.0;
     MinNeuronTimeConstant = 0.0;
@@ -473,6 +479,8 @@ void Parameters::Reset()
     MutateLinkSpikingParametersProb = 0.0;
     SpikingParameterMutationRate = 0.2;
     SpikingParameterMutationPower = 0.1;
+    InitialMCPInhibitoryVetoProb = 1.0;
+    MutateMCPInhibitoryVetoProb = 0.05;
     MinSpikingTimeConstant = 0.005;
     MaxSpikingTimeConstant = 0.05;
     MinSpikeThreshold = 0.5;
@@ -545,8 +553,10 @@ void Parameters::Reset()
     CPPN_Bias = 1.0;
     Width = 2.0;
     Height = 2.0;
+    Depth = 2.0;
     Qtree_X = 0.0;
     Qtree_Y = 0.0;
+    Qtree_Z = 0.0;
     Leo = false;
     LeoThreshold = 0.1;
     LeoSeed = false;
@@ -620,6 +630,7 @@ void Parameters::ConfigureSpiking(bool enable_stdp)
     ActivationFunction_SpikingLIF_Prob = 0.65;
     ActivationFunction_SpikingAdaptiveLIF_Prob = 0.25;
     ActivationFunction_SpikingIzhikevich_Prob = 0.10;
+    ActivationFunction_McCullochPitts_Prob = 0.0;
 
     MutateNeuronActivationTypeProb = 0.05;
     MutateNeuronSpikingParametersProb = 0.25;
@@ -629,6 +640,19 @@ void Parameters::ConfigureSpiking(bool enable_stdp)
     InitialSTDPEnabledProb = enable_stdp ? 0.1 : 0.0;
     SpikingNeuronDiffCoeff = 0.1;
     SpikingLinkDiffCoeff = 0.1;
+}
+
+void Parameters::ConfigureMcCullochPitts(
+    bool inhibitory_veto,
+    bool enable_stdp)
+{
+    ConfigureSpiking(enable_stdp);
+    ActivationFunction_SpikingLIF_Prob = 0.0;
+    ActivationFunction_SpikingAdaptiveLIF_Prob = 0.0;
+    ActivationFunction_SpikingIzhikevich_Prob = 0.0;
+    ActivationFunction_McCullochPitts_Prob = 1.0;
+    InitialMCPInhibitoryVetoProb = inhibitory_veto ? 1.0 : 0.0;
+    MutateMCPInhibitoryVetoProb = 0.05;
 }
 
 int Parameters::Load(std::ifstream& input)
@@ -777,8 +801,8 @@ bool Parameters::Validate(std::string* error) const
         return fail("InitialDepth cannot exceed MaxDepth");
     if (MaxDepth > 9)
         return fail("MaxDepth exceeds the supported safe limit of 9");
-    if (Width <= 0.0 || Height <= 0.0)
-        return fail("Width and Height must be positive");
+    if (Width <= 0.0 || Height <= 0.0 || Depth <= 0.0)
+        return fail("Width, Height, and Depth must be positive");
     if ((TournamentSelection || ParentSelectionMode == TOURNAMENT) &&
         TournamentSize == 0)
         return fail(
@@ -906,12 +930,18 @@ bool Parameters::Validate(std::string* error) const
          ActivationFunction_SpikingAdaptiveLIF_Prob},
         {"ActivationFunction_SpikingIzhikevich_Prob",
          ActivationFunction_SpikingIzhikevich_Prob},
+        {"ActivationFunction_McCullochPitts_Prob",
+         ActivationFunction_McCullochPitts_Prob},
         {"MutateNeuronSpikingParametersProb",
          MutateNeuronSpikingParametersProb},
         {"MutateLinkSpikingParametersProb",
          MutateLinkSpikingParametersProb},
         {"SpikingParameterMutationRate",
          SpikingParameterMutationRate},
+        {"InitialMCPInhibitoryVetoProb",
+         InitialMCPInhibitoryVetoProb},
+        {"MutateMCPInhibitoryVetoProb",
+         MutateMCPInhibitoryVetoProb},
         {"InitialSTDPEnabledProb", InitialSTDPEnabledProb}};
     for (const auto& item : probabilities)
     {
@@ -1127,8 +1157,12 @@ bool Parameters::Validate(std::string* error) const
     }
     const std::pair<const char*, double> finite_values[] = {
         {"CPPN_Bias", CPPN_Bias},
+        {"Width", Width},
+        {"Height", Height},
+        {"Depth", Depth},
         {"Qtree_X", Qtree_X},
         {"Qtree_Y", Qtree_Y},
+        {"Qtree_Z", Qtree_Z},
         {"LeoThreshold", LeoThreshold}};
     for (const auto& item : finite_values)
     {
@@ -1153,7 +1187,8 @@ bool Parameters::Validate(std::string* error) const
         ActivationFunction_Softplus_Prob +
         ActivationFunction_SpikingLIF_Prob +
         ActivationFunction_SpikingAdaptiveLIF_Prob +
-        ActivationFunction_SpikingIzhikevich_Prob;
+        ActivationFunction_SpikingIzhikevich_Prob +
+        ActivationFunction_McCullochPitts_Prob;
     if ((MutateAddNeuronProb > 0.0 ||
          MutateNeuronActivationTypeProb > 0.0) &&
         activation_total <= 0.0)

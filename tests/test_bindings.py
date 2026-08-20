@@ -122,6 +122,37 @@ assert spiking_parameters.Validate() == (True, "")
 spiking_parameters = pickle.loads(pickle.dumps(spiking_parameters))
 assert spiking_parameters.MutateLinkSpikingParametersProb > 0.0
 
+mcp_parameters = neat.Parameters()
+mcp_parameters.ConfigureMcCullochPitts()
+assert mcp_parameters.ActivationFunction_McCullochPitts_Prob == 1.0
+assert mcp_parameters.ActivationFunction_SpikingMcCullochPitts_Prob == 1.0
+assert mcp_parameters.Validate() == (True, "")
+mcp_parameters = pickle.loads(pickle.dumps(mcp_parameters))
+assert mcp_parameters.InitialMCPInhibitoryVetoProb == 1.0
+
+mcp = neat.NeuralNetwork()
+mcp_input = neat.Neuron()
+mcp_input.m_type = neat.INPUT
+mcp_output = neat.Neuron()
+mcp_output.m_type = neat.OUTPUT
+mcp_output.m_activation_function_type = neat.MCCULLOCH_PITTS
+mcp_output.m_spike_threshold = 1.0
+mcp_output.m_refractory_period = 0.0
+mcp_axon = neat.Connection()
+mcp_axon.m_source_neuron_idx = 0
+mcp_axon.m_target_neuron_idx = 1
+mcp_axon.m_weight = 1.5
+mcp_axon.m_synaptic_time_constant = 0.001
+mcp.AddNeuron(mcp_input)
+mcp.AddNeuron(mcp_output)
+mcp.AddConnection(mcp_axon)
+mcp.SetInputOutputDimensions(1, 1)
+mcp.SetSpikingInputMode(neat.BINARY_SPIKE_INPUT)
+mcp.Flush()
+assert mcp.StepSpiking([1.0], 0.001) == [1.0]
+assert mcp.GetNeuronByIndex(1).m_mcp_inhibitory_veto
+assert pickle.loads(pickle.dumps(mcp)).Serialize() == mcp.Serialize()
+
 spiking = neat.NeuralNetwork()
 spike_input = neat.Neuron()
 spike_input.m_type = neat.INPUT
@@ -341,6 +372,27 @@ es_network = neat.NeuralNetwork()
 es_cppn.BuildESHyperNEATPhenotype(es_network, es_substrate, es_parameters)
 assert len(es_network.m_neurons) == 7
 assert len(es_network.m_connections) == 12
+
+spatial_inputs = [[-1.0, 0.0, 0.0]]
+spatial_hidden = []
+spatial_outputs = [[1.0, 1.0, 2.0]]
+spatial_substrate = neat.Substrate(
+    spatial_inputs, spatial_hidden, spatial_outputs
+)
+spatial_substrate.m_query_weights_only = True
+spatial_substrate.m_allow_input_output_links = True
+spatial_substrate.m_use_spatial_distance_for_delays = True
+spatial_substrate.m_conduction_velocity = 2.0
+spatial_init = neat.GenomeInitStruct()
+spatial_init.NumInputs = spatial_substrate.GetMinCPPNInputs()
+spatial_init.NumOutputs = spatial_substrate.GetMinCPPNOutputs()
+spatial_cppn = neat.Genome(neat.Parameters(), spatial_init)
+spatial_network = neat.NeuralNetwork()
+spatial_cppn.BuildHyperNEATPhenotype(spatial_network, spatial_substrate)
+assert spatial_substrate.IsThreeDimensional()
+assert spatial_network.GetNeuronByIndex(1).m_z == 2.0
+assert spatial_network.GetConnectionByIndex(0).m_length == 3.0
+assert spatial_network.GetConnectionByIndex(0).m_synaptic_delay == 1.5
 
 first = neat.Parameters()
 second = neat.Parameters()

@@ -69,6 +69,10 @@ namespace NEAT
         double m_stdp_post_trace = 0.0;
         double m_stdp_min_weight = -8.0;
         double m_stdp_max_weight = 8.0;
+        // Physical axon length in substrate coordinate units. It is populated
+        // by HyperNEAT builders (or UpdateConnectionGeometry) and is separate
+        // from the mutable synaptic delay.
+        double m_length = 0.0;
         std::vector<PendingSynapticEvent> m_pending_events;
 
         bool operator==(const Connection &other) const
@@ -121,6 +125,10 @@ namespace NEAT
         double m_last_spike_time = -1.0;
         double m_rate_trace = 0.0;
         double m_rate_time_constant = 0.05;
+        bool m_mcp_inhibitory_veto = true;
+        // Transient per-tick state used to implement the canonical absolute
+        // inhibitory input rule.
+        bool m_inhibitory_input = false;
 
         bool operator==(Neuron const &other) const
         {
@@ -252,6 +260,11 @@ namespace NEAT
             return GetConnectionLenght(source, target);
         }
         double GetTotalConnectionLength();
+        // Recompute stored physical axon lengths from neuron x/y/z. When
+        // requested, length / conduction_velocity becomes each axon's delay.
+        void UpdateConnectionGeometry(
+            bool update_delays = false,
+            double conduction_velocity = 1.0);
         void Save(const char* a_filename);
         bool Load(const char* a_filename);
         void Save(FILE *a_file);

@@ -36,6 +36,11 @@ def main() -> int:
         action="store_true",
         help="inspect normally but use spiking policies for smoke runs",
     )
+    parser.add_argument(
+        "--mcculloch-pitts",
+        action="store_true",
+        help="use McCulloch-Pitts policies for every smoke run",
+    )
     parser.add_argument("--quiet", action="store_true")
     args = parser.parse_args()
 
@@ -66,6 +71,7 @@ def main() -> int:
                     seed=args.seed + index,
                     quiet=args.quiet,
                     spiking=args.spiking,
+                    mcculloch_pitts=args.mcculloch_pitts,
                 )
                 print(
                     f"PASS {config.key} best={result.best_fitness:.6g}",

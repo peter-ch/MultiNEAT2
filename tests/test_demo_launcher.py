@@ -23,14 +23,14 @@ def check(condition, message):
         raise AssertionError(message)
 
 
-check(len(launcher.DEMOS) == 23, "launcher should expose 23 unique demos")
+check(len(launcher.DEMOS) == 24, "launcher should expose 24 unique demos")
 check(
     len(launcher.DEMO_BY_ID) == len(launcher.DEMOS),
     "launcher demo IDs must be unique",
 )
 check(
     {item.family for item in launcher.DEMOS}
-    == {"Core", "Spiking", "Games", "Box2D", "MuJoCo"},
+    == {"Core", "Spatial", "Spiking", "Games", "Box2D", "MuJoCo"},
     "launcher families are incomplete",
 )
 for demo in launcher.DEMOS:
@@ -147,6 +147,35 @@ xor_spiking_command, _ = launcher.build_demo_command(
 check(
     "--spiking" in xor_spiking_command and "--smoke" in xor_spiking_command,
     "XOR spiking smoke command is incomplete",
+)
+
+xor_mcp_command, _ = launcher.build_demo_command(
+    launcher.DEMO_BY_ID["xor"],
+    runtime,
+    launcher.LaunchOptions(mode="smoke", mcculloch_pitts=True),
+)
+check(
+    "--mcculloch-pitts" in xor_mcp_command and "--smoke" in xor_mcp_command,
+    "XOR McCulloch-Pitts smoke command is incomplete",
+)
+spatial_mcp_command, _ = launcher.build_demo_command(
+    launcher.DEMO_BY_ID["hyperneat_3d"],
+    runtime,
+    launcher.LaunchOptions(mode="smoke", mcculloch_pitts=True),
+)
+check(
+    "--mcculloch-pitts" in spatial_mcp_command
+    and "--smoke" in spatial_mcp_command,
+    "3D ES-HyperNEAT McCulloch-Pitts smoke command is incomplete",
+)
+mcp_pattern_command, _ = launcher.build_demo_command(
+    launcher.DEMO_BY_ID["spiking_pattern"],
+    runtime,
+    launcher.LaunchOptions(mode="smoke", mcculloch_pitts=True),
+)
+check(
+    "--mcculloch-pitts" in mcp_pattern_command,
+    "dedicated spiking demos should expose McCulloch-Pitts variants",
 )
 
 asteroid_command, _ = launcher.build_demo_command(

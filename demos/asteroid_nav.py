@@ -563,6 +563,11 @@ def main() -> None:
         help="evolve a Poisson-encoded spiking Asteroids controller",
     )
     parser.add_argument(
+        "--mcculloch-pitts",
+        action="store_true",
+        help="use evolvable McCulloch-Pitts neurons in the spiking variant",
+    )
+    parser.add_argument(
         "--spiking-steps",
         type=int,
         default=8,
@@ -584,6 +589,11 @@ def main() -> None:
         help="run four genomes for three simulation steps",
     )
     args = parser.parse_args()
+    if args.mcculloch_pitts:
+        args.spiking = True
+    neuron_model = (
+        "mcculloch-pitts" if args.mcculloch_pitts else "lif"
+    )
     if args.smoke:
         args.population = 4
         args.generations = 1
@@ -658,6 +668,7 @@ def main() -> None:
             params,
             recurrent=True,
             enable_stdp=False,
+            neuron_model=neuron_model,
         )
 
     # Genome initialization: NUM_SENSORS (plus bias) inputs and 3 outputs.
@@ -669,7 +680,9 @@ def main() -> None:
     init_struct.HiddenActType = pnt.UNSIGNED_SIGMOID
     init_struct.OutputActType = pnt.UNSIGNED_SIGMOID
     if args.spiking:
-        configure_spiking_genome(pnt, init_struct)
+        configure_spiking_genome(
+            pnt, init_struct, neuron_model=neuron_model
+        )
 
     genome_prototype = pnt.Genome(params, init_struct)
     seed = args.seed if args.seed is not None else int(time.time())
@@ -766,7 +779,11 @@ def main() -> None:
         json.dumps(
             {
                 "demo": "asteroids",
-                "policy": "spiking" if args.spiking else "rate",
+                "policy": (
+                    "mcculloch-pitts"
+                    if args.mcculloch_pitts
+                    else ("spiking" if args.spiking else "rate")
+                ),
                 "generations": gen,
                 "population": args.population,
                 "best_fitness": bestFitness,

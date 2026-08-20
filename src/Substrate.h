@@ -55,6 +55,13 @@ public:
     double m_min_time_const;
     double m_max_time_const;
 
+    // Physical axon controls. A negative maximum disables length pruning.
+    // When enabled, propagation delay is Euclidean 3D length divided by the
+    // conduction velocity (coordinate units per second).
+    double m_max_connection_length;
+    bool m_use_spatial_distance_for_delays;
+    double m_conduction_velocity;
+
 
     Substrate();
     Substrate(std::vector< std::vector<double> >& a_inputs,
@@ -68,7 +75,10 @@ public:
     // Clears it
     void ClearCustomConnectivity();
 
-    int GetMaxDims();
+    int GetMaxDims() const;
+
+    // True when at least one substrate point has an explicit Z coordinate.
+    bool IsThreeDimensional() const;
 
     // Return the minimum input dimensionality of the CPPN
     int GetMinCPPNInputs();

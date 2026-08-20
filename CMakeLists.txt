@@ -149,6 +149,12 @@ if(BUILD_TESTING)
     multineat_enable_warnings(multineat_tests)
     multineat_enable_sanitizers(multineat_tests)
     add_test(NAME multineat_core COMMAND multineat_tests)
+    if(MULTINEAT_BUILD_DEMO)
+        add_test(
+            NAME multineat_cpp_mcp_demo
+            COMMAND multineat_exe --smoke --mcculloch-pitts --seed 42
+        )
+    endif()
 
     if(MULTINEAT_BUILD_PYTHON)
         if(MSVC)
@@ -252,6 +258,7 @@ if(BUILD_TESTING)
         endif()
         set_tests_properties(multineat_spiking_demos PROPERTIES
             ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:pymultineat>"
+            SKIP_RETURN_CODE 77
         )
     endif()
 endif()

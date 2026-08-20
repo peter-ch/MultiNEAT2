@@ -430,6 +430,87 @@ int main()
             restored_spiking_parameters.InitialSTDPEnabledProb == 0.1,
         "spiking evolution parameters round-trip");
 
+    Parameters mcp_parameters;
+    mcp_parameters.ConfigureMcCullochPitts(true, false);
+    mcp_parameters.PopulationSize = 6;
+    Check(
+        mcp_parameters.Validate(&parameter_validation_error) &&
+            mcp_parameters.ActivationFunction_McCullochPitts_Prob == 1.0 &&
+            mcp_parameters.InitialMCPInhibitoryVetoProb == 1.0,
+        "McCulloch-Pitts evolution preset validates");
+    const Parameters restored_mcp_parameters =
+        Parameters::Deserialize(mcp_parameters.Serialize());
+    Check(
+        restored_mcp_parameters
+                .ActivationFunction_McCullochPitts_Prob == 1.0 &&
+            restored_mcp_parameters.MutateMCPInhibitoryVetoProb == 0.05,
+        "McCulloch-Pitts parameters round-trip");
+    Parameters weighted_mcp_parameters;
+    weighted_mcp_parameters.ConfigureMcCullochPitts(false, false);
+    weighted_mcp_parameters.SpikingParameterMutationRate = 0.0;
+    weighted_mcp_parameters.MutateMCPInhibitoryVetoProb = 1.0;
+    GenomeInitStruct weighted_mcp_init;
+    weighted_mcp_init.NumInputs = 2;
+    weighted_mcp_init.NumOutputs = 1;
+    weighted_mcp_init.OutputActType = MCCULLOCH_PITTS;
+    Genome weighted_mcp_genome(weighted_mcp_parameters, weighted_mcp_init);
+    Check(
+        !weighted_mcp_genome.m_NeuronGenes.back().m_MCPInhibitoryVeto,
+        "McCulloch-Pitts initialization supports weighted inhibition");
+    RNG weighted_mcp_rng;
+    weighted_mcp_rng.Seed(19);
+    Check(
+        weighted_mcp_genome.Mutate_NeuronSpikingParameters(
+            weighted_mcp_parameters, weighted_mcp_rng) &&
+            weighted_mcp_genome.m_NeuronGenes.back()
+                .m_MCPInhibitoryVeto,
+        "McCulloch-Pitts inhibitory behavior evolves as a gene");
+    const Genome restored_mcp_genome = Genome::Deserialize(
+        weighted_mcp_genome.Serialize());
+    Check(
+        restored_mcp_genome.m_NeuronGenes.back()
+            .m_MCPInhibitoryVeto,
+        "McCulloch-Pitts inhibitory gene round-trips");
+
+    NeuralNetwork mcp_network;
+    Neuron mcp_excitatory_input;
+    mcp_excitatory_input.m_type = INPUT;
+    Neuron mcp_inhibitory_input = mcp_excitatory_input;
+    Neuron mcp_output;
+    mcp_output.m_type = OUTPUT;
+    mcp_output.m_activation_function_type = MCCULLOCH_PITTS;
+    mcp_output.m_spike_threshold = 1.0;
+    mcp_output.m_refractory_period = 0.002;
+    Connection mcp_excitatory_axon;
+    mcp_excitatory_axon.m_source_neuron_idx = 0;
+    mcp_excitatory_axon.m_target_neuron_idx = 2;
+    mcp_excitatory_axon.m_weight = 2.0;
+    mcp_excitatory_axon.m_synaptic_time_constant = 0.001;
+    Connection mcp_inhibitory_axon = mcp_excitatory_axon;
+    mcp_inhibitory_axon.m_source_neuron_idx = 1;
+    mcp_inhibitory_axon.m_weight = -0.25;
+    mcp_network.AddNeuron(mcp_excitatory_input);
+    mcp_network.AddNeuron(mcp_inhibitory_input);
+    mcp_network.AddNeuron(mcp_output);
+    mcp_network.AddConnection(mcp_excitatory_axon);
+    mcp_network.AddConnection(mcp_inhibitory_axon);
+    mcp_network.SetInputOutputDimensions(2, 1);
+    mcp_network.SetSpikingInputMode(BINARY_SPIKE_INPUT);
+    mcp_network.Flush();
+    Check(
+        mcp_network.StepSpiking({1.0, 1.0}, 0.001).front() == 0.0,
+        "McCulloch-Pitts inhibitory afferents veto suprathreshold drive");
+    mcp_network.Flush();
+    mcp_network.m_neurons[2].m_mcp_inhibitory_veto = false;
+    Check(
+        mcp_network.StepSpiking({1.0, 1.0}, 0.001).front() == 1.0 &&
+            mcp_network.StepSpiking({1.0, 0.0}, 0.001).front() == 0.0,
+        "McCulloch-Pitts weighted threshold and refractory state advance");
+    const std::string mcp_state = mcp_network.Serialize();
+    Check(
+        NeuralNetwork::Deserialize(mcp_state).Serialize() == mcp_state,
+        "McCulloch-Pitts runtime state round-trips exactly");
+
     NeuralNetwork spiking_network;
     Neuron spike_input;
     spike_input.m_type = INPUT;
@@ -1967,6 +2048,51 @@ int main()
     Check(substrate_network.m_connections.size() == 1,
           "HyperNEAT enables only the requested topology");
 
+    std::vector<std::vector<double>> spatial_inputs{{-1.0, 0.0, 0.0}};
+    std::vector<std::vector<double>> spatial_hidden;
+    std::vector<std::vector<double>> spatial_outputs{{1.0, 1.0, 2.0}};
+    Substrate spatial_substrate(
+        spatial_inputs, spatial_hidden, spatial_outputs);
+    spatial_substrate.m_query_weights_only = true;
+    spatial_substrate.m_allow_input_output_links = true;
+    spatial_substrate.m_use_spatial_distance_for_delays = true;
+    spatial_substrate.m_conduction_velocity = 2.0;
+    GenomeInitStruct spatial_cppn_init;
+    spatial_cppn_init.NumInputs = spatial_substrate.GetMinCPPNInputs();
+    spatial_cppn_init.NumOutputs = spatial_substrate.GetMinCPPNOutputs();
+    Genome spatial_cppn(parameters, spatial_cppn_init);
+    NeuralNetwork spatial_network;
+    spatial_cppn.BuildHyperNEATPhenotype(
+        spatial_network, spatial_substrate);
+    Check(
+        spatial_substrate.IsThreeDimensional() &&
+            spatial_network.m_connections.size() == 1 &&
+            spatial_network.m_neurons[1].m_z == 2.0 &&
+            std::abs(spatial_network.m_connections[0].m_length - 3.0) <
+                1.0e-12 &&
+            std::abs(
+                spatial_network.m_connections[0].m_synaptic_delay - 1.5) <
+                1.0e-12,
+        "HyperNEAT materializes 3D neuron and physical axon geometry");
+    spatial_substrate.m_max_connection_length = 2.5;
+    spatial_cppn.BuildHyperNEATPhenotype(
+        spatial_network, spatial_substrate);
+    Check(
+        spatial_network.m_connections.empty(),
+        "HyperNEAT prunes axons beyond the configured physical length");
+    spatial_substrate.m_max_connection_length = -0.5;
+    CheckThrows<std::invalid_argument>(
+        [&] {
+            spatial_cppn.BuildHyperNEATPhenotype(
+                spatial_network, spatial_substrate);
+        },
+        "HyperNEAT validates the disabled maximum-axon sentinel");
+    spatial_network.m_neurons.back().m_z =
+        std::numeric_limits<double>::quiet_NaN();
+    CheckThrows<std::invalid_argument>(
+        [&] { spatial_network.UpdateConnectionGeometry(); },
+        "physical axon updates reject non-finite neuron positions");
+
     Parameters es_parameters;
     es_parameters.InitialDepth = 1;
     es_parameters.MaxDepth = 1;
@@ -2007,6 +2133,44 @@ int main()
     }
     Check(es_endpoints.size() == es_network.m_connections.size(),
           "ES-HyperNEAT deduplicates generated links");
+
+    Parameters es_3d_parameters = es_parameters;
+    es_3d_parameters.Depth = 2.0;
+    es_3d_parameters.Qtree_Z = 0.0;
+    es_3d_parameters.BandThreshold = 0.01;
+    GenomeInitStruct es_3d_cppn_init;
+    es_3d_cppn_init.NumInputs = 7;
+    es_3d_cppn_init.NumOutputs = 1;
+    es_3d_cppn_init.OutputActType = LINEAR;
+    Genome es_3d_cppn(es_3d_parameters, es_3d_cppn_init);
+    for (auto& link : es_3d_cppn.m_LinkGenes)
+        link.SetWeight(1.0);
+    Substrate es_3d_substrate;
+    es_3d_substrate.m_input_coords =
+        {{-1.0, 0.0, -1.0}, {0.0, 0.0, 0.0}};
+    es_3d_substrate.m_output_coords = {{1.0, 0.0, 1.0}};
+    es_3d_substrate.m_query_weights_only = true;
+    es_3d_substrate.m_max_weight_and_bias = 1.0;
+    NeuralNetwork es_3d_network;
+    es_3d_cppn.BuildESHyperNEATPhenotype(
+        es_3d_network, es_3d_substrate, es_3d_parameters);
+    const bool has_3d_hidden = std::any_of(
+        es_3d_network.m_neurons.begin(),
+        es_3d_network.m_neurons.end(),
+        [](const Neuron& neuron)
+        {
+            return neuron.m_type == HIDDEN && std::abs(neuron.m_z) > 0.0;
+        });
+    Check(
+        has_3d_hidden && !es_3d_network.m_connections.empty(),
+        "ES-HyperNEAT uses octree subdivision to discover 3D hidden nodes");
+    es_3d_substrate.m_max_connection_length = 0.0;
+    es_3d_cppn.BuildESHyperNEATPhenotype(
+        es_3d_network, es_3d_substrate, es_3d_parameters);
+    Check(
+        es_3d_network.m_connections.empty() &&
+            es_3d_network.m_neurons.size() == 3,
+        "ES-HyperNEAT removes hidden islands after physical axon pruning");
     es_parameters.MaxDepth = 10;
     CheckThrows<std::invalid_argument>(
         [&] {

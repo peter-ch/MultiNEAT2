@@ -14,7 +14,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+    sys.path.append(str(ROOT))
 
 import pymultineat as neat  # noqa: E402
 
@@ -96,9 +96,15 @@ class CartPole:
         return rates
 
 
-def parameters(population_size: int) -> neat.Parameters:
+def parameters(
+    population_size: int,
+    mcculloch_pitts: bool = False,
+) -> neat.Parameters:
     params = neat.Parameters()
-    params.ConfigureSpiking(False)
+    if mcculloch_pitts:
+        params.ConfigureMcCullochPitts(True, False)
+    else:
+        params.ConfigureSpiking(False)
     params.PopulationSize = population_size
     params.DontUseBiasNeuron = True
     params.DynamicCompatibility = True
@@ -123,15 +129,24 @@ def parameters(population_size: int) -> neat.Parameters:
     return params
 
 
-def seed_genome(params: neat.Parameters) -> neat.Genome:
+def seed_genome(
+    params: neat.Parameters,
+    mcculloch_pitts: bool = False,
+) -> neat.Genome:
     init = neat.GenomeInitStruct()
     init.NumInputs = 8
     init.NumOutputs = 2
     init.NumHidden = 4
     init.NumLayers = 1
     init.SeedType = neat.LAYERED
-    init.HiddenActType = neat.SPIKING_ADAPTIVE_LIF
-    init.OutputActType = neat.SPIKING_LIF
+    init.HiddenActType = (
+        neat.MCCULLOCH_PITTS
+        if mcculloch_pitts
+        else neat.SPIKING_ADAPTIVE_LIF
+    )
+    init.OutputActType = (
+        neat.MCCULLOCH_PITTS if mcculloch_pitts else neat.SPIKING_LIF
+    )
     return neat.Genome(params, init)
 
 
@@ -178,10 +193,11 @@ def evolve(
     population_size: int,
     max_steps: int,
     seed: int,
+    mcculloch_pitts: bool = False,
 ) -> tuple[neat.Genome, list[float]]:
-    params = parameters(population_size)
+    params = parameters(population_size, mcculloch_pitts)
     population = neat.Population(
-        seed_genome(params),
+        seed_genome(params, mcculloch_pitts),
         params,
         True,
         6.0,
@@ -372,6 +388,11 @@ def main() -> int:
     parser.add_argument("--animate", action="store_true")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument(
+        "--mcculloch-pitts",
+        action="store_true",
+        help="evolve the same controller with McCulloch-Pitts neurons",
+    )
     args = parser.parse_args()
     if args.smoke:
         args.generations = 1
@@ -384,6 +405,7 @@ def main() -> int:
         args.population,
         args.max_steps,
         args.seed,
+        args.mcculloch_pitts,
     )
     _, _, recorder, survived = replay(
         best,
@@ -394,6 +416,11 @@ def main() -> int:
         json.dumps(
             {
                 "demo": "spiking_cartpole",
+                "neuron_model": (
+                    "mcculloch-pitts"
+                    if args.mcculloch_pitts
+                    else "lif"
+                ),
                 "generations": args.generations,
                 "population": args.population,
                 "max_steps": args.max_steps,

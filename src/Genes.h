@@ -51,14 +51,21 @@ namespace NEAT
         // historical activation function.
         SPIKING_LIF,
         SPIKING_ADAPTIVE_LIF,
-        SPIKING_IZHIKEVICH
+        SPIKING_IZHIKEVICH,
+        // The discrete-time McCulloch-Pitts model.  The SPIKING_ prefix is
+        // retained as an alias so its stateful/event-driven nature is clear
+        // beside the other spiking modes without making the historical name
+        // awkward to use.
+        MCCULLOCH_PITTS,
+        SPIKING_MCCULLOCH_PITTS = MCCULLOCH_PITTS
     };
 
     inline bool IsSpikingActivation(ActivationFunction function)
     {
         return function == SPIKING_LIF ||
                function == SPIKING_ADAPTIVE_LIF ||
-               function == SPIKING_IZHIKEVICH;
+               function == SPIKING_IZHIKEVICH ||
+               function == MCCULLOCH_PITTS;
     }
 
     //////////////////////////////////
@@ -638,6 +645,9 @@ namespace NEAT
         double m_IzhikevichB;
         double m_IzhikevichC;
         double m_IzhikevichD;
+        // In the original McCulloch-Pitts calculus any active inhibitory
+        // afferent vetoes firing, irrespective of excitatory drive.
+        bool m_MCPInhibitoryVeto;
 
         NeuronGene()
         {
@@ -696,7 +706,9 @@ namespace NEAT
                     lhs.m_IzhikevichA == rhs.m_IzhikevichA &&
                     lhs.m_IzhikevichB == rhs.m_IzhikevichB &&
                     lhs.m_IzhikevichC == rhs.m_IzhikevichC &&
-                    lhs.m_IzhikevichD == rhs.m_IzhikevichD);
+                    lhs.m_IzhikevichD == rhs.m_IzhikevichD &&
+                    lhs.m_MCPInhibitoryVeto ==
+                        rhs.m_MCPInhibitoryVeto);
         }
 
         NeuronGene& operator=(const NeuronGene&) = default;
@@ -728,6 +740,7 @@ namespace NEAT
             m_IzhikevichB = 0.2;
             m_IzhikevichC = -65.0;
             m_IzhikevichD = 8.0;
+            m_MCPInhibitoryVeto = true;
         }
     };
 

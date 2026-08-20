@@ -657,6 +657,7 @@ def configure_parameters(
     recurrent: bool,
     profile: str,
     spiking: bool = False,
+    mcculloch_pitts: bool = False,
 ) -> Any:
     """Return modern but conservative parameters for control problems."""
 
@@ -721,6 +722,9 @@ def configure_parameters(
             params,
             recurrent=recurrent,
             enable_stdp=False,
+            neuron_model=(
+                "mcculloch-pitts" if mcculloch_pitts else "lif"
+            ),
         )
 
     # These operators are additive in MultiNEAT2. Attribute checks retain
@@ -765,6 +769,7 @@ def create_population(
     profile: str,
     initial_connectivity: str,
     spiking: bool = False,
+    mcculloch_pitts: bool = False,
 ) -> Any:
     recurrent = config.recurrent or profile == "exploratory"
     params = configure_parameters(
@@ -772,6 +777,7 @@ def create_population(
         recurrent,
         profile,
         spiking,
+        mcculloch_pitts,
     )
     initial = neat.GenomeInitStruct()
     initial.NumInputs = shape.input_size + 1
@@ -782,7 +788,13 @@ def create_population(
     initial.HiddenActType = neat.TANH
     initial.OutputActType = neat.TANH
     if spiking:
-        configure_spiking_genome(neat, initial)
+        configure_spiking_genome(
+            neat,
+            initial,
+            neuron_model=(
+                "mcculloch-pitts" if mcculloch_pitts else "lif"
+            ),
+        )
     use_sparse_seed = shape.output_size > 1 and (
         initial_connectivity == "sparse"
         or (initial_connectivity == "auto" and config.sparse_seed)
@@ -807,6 +819,7 @@ class TrainOptions:
     profile: str
     initial_connectivity: str
     spiking: bool = False
+    mcculloch_pitts: bool = False
     spiking_steps: int = 8
     spiking_time_step: float = 0.001
     spiking_input_rate: float = 200.0
@@ -1320,6 +1333,7 @@ def train(options: TrainOptions) -> TrainResult:
             options.profile,
             options.initial_connectivity,
             options.spiking,
+            options.mcculloch_pitts,
         )
 
     start_generation = int(population.GetGeneration())
@@ -1399,6 +1413,11 @@ def train(options: TrainOptions) -> TrainResult:
                 "genomes": len(genomes),
                 "elapsed_seconds": elapsed,
                 "spiking": options.spiking,
+                "neuron_model": (
+                    "mcculloch-pitts"
+                    if options.mcculloch_pitts
+                    else ("lif" if options.spiking else "rate")
+                ),
             }
             history.append(row)
             _append_metrics(options.output_dir, row)
@@ -1475,9 +1494,11 @@ def smoke_task(
     seed: int = 7,
     quiet: bool = False,
     spiking: bool = False,
+    mcculloch_pitts: bool = False,
 ) -> TrainResult:
     """Run a tiny real environment/evolution integration test."""
 
+    spiking = spiking or mcculloch_pitts
     return train(
         TrainOptions(
             task=task_key,
@@ -1491,6 +1512,7 @@ def smoke_task(
             profile="default",
             initial_connectivity="sparse",
             spiking=spiking,
+            mcculloch_pitts=mcculloch_pitts,
             spiking_steps=4,
             quiet=quiet,
         )
@@ -1560,6 +1582,11 @@ def _parser(default_task: str | None) -> argparse.ArgumentParser:
         help="evolve a Poisson-encoded spiking policy variant",
     )
     parser.add_argument(
+        "--mcculloch-pitts",
+        action="store_true",
+        help="use evolvable McCulloch-Pitts neurons in the spiking variant",
+    )
+    parser.add_argument(
         "--spiking-steps",
         type=int,
         default=8,
@@ -1617,6 +1644,8 @@ def _parser(default_task: str | None) -> argparse.ArgumentParser:
 def main(default_task: str | None = None) -> int:
     parser = _parser(default_task)
     args = parser.parse_args()
+    if args.mcculloch_pitts:
+        args.spiking = True
     config = TASKS[args.task]
     try:
         if args.inspect:
@@ -1638,6 +1667,7 @@ def main(default_task: str | None = None) -> int:
                 args.seed,
                 args.quiet,
                 args.spiking,
+                args.mcculloch_pitts,
             )
         else:
             generations = (
@@ -1673,6 +1703,7 @@ def main(default_task: str | None = None) -> int:
                     profile=args.profile,
                     initial_connectivity=args.initial_connectivity,
                     spiking=args.spiking,
+                    mcculloch_pitts=args.mcculloch_pitts,
                     spiking_steps=args.spiking_steps,
                     spiking_time_step=args.spiking_time_step,
                     spiking_input_rate=args.spiking_input_rate,
@@ -1689,7 +1720,7 @@ def main(default_task: str | None = None) -> int:
         print(
             f"completed task={result.task} generations={result.generations} "
             f"best_fitness={result.best_fitness:.6g} "
-            f"policy={'spiking' if args.spiking else 'rate'}",
+            f"policy={'mcculloch-pitts' if args.mcculloch_pitts else ('lif' if args.spiking else 'rate')}",
             flush=True,
         )
         return 0

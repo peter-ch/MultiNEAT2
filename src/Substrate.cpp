@@ -29,6 +29,9 @@ Substrate::Substrate()
     m_max_weight_and_bias = 5.0;
     m_min_time_const = 0.1;
     m_max_time_const = 1.0;
+    m_max_connection_length = -1.0;
+    m_use_spatial_distance_for_delays = false;
+    m_conduction_velocity = 1.0;
 };
 
 
@@ -55,7 +58,10 @@ Substrate::Substrate(std::vector<std::vector<double> >& a_inputs,
       m_output_nodes_activation(NEAT::UNSIGNED_SIGMOID),
       m_max_weight_and_bias(5.0),
       m_min_time_const(0.1),
-      m_max_time_const(1.0)
+      m_max_time_const(1.0),
+      m_max_connection_length(-1.0),
+      m_use_spatial_distance_for_delays(false),
+      m_conduction_velocity(1.0)
 {
 }
 
@@ -142,7 +148,7 @@ int Substrate::GetMinCPPNOutputs()
     }
 }
 
-int Substrate::GetMaxDims()
+int Substrate::GetMaxDims() const
 {
     std::size_t max_dims = 0;
     for(std::size_t i=0; i<m_input_coords.size(); i++)
@@ -167,6 +173,11 @@ int Substrate::GetMaxDims()
         }
     }
     return static_cast<int>(max_dims);
+}
+
+bool Substrate::IsThreeDimensional() const
+{
+    return GetMaxDims() >= 3;
 }
 
 void Substrate::PrintInfo()

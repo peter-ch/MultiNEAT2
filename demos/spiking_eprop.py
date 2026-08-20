@@ -11,7 +11,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+    sys.path.append(str(ROOT))
 
 import pymultineat as neat  # noqa: E402
 
@@ -20,7 +20,7 @@ DT = 0.001
 SEQUENCE_STEPS = 20
 
 
-def build_network() -> neat.NeuralNetwork:
+def build_network(mcculloch_pitts: bool = False) -> neat.NeuralNetwork:
     network = neat.NeuralNetwork()
 
     input_neuron = neat.Neuron()
@@ -28,14 +28,22 @@ def build_network() -> neat.NeuralNetwork:
 
     output_neuron = neat.Neuron()
     output_neuron.m_type = neat.OUTPUT
-    output_neuron.m_activation_function_type = neat.SPIKING_LIF
+    output_neuron.m_activation_function_type = (
+        neat.MCCULLOCH_PITTS
+        if mcculloch_pitts
+        else neat.SPIKING_LIF
+    )
     output_neuron.m_timeconst = 0.01
     output_neuron.m_spike_threshold = 0.5
     output_neuron.m_refractory_period = 0.0
 
     hidden_neuron = neat.Neuron()
     hidden_neuron.m_type = neat.HIDDEN
-    hidden_neuron.m_activation_function_type = neat.SPIKING_ADAPTIVE_LIF
+    hidden_neuron.m_activation_function_type = (
+        neat.MCCULLOCH_PITTS
+        if mcculloch_pitts
+        else neat.SPIKING_ADAPTIVE_LIF
+    )
     hidden_neuron.m_timeconst = 0.01
     hidden_neuron.m_spike_threshold = 0.5
     hidden_neuron.m_refractory_period = 0.0
@@ -89,8 +97,9 @@ def build_learner(network: neat.NeuralNetwork, seed: int) -> neat.EPropLearner:
 def train(
     epochs: int,
     seed: int,
+    mcculloch_pitts: bool = False,
 ) -> tuple[neat.NeuralNetwork, neat.EPropLearner, list[float]]:
-    network = build_network()
+    network = build_network(mcculloch_pitts)
     learner = build_learner(network, seed)
     inputs = [[1.0] for _ in range(SEQUENCE_STEPS)]
     targets = [[1.0] for _ in range(SEQUENCE_STEPS)]
@@ -178,6 +187,11 @@ def main() -> int:
     parser.add_argument("--no-show", action="store_true")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--smoke", action="store_true")
+    parser.add_argument(
+        "--mcculloch-pitts",
+        action="store_true",
+        help="train an equivalent McCulloch-Pitts circuit",
+    )
     args = parser.parse_args()
     if args.epochs <= 0:
         parser.error("--epochs must be positive")
@@ -185,10 +199,15 @@ def main() -> int:
         args.epochs = 2
         args.no_show = True
 
-    network, learner, losses = train(args.epochs, args.seed)
+    network, learner, losses = train(
+        args.epochs, args.seed, args.mcculloch_pitts
+    )
     replay_network, recorder = replay(network)
     payload = {
         "demo": "spiking_eprop",
+        "neuron_model": (
+            "mcculloch-pitts" if args.mcculloch_pitts else "lif"
+        ),
         "generations": args.epochs,
         "population": 1,
         "initial_loss": losses[0],

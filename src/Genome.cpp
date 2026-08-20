@@ -107,6 +107,14 @@ void InitializeNeuronSpiking(
     neuron.m_IzhikevichD = value(
         parameters.MinIzhikevichD,
         parameters.MaxIzhikevichD);
+    if (neuron.m_ActFunction == MCCULLOCH_PITTS)
+    {
+        neuron.m_MCPInhibitoryVeto =
+            rng == nullptr
+                ? parameters.InitialMCPInhibitoryVetoProb >= 0.5
+                : rng->RandFloat() <
+                      parameters.InitialMCPInhibitoryVetoProb;
+    }
 }
 
 void InitializeLinkSpiking(
@@ -142,6 +150,87 @@ void InitializeLinkSpiking(
         parameters.MinSTDPTau, parameters.MaxSTDPTau);
     link.m_STDPMinWeight = parameters.MinWeight;
     link.m_STDPMaxWeight = parameters.MaxWeight;
+}
+
+void SetSpatialCoordinates(
+    Neuron& neuron,
+    const std::vector<double>& coordinate)
+{
+    neuron.m_substrate_coords = coordinate;
+    neuron.m_x = coordinate.size() > 0 ? coordinate[0] : 0.0;
+    neuron.m_y = coordinate.size() > 1 ? coordinate[1] : 0.0;
+    neuron.m_z = coordinate.size() > 2 ? coordinate[2] : 0.0;
+    // Preserve the historical substrate-coordinate aliases as well.
+    neuron.m_sx = neuron.m_x;
+    neuron.m_sy = neuron.m_y;
+    neuron.m_sz = neuron.m_z;
+}
+
+void ValidateSpatialSubstrate(
+    const Substrate& substrate,
+    const char* algorithm)
+{
+    const auto validate_group =
+        [algorithm](
+            const std::vector<std::vector<double>>& coordinates,
+            const char* group)
+    {
+        for (const auto& coordinate : coordinates)
+        {
+            if (coordinate.empty() ||
+                !std::all_of(
+                    coordinate.begin(),
+                    coordinate.end(),
+                    [](double value) { return std::isfinite(value); }))
+            {
+                throw std::invalid_argument(
+                    std::string(algorithm) + " " + group +
+                    " coordinates must be non-empty and finite");
+            }
+        }
+    };
+    validate_group(substrate.m_input_coords, "input");
+    validate_group(substrate.m_hidden_coords, "hidden");
+    validate_group(substrate.m_output_coords, "output");
+    if (!std::isfinite(substrate.m_max_connection_length) ||
+        (substrate.m_max_connection_length < 0.0 &&
+         substrate.m_max_connection_length != -1.0))
+    {
+        throw std::invalid_argument(
+            std::string(algorithm) +
+            " maximum connection length must be -1 or finite and "
+            "non-negative");
+    }
+    if (substrate.m_use_spatial_distance_for_delays &&
+        (!std::isfinite(substrate.m_conduction_velocity) ||
+         substrate.m_conduction_velocity <= 0.0))
+    {
+        throw std::invalid_argument(
+            std::string(algorithm) +
+            " axonal conduction velocity must be finite and positive");
+    }
+}
+
+void FinalizeSpatialConnections(
+    NeuralNetwork& network,
+    const Substrate& substrate)
+{
+    network.UpdateConnectionGeometry(
+        substrate.m_use_spatial_distance_for_delays,
+        substrate.m_conduction_velocity);
+    if (substrate.m_max_connection_length >= 0.0)
+    {
+        network.m_connections.erase(
+            std::remove_if(
+                network.m_connections.begin(),
+                network.m_connections.end(),
+                [&substrate](const Connection& connection)
+                {
+                    return connection.m_length >
+                           substrate.m_max_connection_length;
+                }),
+            network.m_connections.end());
+    }
 }
 }
 
@@ -294,7 +383,7 @@ bool Genome::Validate(std::string* error) const
         if (neuron.Type() < INPUT || neuron.Type() > OUTPUT)
             return fail("Genome contains an invalid neuron type");
         if (neuron.m_ActFunction < SIGNED_SIGMOID ||
-            neuron.m_ActFunction > SPIKING_IZHIKEVICH)
+            neuron.m_ActFunction > MCCULLOCH_PITTS)
             return fail("Genome contains an invalid activation function");
         if (!std::isfinite(neuron.m_SplitY) ||
             !std::isfinite(neuron.m_A) ||
@@ -638,7 +727,7 @@ Genome::Genome(std::istream &data)
         if (token == "GenomeFormat")
         {
             data >> format_version;
-            if (format_version < 1 || format_version > 3)
+            if (format_version < 1 || format_version > 4)
                 throw std::runtime_error(
                     "Genome: unsupported serialization format.");
         }
@@ -684,6 +773,13 @@ Genome::Genome(std::istream &data)
                      >> neuron.m_IzhikevichB
                      >> neuron.m_IzhikevichC
                      >> neuron.m_IzhikevichD;
+            }
+            if (format_version >= 4)
+            {
+                int inhibitory_veto = 1;
+                data >> inhibitory_veto;
+                neuron.m_MCPInhibitoryVeto =
+                    inhibitory_veto != 0;
             }
             m_NeuronGenes.push_back(neuron);
             last_neuron = static_cast<int>(m_NeuronGenes.size()) - 1;
@@ -814,7 +910,7 @@ std::string Genome::Serialize() const
     std::ostringstream output;
     Serialization::UseRoundTripPrecision(output);
     output << "GenomeStart " << GetID() << "\n";
-    output << "GenomeFormat 3\n";
+    output << "GenomeFormat 4\n";
     output << "GenomeState " << m_Fitness << ' ' << m_AdjustedFitness << ' '
            << m_OffspringAmount << ' ' << m_Depth << ' ' << m_NumInputs << ' '
            << m_NumOutputs << ' ' << static_cast<int>(m_Evaluated) << ' '
@@ -840,7 +936,8 @@ std::string Genome::Serialize() const
                << neuron.m_IzhikevichA << ' '
                << neuron.m_IzhikevichB << ' '
                << neuron.m_IzhikevichC << ' '
-               << neuron.m_IzhikevichD << '\n';
+               << neuron.m_IzhikevichD << ' '
+               << static_cast<int>(neuron.m_MCPInhibitoryVeto) << '\n';
         Serialization::WriteTraits(
             output, "NeuronTraits", neuron.m_Traits);
     }
@@ -1113,6 +1210,7 @@ void Genome::BuildPhenotype(NeuralNetwork &a_Net)
         t_n.m_izhikevich_b = ng.m_IzhikevichB;
         t_n.m_izhikevich_c = ng.m_IzhikevichC;
         t_n.m_izhikevich_d = ng.m_IzhikevichD;
+        t_n.m_mcp_inhibitory_veto = ng.m_MCPInhibitoryVeto;
         t_n.m_split_y = ng.SplitY();
         t_n.m_type = ng.Type();
         t_n.m_x = static_cast<double>(ng.x);
@@ -1187,7 +1285,8 @@ ActivationFunction GetRandomActivation(Parameters &a_Parameters, RNG &a_RNG)
         a_Parameters.ActivationFunction_Softplus_Prob,
         a_Parameters.ActivationFunction_SpikingLIF_Prob,
         a_Parameters.ActivationFunction_SpikingAdaptiveLIF_Prob,
-        a_Parameters.ActivationFunction_SpikingIzhikevich_Prob
+        a_Parameters.ActivationFunction_SpikingIzhikevich_Prob,
+        a_Parameters.ActivationFunction_McCullochPitts_Prob
     };
 
     double total = 0.0;
@@ -1218,6 +1317,7 @@ void Genome::BuildHyperNEATPhenotype(NeuralNetwork &net, Substrate &subst)
         throw std::invalid_argument(
             "A HyperNEAT substrate requires input and output coordinates");
     }
+    ValidateSpatialSubstrate(subst, "HyperNEAT");
     int max_dims = subst.GetMaxDims();
     if (static_cast<int>(m_NumInputs) < subst.GetMinCPPNInputs() ||
         static_cast<int>(m_NumOutputs) < subst.GetMinCPPNOutputs())
@@ -1245,7 +1345,7 @@ void Genome::BuildHyperNEATPhenotype(NeuralNetwork &net, Substrate &subst)
         Neuron t_n;
         t_n.m_a = 1;
         t_n.m_b = 0;
-        t_n.m_substrate_coords = coord;
+        SetSpatialCoordinates(t_n, coord);
         t_n.m_activation_function_type = LINEAR;
         t_n.m_type = INPUT;
         net.AddNeuron(t_n);
@@ -1256,7 +1356,7 @@ void Genome::BuildHyperNEATPhenotype(NeuralNetwork &net, Substrate &subst)
         Neuron t_n;
         t_n.m_a = 1;
         t_n.m_b = 0;
-        t_n.m_substrate_coords = coord;
+        SetSpatialCoordinates(t_n, coord);
         t_n.m_activation_function_type = subst.m_output_nodes_activation;
         t_n.m_type = OUTPUT;
         net.AddNeuron(t_n);
@@ -1267,7 +1367,7 @@ void Genome::BuildHyperNEATPhenotype(NeuralNetwork &net, Substrate &subst)
         Neuron t_n;
         t_n.m_a = 1;
         t_n.m_b = 0;
-        t_n.m_substrate_coords = coord;
+        SetSpatialCoordinates(t_n, coord);
         t_n.m_activation_function_type = subst.m_hidden_nodes_activation;
         t_n.m_type = HIDDEN;
         net.AddNeuron(t_n);
@@ -1451,6 +1551,7 @@ void Genome::BuildHyperNEATPhenotype(NeuralNetwork &net, Substrate &subst)
             net.AddConnection(c);
         }
     }
+    FinalizeSpatialConnections(net, subst);
 }
 
 void Genome::BuildESHyperNEATPhenotype(
@@ -1463,19 +1564,28 @@ void Genome::BuildESHyperNEATPhenotype(
         throw std::invalid_argument(
             "An ES-HyperNEAT substrate requires input and output coordinates");
     }
+    ValidateSpatialSubstrate(subst, "ES-HyperNEAT");
     if (params.InitialDepth > params.MaxDepth)
     {
         throw std::invalid_argument(
             "ES-HyperNEAT InitialDepth cannot exceed MaxDepth");
     }
-    // A depth of nine already permits 349,525 quadtree nodes per query.
-    // Reject larger trees before an accidental parameter value can exhaust
-    // memory or make phenotype construction effectively unbounded.
-    constexpr unsigned int max_safe_depth = 9;
+    const int substrate_dimensions = subst.GetMaxDims();
+    if (substrate_dimensions > 3)
+    {
+        throw std::invalid_argument(
+            "ES-HyperNEAT supports two- or three-dimensional substrates");
+    }
+    const bool three_dimensional = substrate_dimensions >= 3;
+    // Depth nine permits 349,525 quadtree nodes; an octree reaches a similar
+    // size at depth six. Reject larger trees before an accidental parameter
+    // value can exhaust memory or make construction effectively unbounded.
+    const unsigned int max_safe_depth = three_dimensional ? 6U : 9U;
     if (params.MaxDepth > max_safe_depth)
     {
         throw std::invalid_argument(
-            "ES-HyperNEAT MaxDepth exceeds the supported safe limit of 9");
+            std::string("ES-HyperNEAT MaxDepth exceeds the supported safe ") +
+            (three_dimensional ? "3D limit of 6" : "2D limit of 9"));
     }
     const std::pair<const char*, double> finite_values[] = {
         {"DivisionThreshold", params.DivisionThreshold},
@@ -1484,8 +1594,10 @@ void Genome::BuildESHyperNEATPhenotype(
         {"CPPN_Bias", params.CPPN_Bias},
         {"Width", params.Width},
         {"Height", params.Height},
+        {"Depth", params.Depth},
         {"Qtree_X", params.Qtree_X},
         {"Qtree_Y", params.Qtree_Y},
+        {"Qtree_Z", params.Qtree_Z},
         {"LeoThreshold", params.LeoThreshold},
         {"maximum substrate weight", subst.m_max_weight_and_bias}};
     for (const auto& value : finite_values)
@@ -1502,14 +1614,15 @@ void Genome::BuildESHyperNEATPhenotype(
         params.BandThreshold < 0.0 ||
         params.Width <= 0.0 ||
         params.Height <= 0.0 ||
+        (three_dimensional && params.Depth <= 0.0) ||
         subst.m_max_weight_and_bias < 0.0)
     {
         throw std::invalid_argument(
             "ES-HyperNEAT thresholds and weight range must be non-negative, "
-            "and quadtree dimensions must be positive");
+            "and spatial tree dimensions must be positive");
     }
 
-    const int dimensions = std::max(2, subst.GetMaxDims());
+    const int dimensions = three_dimensional ? 3 : 2;
     const int required_inputs =
         dimensions * 2 + (subst.m_with_distance ? 1 : 0) + 1;
     const int required_outputs = params.Leo ? 2 : 1;
@@ -1556,16 +1669,18 @@ void Genome::BuildESHyperNEATPhenotype(
     {
         double x;
         double y;
+        double z;
         double width;
         double height;
+        double depth;
         double weight = 0.0;
         double leo = 0.0;
         unsigned int level;
-        std::array<std::unique_ptr<TreeNode>, 4> children;
+        std::vector<std::unique_ptr<TreeNode>> children;
 
         bool Divided() const
         {
-            return children[0] != nullptr;
+            return !children.empty();
         }
     };
     struct CandidateConnection
@@ -1575,13 +1690,15 @@ void Genome::BuildESHyperNEATPhenotype(
         double weight;
     };
 
+    const std::size_t children_per_node =
+        three_dimensional ? 8U : 4U;
     std::size_t tree_node_limit = 1;
     std::size_t nodes_at_level = 1;
     const unsigned int subdivision_levels =
         std::max(1U, params.MaxDepth);
     for (unsigned int level = 0; level < subdivision_levels; ++level)
     {
-        nodes_at_level *= 4;
+        nodes_at_level *= children_per_node;
         tree_node_limit += nodes_at_level;
     }
 
@@ -1656,22 +1773,24 @@ void Genome::BuildESHyperNEATPhenotype(
         double mean = 0.0;
         for (const auto& child : node.children)
             mean += child->weight;
-        mean /= 4.0;
+        mean /= static_cast<double>(node.children.size());
         double result = 0.0;
         for (const auto& child : node.children)
         {
             const double difference = child->weight - mean;
             result += difference * difference;
         }
-        return result / 4.0;
+        return result / static_cast<double>(node.children.size());
     };
     const auto generated_coordinate =
-        [dimensions](double x, double y)
+        [dimensions](double x, double y, double z)
     {
         std::vector<double> coordinate(
             static_cast<std::size_t>(dimensions), 0.0);
         coordinate[0] = x;
         coordinate[1] = y;
+        if (dimensions == 3)
+            coordinate[2] = z;
         return coordinate;
     };
 
@@ -1681,8 +1800,10 @@ void Genome::BuildESHyperNEATPhenotype(
         auto root = std::make_unique<TreeNode>(
             TreeNode{params.Qtree_X,
                      params.Qtree_Y,
+                     three_dimensional ? params.Qtree_Z : 0.0,
                      params.Width,
                      params.Height,
+                     three_dimensional ? params.Depth : 0.0,
                      0.0,
                      0.0,
                      1,
@@ -1696,6 +1817,8 @@ void Genome::BuildESHyperNEATPhenotype(
             pending.pop();
             const double child_width = parent->width / 2.0;
             const double child_height = parent->height / 2.0;
+            const double child_depth =
+                three_dimensional ? parent->depth / 2.0 : 0.0;
             const double xs[] = {
                 parent->x - child_width,
                 parent->x - child_width,
@@ -1706,27 +1829,42 @@ void Genome::BuildESHyperNEATPhenotype(
                 parent->y + child_height,
                 parent->y + child_height,
                 parent->y - child_height};
-            for (std::size_t index = 0; index < 4; ++index)
+            const std::size_t depth_layers =
+                three_dimensional ? 2U : 1U;
+            parent->children.reserve(children_per_node);
+            for (std::size_t depth_layer = 0;
+                 depth_layer < depth_layers;
+                 ++depth_layer)
             {
-                auto child = std::make_unique<TreeNode>(
-                    TreeNode{xs[index],
-                             ys[index],
-                             child_width,
-                             child_height,
-                             0.0,
-                             0.0,
-                             parent->level + 1,
-                             {}});
-                const std::vector<double> coordinate =
-                    generated_coordinate(child->x, child->y);
-                const auto outputs = outgoing
-                    ? query_cppn(fixed, coordinate)
-                    : query_cppn(coordinate, fixed);
-                child->weight = outputs.first;
-                child->leo = outputs.second;
-                parent->children[index] = std::move(child);
+                const double z = three_dimensional
+                    ? parent->z +
+                          (depth_layer == 0 ? -child_depth : child_depth)
+                    : 0.0;
+                for (std::size_t index = 0; index < 4; ++index)
+                {
+                    auto child = std::make_unique<TreeNode>(
+                        TreeNode{xs[index],
+                                 ys[index],
+                                 z,
+                                 child_width,
+                                 child_height,
+                                 child_depth,
+                                 0.0,
+                                 0.0,
+                                 parent->level + 1,
+                                 {}});
+                    const std::vector<double> coordinate =
+                        generated_coordinate(
+                            child->x, child->y, child->z);
+                    const auto outputs = outgoing
+                        ? query_cppn(fixed, coordinate)
+                        : query_cppn(coordinate, fixed);
+                    child->weight = outputs.first;
+                    child->leo = outputs.second;
+                    parent->children.push_back(std::move(child));
+                }
             }
-            tree_nodes += 4;
+            tree_nodes += children_per_node;
             if (tree_nodes > tree_node_limit)
             {
                 throw std::runtime_error(
@@ -1759,15 +1897,22 @@ void Genome::BuildESHyperNEATPhenotype(
                     continue;
 
                 const std::vector<double> center =
-                    generated_coordinate(child.x, child.y);
+                    generated_coordinate(child.x, child.y, child.z);
                 std::vector<double> left = center;
                 std::vector<double> right = center;
                 std::vector<double> top = center;
                 std::vector<double> bottom = center;
+                std::vector<double> front = center;
+                std::vector<double> back = center;
                 left[0] -= parent.width;
                 right[0] += parent.width;
                 top[1] -= parent.height;
                 bottom[1] += parent.height;
+                if (three_dimensional)
+                {
+                    front[2] -= parent.depth;
+                    back[2] += parent.depth;
+                }
                 const auto boundary_difference =
                     [&](const std::vector<double>& coordinate)
                 {
@@ -1782,7 +1927,13 @@ void Genome::BuildESHyperNEATPhenotype(
                 const double vertical = std::min(
                     boundary_difference(top),
                     boundary_difference(bottom));
-                if (std::max(horizontal, vertical) <= params.BandThreshold)
+                const double spatial = three_dimensional
+                    ? std::min(
+                          boundary_difference(front),
+                          boundary_difference(back))
+                    : 0.0;
+                if (std::max({horizontal, vertical, spatial}) <=
+                    params.BandThreshold)
                     continue;
 
                 connections.push_back(
@@ -1912,7 +2063,7 @@ void Genome::BuildESHyperNEATPhenotype(
         Neuron neuron;
         neuron.m_a = 1.0;
         neuron.m_b = 0.0;
-        neuron.m_substrate_coords = subst.m_input_coords[index];
+        SetSpatialCoordinates(neuron, subst.m_input_coords[index]);
         neuron.m_activation_function_type = LINEAR;
         neuron.m_type =
             index + 1 == input_count ? BIAS : INPUT;
@@ -1923,7 +2074,7 @@ void Genome::BuildESHyperNEATPhenotype(
         Neuron neuron;
         neuron.m_a = 1.0;
         neuron.m_b = 0.0;
-        neuron.m_substrate_coords = coordinate;
+        SetSpatialCoordinates(neuron, coordinate);
         neuron.m_activation_function_type =
             subst.m_output_nodes_activation;
         neuron.m_type = OUTPUT;
@@ -1934,11 +2085,43 @@ void Genome::BuildESHyperNEATPhenotype(
         Neuron neuron;
         neuron.m_a = 1.0;
         neuron.m_b = 0.0;
-        neuron.m_substrate_coords = coordinate;
+        SetSpatialCoordinates(neuron, coordinate);
         neuron.m_activation_function_type =
             subst.m_hidden_nodes_activation;
         neuron.m_type = HIDDEN;
         generated_neurons.push_back(neuron);
+    }
+
+    // Apply physical constraints before reachability pruning so an axon
+    // removed for being too long cannot leave a retained hidden island.
+    for (auto& connection : generated_connections)
+    {
+        const Neuron& source = generated_neurons[static_cast<std::size_t>(
+            connection.m_source_neuron_idx)];
+        const Neuron& target = generated_neurons[static_cast<std::size_t>(
+            connection.m_target_neuron_idx)];
+        const double dx = target.m_x - source.m_x;
+        const double dy = target.m_y - source.m_y;
+        const double dz = target.m_z - source.m_z;
+        connection.m_length = std::sqrt(dx * dx + dy * dy + dz * dz);
+        if (subst.m_use_spatial_distance_for_delays)
+        {
+            connection.m_synaptic_delay =
+                connection.m_length / subst.m_conduction_velocity;
+        }
+    }
+    if (subst.m_max_connection_length >= 0.0)
+    {
+        generated_connections.erase(
+            std::remove_if(
+                generated_connections.begin(),
+                generated_connections.end(),
+                [&subst](const Connection& connection)
+                {
+                    return connection.m_length >
+                           subst.m_max_connection_length;
+                }),
+            generated_connections.end());
     }
 
     // Retain only hidden nodes that are both reachable from an input and can
@@ -2027,6 +2210,7 @@ void Genome::BuildESHyperNEATPhenotype(
         static_cast<unsigned int>(output_count));
     net.m_neurons = std::move(pruned_neurons);
     net.m_connections = std::move(pruned_connections);
+    FinalizeSpatialConnections(net, subst);
     net.Flush();
 }
 
@@ -2340,8 +2524,13 @@ double Genome::CompatibilityDistance(Genome &a_G, Parameters &a_Parameters)
                     other.m_IzhikevichD,
                     a_Parameters.MinIzhikevichD,
                     a_Parameters.MaxIzhikevichD);
+                difference +=
+                    mine.m_MCPInhibitoryVeto ==
+                            other.m_MCPInhibitoryVeto
+                        ? 0.0
+                        : 1.0;
                 total_spiking_neuron_diff +=
-                    difference / 13.0;
+                    difference / 14.0;
             }
             if (!a_Parameters.NeuronTraits.empty())
             {
@@ -2676,7 +2865,8 @@ bool Genome::Mutate_NeuronActivation_Type(const Parameters &a_Parameters, RNG &a
         a_Parameters.ActivationFunction_Softplus_Prob,
         a_Parameters.ActivationFunction_SpikingLIF_Prob,
         a_Parameters.ActivationFunction_SpikingAdaptiveLIF_Prob,
-        a_Parameters.ActivationFunction_SpikingIzhikevich_Prob
+        a_Parameters.ActivationFunction_SpikingIzhikevich_Prob,
+        a_Parameters.ActivationFunction_McCullochPitts_Prob
     };
     int idx = a_RNG.Roulette(probs);
     ActivationFunction newAF = static_cast<ActivationFunction>(idx);
@@ -2829,6 +3019,13 @@ bool Genome::Mutate_NeuronSpikingParameters(
             neuron.m_IzhikevichD,
             parameters.MinIzhikevichD,
             parameters.MaxIzhikevichD);
+        if (neuron.m_ActFunction == MCCULLOCH_PITTS &&
+            rng.RandFloat() < parameters.MutateMCPInhibitoryVetoProb)
+        {
+            neuron.m_MCPInhibitoryVeto =
+                !neuron.m_MCPInhibitoryVeto;
+            mutated = true;
+        }
     }
     return mutated;
 }

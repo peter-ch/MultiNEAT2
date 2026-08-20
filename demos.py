@@ -66,6 +66,19 @@ DEMOS: tuple[DemoSpec, ...] = (
         1,
     ),
     DemoSpec(
+        "hyperneat_3d",
+        "3D ES-HyperNEAT",
+        "Spatial",
+        "demos/hyperneat_3d.py",
+        "3D neural substrate",
+        "Evolve CPPNs that discover neurons and physical axons with octree ES-HyperNEAT.",
+        ("matplotlib", "numpy"),
+        "requirements-visualization.txt",
+        32,
+        10,
+        1,
+    ),
+    DemoSpec(
         "spiking_pattern",
         "Temporal spike detector",
         "Spiking",
@@ -403,6 +416,7 @@ class LaunchOptions:
     seed: int = 42
     profile: str = "ranked"
     spiking: bool = False
+    mcculloch_pitts: bool = False
     render: bool = False
     plot: bool = False
     record_video: bool = False
@@ -559,7 +573,7 @@ def probe_modules(
 def required_modules(spec: DemoSpec, options: LaunchOptions) -> tuple[str, ...]:
     modules = list(spec.modules)
     needs_spiking_rendering = (
-        options.spiking
+        (options.spiking or options.mcculloch_pitts)
         and options.render
         and supports_spiking_variant(spec)
         and spec.family in {"Box2D", "MuJoCo"}
@@ -575,7 +589,12 @@ def supports_spiking_variant(spec: DemoSpec) -> bool:
     return spec.family in {"Box2D", "MuJoCo"} or spec.id in {
         "xor",
         "asteroids",
+        "hyperneat_3d",
     }
+
+
+def supports_mcculloch_pitts_variant(spec: DemoSpec) -> bool:
+    return supports_spiking_variant(spec) or spec.family == "Spiking"
 
 
 def build_demo_command(
@@ -593,6 +612,8 @@ def build_demo_command(
     physics = spec.family in {"Box2D", "MuJoCo"}
     if options.spiking and supports_spiking_variant(spec):
         command.append("--spiking")
+    if options.mcculloch_pitts and supports_mcculloch_pitts_variant(spec):
+        command.append("--mcculloch-pitts")
     if options.mode == "smoke":
         command.append("--smoke")
         return command, None
@@ -600,7 +621,7 @@ def build_demo_command(
         command.append("--inspect" if physics else "--smoke")
         return command, None
 
-    if spec.id == "xor":
+    if spec.id in {"xor", "hyperneat_3d"}:
         command.extend(
             [
                 "--generations",
@@ -683,7 +704,9 @@ def build_demo_command(
 
     stamp = timestamp or time.strftime("%Y%m%d-%H%M%S")
     output_name = (
-        f"{spec.id}-spiking"
+        f"{spec.id}-mcculloch-pitts"
+        if options.mcculloch_pitts and supports_mcculloch_pitts_variant(spec)
+        else f"{spec.id}-spiking"
         if options.spiking and supports_spiking_variant(spec)
         else spec.id
     )
@@ -925,6 +948,7 @@ def run_gui() -> int:
             )
             self.seed_var = tk.IntVar(value=42)
             self.spiking_var = tk.BooleanVar(value=False)
+            self.mcculloch_pitts_var = tk.BooleanVar(value=False)
             self.render_var = tk.BooleanVar(value=False)
             self.plot_var = tk.BooleanVar(value=True)
             self.video_var = tk.BooleanVar(value=False)
@@ -1075,6 +1099,12 @@ def run_gui() -> int:
                 variable=self.spiking_var,
             )
             self.spiking_check.pack(side="left", padx=(0, 16))
+            self.mcculloch_pitts_check = ttk.Checkbutton(
+                toggles,
+                text="McCulloch-Pitts neurons",
+                variable=self.mcculloch_pitts_var,
+            )
+            self.mcculloch_pitts_check.pack(side="left", padx=(0, 16))
             self.plot_check = ttk.Checkbutton(
                 toggles, text="Save summary plot", variable=self.plot_var
             )
@@ -1200,6 +1230,7 @@ def run_gui() -> int:
                 seed=max(0, self.seed_var.get()),
                 profile=self.profile_var.get(),
                 spiking=self.spiking_var.get(),
+                mcculloch_pitts=self.mcculloch_pitts_var.get(),
                 render=self.render_var.get(),
                 plot=self.plot_var.get(),
                 record_video=self.video_var.get(),
@@ -1222,6 +1253,12 @@ def run_gui() -> int:
             )
             if not spiking_variant:
                 self.spiking_var.set(False)
+            mcp_variant = supports_mcculloch_pitts_variant(spec)
+            self.mcculloch_pitts_check.configure(
+                state="normal" if mcp_variant else "disabled"
+            )
+            if not mcp_variant:
+                self.mcculloch_pitts_var.set(False)
             self.plot_check.configure(state="normal" if physics else "disabled")
             self.video_check.configure(state="normal" if physics else "disabled")
             if not physics:

@@ -212,6 +212,29 @@ check(len(spiking_fitnesses) == 4, "not every spiking genome was evaluated")
 spiking_population.Epoch()
 spiking_env.close()
 
+mcp_population = demo.create_population(
+    tiny_shape,
+    tiny_config,
+    population_size=4,
+    seed=29,
+    profile="default",
+    initial_connectivity="full",
+    spiking=True,
+    mcculloch_pitts=True,
+)
+mcp_genome = mcp_population.m_Species[0].m_Individuals[0]
+mcp_phenotype = demo.neat.NeuralNetwork()
+mcp_genome.BuildPhenotype(mcp_phenotype)
+check(mcp_phenotype.IsSpiking(), "MCP demo built a rate phenotype")
+check(
+    all(
+        neuron.m_type in {demo.neat.INPUT, demo.neat.BIAS}
+        or neuron.m_activation_function_type == demo.neat.MCCULLOCH_PITTS
+        for neuron in mcp_phenotype.m_neurons
+    ),
+    "Gymnasium MCP variant did not use McCulloch-Pitts neurons",
+)
+
 wrappers = list((DEMOS / "box2d").glob("*_box2d.py"))
 wrappers += list((DEMOS / "mujoco").glob("*_mujoco.py"))
 check(len(wrappers) == 20, "expected eight Box2D and twelve MuJoCo scripts")

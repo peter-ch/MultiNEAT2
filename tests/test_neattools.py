@@ -5,7 +5,7 @@ from pathlib import Path
 
 
 os.environ.setdefault("MPLBACKEND", "Agg")
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 try:
     import matplotlib.pyplot as plt
@@ -92,6 +92,14 @@ statistics = neattools.spike_train_statistics(recorder)
 assert statistics["total_spikes"] >= 2
 assert statistics["per_neuron"][0]["spike_count"] == 1
 neattools.DrawSpikingNetwork(spiking, show=False)
+spatial_neurons = spiking.m_neurons
+spatial_neurons[0].m_z = -1.0
+spatial_neurons[1].m_z = 1.0
+spiking.m_neurons = spatial_neurons
+spiking.UpdateConnectionGeometry()
+spatial_axis = neattools.DrawSpatialNetwork3D(spiking, show=False)
+assert spatial_axis.name == "3d"
+assert spiking.m_connections[0].m_length == 2.0
 neattools.PlotSpikeRaster(recorder, show=False)
 neattools.PlotMembraneTraces(recorder, show=False)
 neattools.PlotFiringRates(recorder, show=False)

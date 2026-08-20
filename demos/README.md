@@ -1,4 +1,4 @@
-# Physics-control demos
+# MultiNEAT2 examples
 
 The easiest way to start any example is the root graphical launcher:
 
@@ -10,6 +10,19 @@ It silently selects the current `pymultineat` build, starts the chosen demo
 immediately, offers safe smoke/inspect/full-run modes, and shows live output.
 Package installation stays outside the launcher. The commands below remain
 available for automation and advanced use.
+
+## 3D HyperNEAT example
+
+`hyperneat_3d.py` evolves a CPPN, discovers hidden positions with a real 3D
+ES-HyperNEAT octree, materializes directed axon lengths and conduction delays,
+and renders the physical substrate. It can also demonstrate fixed-coordinate
+3D HyperNEAT:
+
+```sh
+python demos/hyperneat_3d.py --smoke --mcculloch-pitts
+python demos/hyperneat_3d.py --generations 30 --mcculloch-pitts
+python demos/hyperneat_3d.py --fixed --spiking
+```
 
 ## Spiking examples
 
@@ -31,7 +44,15 @@ python demos/spiking_cartpole.py --smoke
 python demos/spiking_cartpole.py --generations 100 --animate
 python demos/spiking_eprop.py --smoke
 python demos/spiking_eprop.py --epochs 60
+python demos/spiking_pattern.py --smoke --mcculloch-pitts
+python demos/spiking_cartpole.py --smoke --mcculloch-pitts
+python demos/spiking_eprop.py --smoke --mcculloch-pitts
 ```
+
+`--mcculloch-pitts` selects canonical binary threshold neurons with an
+absolute inhibitory veto. Thresholds, refractory periods, topology, weights,
+delays, and whether each neuron uses the veto remain evolvable. The e-prop
+example uses its surrogate-gradient path for these nondifferentiable units.
 
 The animation shows the live phenotype, a moving spike raster, membrane
 traces, and the task environment on the same clock. See
@@ -39,10 +60,10 @@ traces, and the task environment on the same clock. See
 
 ## Spiking variants of the existing demos
 
-XOR, Asteroids, and every Box2D and MuJoCo controller also have an opt-in
-spiking variant. The original rate-network behavior remains the default;
-add `--spiking` to evolve an adaptive-LIF/LIF policy through the same NEAT
-engine:
+XOR, Asteroids, and every Box2D and MuJoCo controller also have opt-in
+spiking variants. The original rate-network behavior remains the default;
+add `--spiking` for adaptive-LIF/LIF or `--mcculloch-pitts` for binary
+threshold neurons through the same NEAT engine:
 
 ```sh
 python demos/xor.py --spiking --generations 100
@@ -50,6 +71,9 @@ python demos/asteroid_nav.py --spiking --generations 25
 python demos/box2d/lunar_lander_box2d.py \
   --spiking --generations 300 --plot --record-video
 python demos/mujoco/inverted_pendulum_mujoco.py --smoke --spiking
+python demos/xor.py --smoke --mcculloch-pitts
+python demos/run_gymnasium_suite.py \
+  --family mujoco --smoke --mcculloch-pitts
 ```
 
 The shared policy maps normalized observations to deterministic seeded
@@ -69,7 +93,7 @@ the first replay frame. Spiking XOR produces a four-panel phenotype, raster,
 membrane, and response view.
 
 The graphical launcher exposes all these modes through its **Spiking policy
-variant** switch.
+variant** and **McCulloch-Pitts neurons** switches.
 
 The Box2D and MuJoCo examples use one shared, tested trainer:
 `demos/gymnasium_neat.py`. Every task-specific file is directly runnable and
@@ -180,4 +204,5 @@ python demos/run_gymnasium_suite.py
 python demos/run_gymnasium_suite.py --family box2d --inspect
 python demos/run_gymnasium_suite.py --family mujoco --smoke
 python demos/run_gymnasium_suite.py --family box2d --smoke --spiking
+python demos/run_gymnasium_suite.py --family box2d --smoke --mcculloch-pitts
 ```

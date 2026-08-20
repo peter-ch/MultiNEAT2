@@ -35,14 +35,25 @@ def configure_spiking_parameters(
     *,
     recurrent: bool,
     enable_stdp: bool = False,
+    neuron_model: str = "lif",
 ) -> Any:
     """Apply a control-oriented evolvable SNN preset."""
 
-    if not hasattr(params, "ConfigureSpiking"):
+    if neuron_model not in {"lif", "mcculloch-pitts"}:
+        raise ValueError(f"unsupported spiking neuron model: {neuron_model}")
+    configure_method = (
+        "ConfigureMcCullochPitts"
+        if neuron_model == "mcculloch-pitts"
+        else "ConfigureSpiking"
+    )
+    if not hasattr(params, configure_method):
         raise RuntimeError(
-            "This demo requires a pymultineat build with spiking support"
+            f"This demo requires a pymultineat build with {neuron_model} support"
         )
-    params.ConfigureSpiking(enable_stdp)
+    if neuron_model == "mcculloch-pitts":
+        params.ConfigureMcCullochPitts(True, enable_stdp)
+    else:
+        params.ConfigureSpiking(enable_stdp)
     params.DontUseBiasNeuron = True
     params.AllowLoops = recurrent
     params.RecurrentProb = 0.2 if recurrent else 0.0
@@ -64,11 +75,22 @@ def configure_spiking_parameters(
     return params
 
 
-def configure_spiking_genome(neat: Any, initial: Any) -> Any:
-    """Select adaptive hidden neurons and LIF output neurons."""
+def configure_spiking_genome(
+    neat: Any,
+    initial: Any,
+    *,
+    neuron_model: str = "lif",
+) -> Any:
+    """Select the requested stateful neuron model for an initial genome."""
 
-    initial.HiddenActType = neat.SPIKING_ADAPTIVE_LIF
-    initial.OutputActType = neat.SPIKING_LIF
+    if neuron_model == "mcculloch-pitts":
+        initial.HiddenActType = neat.MCCULLOCH_PITTS
+        initial.OutputActType = neat.MCCULLOCH_PITTS
+    elif neuron_model == "lif":
+        initial.HiddenActType = neat.SPIKING_ADAPTIVE_LIF
+        initial.OutputActType = neat.SPIKING_LIF
+    else:
+        raise ValueError(f"unsupported spiking neuron model: {neuron_model}")
     return initial
 
 

@@ -4,6 +4,16 @@
 
 ### Spiking neural networks
 
+- Added evolvable McCulloch-Pitts neurons with binary threshold firing,
+  canonical absolute inhibitory vetoes, refractory timing, mutation,
+  compatibility distance, persistence, bindings, and optional STDP/e-prop.
+- Added `--mcculloch-pitts` variants to every spiking-capable example and the
+  graphical launcher.
+- Added physical 3D HyperNEAT neuron coordinates, stored axon lengths,
+  maximum-length pruning, distance-derived conduction delays, and a 3D
+  phenotype renderer.
+- Extended ES-HyperNEAT from quadtree-only 2D discovery to bounded octree 3D
+  discovery and added a runnable 3D CPPN-evolution example.
 - Added an opt-in e-prop learner with local eligibility traces, adaptive-neuron
   temporal credit, fast-sigmoid/triangular/arctangent surrogate derivatives,
   random/symmetric/uniform feedback, supervised and externally modulated
@@ -42,7 +52,7 @@
 - Added deterministic C++, Python, visualization, persistence, evolution, and
   end-to-end demo regression tests.
 
-- Added `python demos.py`, a standard-library Tk launcher for all 23 examples
+- Added `python demos.py`, a standard-library Tk launcher for all 24 examples
   with automatic runtime selection, immediate launch, safe smoke modes,
   process control, live logs, and output-folder access.
 - Added bounded CLI smoke modes for XOR and Asteroids.

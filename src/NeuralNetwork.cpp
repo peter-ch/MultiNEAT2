@@ -209,6 +209,12 @@ namespace NEAT
             return af_relu(input);
         case SOFTPLUS:
             return af_softplus(input);
+        case MCCULLOCH_PITTS:
+            return (!neuron.m_mcp_inhibitory_veto ||
+                    !neuron.m_inhibitory_input) &&
+                           input >= neuron.m_spike_threshold
+                       ? 1.0
+                       : 0.0;
         default:
             return af_sigmoid_unsigned(input, neuron.m_a, neuron.m_b);
         }
@@ -427,6 +433,7 @@ namespace NEAT
             neuron.m_spike_count = 0;
             neuron.m_last_spike_time = -1.0;
             neuron.m_rate_trace = 0.0;
+            neuron.m_inhibitory_input = false;
         }
         for (auto& connection : m_connections)
         {
@@ -741,6 +748,7 @@ namespace NEAT
         {
             Neuron& neuron = m_neurons[i];
             neuron.m_activesum = 0.0;
+            neuron.m_inhibitory_input = false;
             if (i < m_num_inputs)
             {
                 const double value = inputs[i];
@@ -877,6 +885,8 @@ namespace NEAT
                     connection.m_target_neuron_idx)];
             target.m_activesum +=
                 connection.m_synaptic_current;
+            if (connection.m_synaptic_current < 0.0)
+                target.m_inhibitory_input = true;
             if (!event_source)
             {
                 const double analog =
@@ -886,6 +896,8 @@ namespace NEAT
                 connection.m_presynaptic_signal =
                     source_neuron.m_activation;
                 target.m_activesum += analog;
+                if (analog < 0.0)
+                    target.m_inhibitory_input = true;
             }
         }
 
@@ -924,6 +936,33 @@ namespace NEAT
             }
 
             if (neuron.m_activation_function_type ==
+                MCCULLOCH_PITTS)
+            {
+                if (!std::isfinite(neuron.m_spike_threshold) ||
+                    !std::isfinite(neuron.m_refractory_period) ||
+                    neuron.m_refractory_period < 0.0)
+                {
+                    throw std::domain_error(
+                        "McCulloch-Pitts neurons require a finite threshold "
+                        "and non-negative finite refractory period");
+                }
+                neuron.m_membrane_potential = current;
+                if (neuron.m_refractory_remaining > 0.0)
+                {
+                    neuron.m_refractory_remaining = std::max(
+                        0.0,
+                        neuron.m_refractory_remaining - dt);
+                }
+                else if ((!neuron.m_mcp_inhibitory_veto ||
+                          !neuron.m_inhibitory_input) &&
+                         current >= neuron.m_spike_threshold)
+                {
+                    neuron.m_spike = true;
+                    neuron.m_refractory_remaining =
+                        neuron.m_refractory_period;
+                }
+            }
+            else if (neuron.m_activation_function_type ==
                 SPIKING_IZHIKEVICH)
             {
                 const double dt_ms = dt * 1000.0;
@@ -1157,6 +1196,44 @@ namespace NEAT
                     connection.m_target_neuron_idx)]);
         }
         return total;
+    }
+
+    void NeuralNetwork::UpdateConnectionGeometry(
+        bool update_delays,
+        double conduction_velocity)
+    {
+        ValidateNetworkTopology(*this);
+        for (const auto& neuron : m_neurons)
+        {
+            if (!std::isfinite(neuron.m_x) ||
+                !std::isfinite(neuron.m_y) ||
+                !std::isfinite(neuron.m_z))
+            {
+                throw std::invalid_argument(
+                    "Neuron coordinates must be finite before updating "
+                    "connection geometry");
+            }
+        }
+        if (update_delays &&
+            (!std::isfinite(conduction_velocity) ||
+             conduction_velocity <= 0.0))
+        {
+            throw std::invalid_argument(
+                "Axonal conduction velocity must be finite and positive");
+        }
+        for (auto& connection : m_connections)
+        {
+            connection.m_length = GetConnectionLenght(
+                m_neurons[static_cast<std::size_t>(
+                    connection.m_source_neuron_idx)],
+                m_neurons[static_cast<std::size_t>(
+                    connection.m_target_neuron_idx)]);
+            if (update_delays)
+            {
+                connection.m_synaptic_delay =
+                    connection.m_length / conduction_velocity;
+            }
+        }
     }
 
     void NeuralNetwork::Adapt(Parameters &a_Parameters)
@@ -1630,6 +1707,25 @@ namespace NEAT
                 neuron.m_last_spike_time,
                 neuron.m_rate_time_constant,
                 neuron.m_membrane_potential);
+            fprintf(
+                a_file,
+                "mcp_neuron %d %d\n",
+                static_cast<int>(neuron.m_mcp_inhibitory_veto),
+                static_cast<int>(neuron.m_inhibitory_input));
+            fprintf(
+                a_file,
+                "spatial_neuron %3.18f %3.18f %3.18f %3.18f %3.18f "
+                "%3.18f %zu",
+                neuron.m_x,
+                neuron.m_y,
+                neuron.m_z,
+                neuron.m_sx,
+                neuron.m_sy,
+                neuron.m_sz,
+                neuron.m_substrate_coords.size());
+            for (double coordinate : neuron.m_substrate_coords)
+                fprintf(a_file, " %3.18f", coordinate);
+            fprintf(a_file, "\n");
         }
         for (const auto &conn : m_connections)
         {
@@ -1655,6 +1751,10 @@ namespace NEAT
                 conn.m_stdp_post_trace,
                 conn.m_stdp_min_weight,
                 conn.m_stdp_max_weight);
+            fprintf(
+                a_file,
+                "spatial_connection %3.18f\n",
+                conn.m_length);
         }
         fprintf(a_file, "NNend\n\n");
     }
@@ -1740,6 +1840,38 @@ namespace NEAT
                 neuron.m_spike_count =
                     static_cast<std::uint64_t>(spike_count);
             }
+            else if (t_str == "mcp_neuron")
+            {
+                if (last_neuron < 0)
+                {
+                    Clear();
+                    return false;
+                }
+                int inhibitory_veto = 1;
+                int inhibitory_input = 0;
+                a_DataFile >> inhibitory_veto >> inhibitory_input;
+                Neuron& neuron = m_neurons[static_cast<std::size_t>(
+                    last_neuron)];
+                neuron.m_mcp_inhibitory_veto = inhibitory_veto != 0;
+                neuron.m_inhibitory_input = inhibitory_input != 0;
+            }
+            else if (t_str == "spatial_neuron")
+            {
+                if (last_neuron < 0)
+                {
+                    Clear();
+                    return false;
+                }
+                Neuron& neuron = m_neurons[static_cast<std::size_t>(
+                    last_neuron)];
+                std::size_t coordinate_count = 0;
+                a_DataFile >> neuron.m_x >> neuron.m_y >> neuron.m_z
+                           >> neuron.m_sx >> neuron.m_sy >> neuron.m_sz
+                           >> coordinate_count;
+                neuron.m_substrate_coords.resize(coordinate_count);
+                for (double& coordinate : neuron.m_substrate_coords)
+                    a_DataFile >> coordinate;
+            }
             else if (t_str == "connection")
             {
                 Connection t_c;
@@ -1775,6 +1907,16 @@ namespace NEAT
                            >> connection.m_stdp_max_weight;
                 connection.m_stdp_enabled = stdp != 0;
             }
+            else if (t_str == "spatial_connection")
+            {
+                if (last_connection < 0)
+                {
+                    Clear();
+                    return false;
+                }
+                a_DataFile >> m_connections[static_cast<std::size_t>(
+                    last_connection)].m_length;
+            }
         }
         if (!a_DataFile || t_str != "NNend")
         {
@@ -1809,7 +1951,7 @@ namespace NEAT
         std::ostringstream output;
         output << std::setprecision(
             std::numeric_limits<double>::max_digits10);
-        output << "NeuralNetworkFormat 6\n";
+        output << "NeuralNetworkFormat 7\n";
         output << "State " << m_num_inputs << ' ' << m_num_outputs << ' '
                << m_total_error << ' ' << m_spiking_time << ' '
                << m_spiking_time_step << ' '
@@ -1853,7 +1995,9 @@ namespace NEAT
                    << neuron.m_spike_count << ' '
                    << neuron.m_last_spike_time << ' '
                    << neuron.m_rate_trace << ' '
-                   << neuron.m_rate_time_constant << '\n';
+                   << neuron.m_rate_time_constant << ' '
+                   << static_cast<int>(neuron.m_mcp_inhibitory_veto) << ' '
+                   << static_cast<int>(neuron.m_inhibitory_input) << '\n';
             output << "SubstrateCoordinates "
                    << neuron.m_substrate_coords.size();
             for (double coordinate : neuron.m_substrate_coords)
@@ -1891,7 +2035,8 @@ namespace NEAT
                    << connection.m_stdp_pre_trace << ' '
                    << connection.m_stdp_post_trace << ' '
                    << connection.m_stdp_min_weight << ' '
-                   << connection.m_stdp_max_weight << '\n';
+                   << connection.m_stdp_max_weight << ' '
+                   << connection.m_length << '\n';
             output << "PendingEvents "
                    << connection.m_pending_events.size();
             for (const auto& event : connection.m_pending_events)
@@ -1978,7 +2123,7 @@ namespace NEAT
 
         int version = 0;
         input >> version;
-        if (version < 2 || version > 6)
+        if (version < 2 || version > 7)
             throw std::runtime_error(
                 "NeuralNetwork::Deserialize: unsupported format.");
         input >> token;
@@ -2072,6 +2217,16 @@ namespace NEAT
                       >> neuron.m_rate_trace
                       >> neuron.m_rate_time_constant;
                 neuron.m_spike = spike != 0;
+                if (version >= 7)
+                {
+                    int inhibitory_veto = 1;
+                    int inhibitory_input = 0;
+                    input >> inhibitory_veto >> inhibitory_input;
+                    neuron.m_mcp_inhibitory_veto =
+                        inhibitory_veto != 0;
+                    neuron.m_inhibitory_input =
+                        inhibitory_input != 0;
+                }
             }
 
             std::size_t coordinates = 0;
@@ -2141,6 +2296,8 @@ namespace NEAT
                       >> connection.m_stdp_post_trace
                       >> connection.m_stdp_min_weight
                       >> connection.m_stdp_max_weight;
+                if (version >= 7)
+                    input >> connection.m_length;
                 connection.m_stdp_enabled = stdp != 0;
                 std::size_t pending_count = 0;
                 input >> token >> pending_count;

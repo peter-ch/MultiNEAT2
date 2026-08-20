@@ -386,6 +386,7 @@ public:
     double ActivationFunction_SpikingLIF_Prob;
     double ActivationFunction_SpikingAdaptiveLIF_Prob;
     double ActivationFunction_SpikingIzhikevich_Prob;
+    double ActivationFunction_McCullochPitts_Prob;
 
     // Probability for a baby's neuron time constant values to be mutated
     double MutateNeuronTimeConstantsProb;
@@ -414,6 +415,12 @@ public:
     // range used by one perturbation.
     double SpikingParameterMutationRate;
     double SpikingParameterMutationPower;
+
+    // The canonical model gives any active inhibitory afferent an absolute
+    // veto. These probabilities make that rule heritable while allowing
+    // weighted-threshold variants when desired.
+    double InitialMCPInhibitoryVetoProb;
+    double MutateMCPInhibitoryVetoProb;
 
     // Evolvable LIF and adaptive-LIF ranges.
     double MinSpikingTimeConstant;
@@ -534,7 +541,8 @@ public:
     // Used for Band prunning.
     double BandThreshold;
 
-    // Max and Min Depths of the quadtree
+    // Maximum and minimum subdivision depths of the 2D quadtree or 3D
+    // octree.
     unsigned int InitialDepth;
 
     unsigned int MaxDepth;
@@ -546,15 +554,17 @@ public:
     // The Bias value for the CPPN queries.
     double CPPN_Bias;
 
-    // Quadtree Dimensions
+    // Quadtree / octree dimensions
     // The range of the tree. Typically set to 2,
     double Width;
     double Height;
+    double Depth;
 
-    // The (x, y) coordinates of the tree
+    // The (x, y, z) coordinates of the tree
     double Qtree_X;
 
     double Qtree_Y;
+    double Qtree_Z;
 
     // Use Link Expression output
     bool Leo;
@@ -686,6 +696,13 @@ public:
     // retain rate-network defaults until this is called or fields are set
     // explicitly.
     void ConfigureSpiking(bool enable_stdp = false);
+
+    // Opt-in preset for pure McCulloch-Pitts evolution. Neuron thresholds,
+    // refractory periods, axonal delays, and the inhibitory-veto rule remain
+    // evolvable through the normal spiking mutation operators.
+    void ConfigureMcCullochPitts(
+        bool inhibitory_veto = true,
+        bool enable_stdp = false);
 
     // Complete, round-trippable persistence used by Python pickling and
     // population checkpoints. Function callbacks are intentionally omitted.

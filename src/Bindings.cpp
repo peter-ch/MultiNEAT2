@@ -90,6 +90,10 @@ PYBIND11_MODULE(pymultineat, m) {
         .value(
             "SPIKING_IZHIKEVICH",
             NEAT::SPIKING_IZHIKEVICH)
+        .value("MCCULLOCH_PITTS", NEAT::MCCULLOCH_PITTS)
+        .value(
+            "SPIKING_MCCULLOCH_PITTS",
+            NEAT::SPIKING_MCCULLOCH_PITTS)
         .export_values();
 
     py::enum_<NEAT::SpikingInputMode>(m, "SpikingInputMode")
@@ -384,7 +388,10 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite(
             "m_IzhikevichC", &NEAT::NeuronGene::m_IzhikevichC)
         .def_readwrite(
-            "m_IzhikevichD", &NEAT::NeuronGene::m_IzhikevichD);
+            "m_IzhikevichD", &NEAT::NeuronGene::m_IzhikevichD)
+        .def_readwrite(
+            "m_MCPInhibitoryVeto",
+            &NEAT::NeuronGene::m_MCPInhibitoryVeto);
 
 
     // ========================
@@ -624,6 +631,7 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite(
             "m_stdp_max_weight",
             &NEAT::Connection::m_stdp_max_weight)
+        .def_readwrite("m_length", &NEAT::Connection::m_length)
         .def_readwrite(
             "m_pending_events",
             &NEAT::Connection::m_pending_events);
@@ -691,7 +699,13 @@ PYBIND11_MODULE(pymultineat, m) {
             "m_rate_trace", &NEAT::Neuron::m_rate_trace)
         .def_readwrite(
             "m_rate_time_constant",
-            &NEAT::Neuron::m_rate_time_constant);
+            &NEAT::Neuron::m_rate_time_constant)
+        .def_readwrite(
+            "m_mcp_inhibitory_veto",
+            &NEAT::Neuron::m_mcp_inhibitory_veto)
+        .def_readwrite(
+            "m_inhibitory_input",
+            &NEAT::Neuron::m_inhibitory_input);
 
     py::class_<NEAT::EPropConfig>(m, "EPropConfig")
         .def(py::init<>())
@@ -957,6 +971,11 @@ PYBIND11_MODULE(pymultineat, m) {
              &NEAT::NeuralNetwork::GetConnectionLength)
         .def("GetTotalConnectionLength",
              &NEAT::NeuralNetwork::GetTotalConnectionLength)
+        .def(
+            "UpdateConnectionGeometry",
+            &NEAT::NeuralNetwork::UpdateConnectionGeometry,
+            py::arg("update_delays") = false,
+            py::arg("conduction_velocity") = 1.0)
         .def("Save", (void (NEAT::NeuralNetwork::*)(const char*)) &NEAT::NeuralNetwork::Save)
         .def("Load", (bool (NEAT::NeuralNetwork::*)(const char*)) &NEAT::NeuralNetwork::Load)
         .def("Serialize", &NEAT::NeuralNetwork::Serialize)
@@ -1072,6 +1091,11 @@ PYBIND11_MODULE(pymultineat, m) {
             .def(
                 "ConfigureSpiking",
                 &NEAT::Parameters::ConfigureSpiking,
+                py::arg("enable_stdp") = false)
+            .def(
+                "ConfigureMcCullochPitts",
+                &NEAT::Parameters::ConfigureMcCullochPitts,
+                py::arg("inhibitory_veto") = true,
                 py::arg("enable_stdp") = false)
             .def("Serialize", &NEAT::Parameters::Serialize)
             .def_static("Deserialize", &NEAT::Parameters::Deserialize)
@@ -1189,6 +1213,15 @@ PYBIND11_MODULE(pymultineat, m) {
             .def_readwrite("ActivationFunction_SpikingLIF_Prob", &NEAT::Parameters::ActivationFunction_SpikingLIF_Prob)
             .def_readwrite("ActivationFunction_SpikingAdaptiveLIF_Prob", &NEAT::Parameters::ActivationFunction_SpikingAdaptiveLIF_Prob)
             .def_readwrite("ActivationFunction_SpikingIzhikevich_Prob", &NEAT::Parameters::ActivationFunction_SpikingIzhikevich_Prob)
+            .def_readwrite("ActivationFunction_McCullochPitts_Prob", &NEAT::Parameters::ActivationFunction_McCullochPitts_Prob)
+            .def_property(
+                "ActivationFunction_SpikingMcCullochPitts_Prob",
+                [](const NEAT::Parameters& parameters) {
+                    return parameters.ActivationFunction_McCullochPitts_Prob;
+                },
+                [](NEAT::Parameters& parameters, double value) {
+                    parameters.ActivationFunction_McCullochPitts_Prob = value;
+                })
             .def_readwrite("MutateNeuronTimeConstantsProb", &NEAT::Parameters::MutateNeuronTimeConstantsProb)
             .def_readwrite("MutateNeuronBiasesProb", &NEAT::Parameters::MutateNeuronBiasesProb)
             .def_readwrite("MinNeuronTimeConstant", &NEAT::Parameters::MinNeuronTimeConstant)
@@ -1199,6 +1232,8 @@ PYBIND11_MODULE(pymultineat, m) {
             .def_readwrite("MutateLinkSpikingParametersProb", &NEAT::Parameters::MutateLinkSpikingParametersProb)
             .def_readwrite("SpikingParameterMutationRate", &NEAT::Parameters::SpikingParameterMutationRate)
             .def_readwrite("SpikingParameterMutationPower", &NEAT::Parameters::SpikingParameterMutationPower)
+            .def_readwrite("InitialMCPInhibitoryVetoProb", &NEAT::Parameters::InitialMCPInhibitoryVetoProb)
+            .def_readwrite("MutateMCPInhibitoryVetoProb", &NEAT::Parameters::MutateMCPInhibitoryVetoProb)
             .def_readwrite("MinSpikingTimeConstant", &NEAT::Parameters::MinSpikingTimeConstant)
             .def_readwrite("MaxSpikingTimeConstant", &NEAT::Parameters::MaxSpikingTimeConstant)
             .def_readwrite("MinSpikeThreshold", &NEAT::Parameters::MinSpikeThreshold)
@@ -1269,8 +1304,10 @@ PYBIND11_MODULE(pymultineat, m) {
             .def_readwrite("CPPN_Bias", &NEAT::Parameters::CPPN_Bias)
             .def_readwrite("Width", &NEAT::Parameters::Width)
             .def_readwrite("Height", &NEAT::Parameters::Height)
+            .def_readwrite("Depth", &NEAT::Parameters::Depth)
             .def_readwrite("Qtree_X", &NEAT::Parameters::Qtree_X)
             .def_readwrite("Qtree_Y", &NEAT::Parameters::Qtree_Y)
+            .def_readwrite("Qtree_Z", &NEAT::Parameters::Qtree_Z)
             .def_readwrite("Leo", &NEAT::Parameters::Leo)
             .def_readwrite("LeoThreshold", &NEAT::Parameters::LeoThreshold)
             .def_readwrite("LeoSeed", &NEAT::Parameters::LeoSeed)
@@ -1482,6 +1519,7 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("GetMinCPPNInputs", &NEAT::Substrate::GetMinCPPNInputs)
         .def("GetMinCPPNOutputs", &NEAT::Substrate::GetMinCPPNOutputs)
         .def("GetMaxDims", &NEAT::Substrate::GetMaxDims)
+        .def("IsThreeDimensional", &NEAT::Substrate::IsThreeDimensional)
         .def("PrintInfo", &NEAT::Substrate::PrintInfo)
         .def_readwrite("m_input_coords", &NEAT::Substrate::m_input_coords)
         .def_readwrite("m_hidden_coords", &NEAT::Substrate::m_hidden_coords)
@@ -1503,5 +1541,14 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite("m_output_nodes_activation", &NEAT::Substrate::m_output_nodes_activation)
         .def_readwrite("m_max_weight_and_bias", &NEAT::Substrate::m_max_weight_and_bias)
         .def_readwrite("m_min_time_const", &NEAT::Substrate::m_min_time_const)
-        .def_readwrite("m_max_time_const", &NEAT::Substrate::m_max_time_const);
+        .def_readwrite("m_max_time_const", &NEAT::Substrate::m_max_time_const)
+        .def_readwrite(
+            "m_max_connection_length",
+            &NEAT::Substrate::m_max_connection_length)
+        .def_readwrite(
+            "m_use_spatial_distance_for_delays",
+            &NEAT::Substrate::m_use_spatial_distance_for_delays)
+        .def_readwrite(
+            "m_conduction_velocity",
+            &NEAT::Substrate::m_conduction_velocity);
 };

@@ -1501,6 +1501,31 @@ int main()
         reliable_requests.size() == 8 &&
             reliable_requests.front().stage == 0,
         "successive halving starts all genomes on two shared cases");
+    Genome& local_improvement_source = reliable_population.AccessGenomeByID(
+        reliable_requests.front().genome_id);
+    const double inherited_weight =
+        local_improvement_source.m_LinkGenes.front().m_Weight;
+    reliable_population.SetLocalImprovementHook(
+        [](Genome& candidate)
+        { candidate.m_LinkGenes.front().m_Weight += 0.25; });
+    const Genome baldwinian_candidate =
+        reliable_population.GetEvaluationGenome(reliable_requests.front());
+    Check(
+        baldwinian_candidate.m_LinkGenes.front().m_Weight ==
+                inherited_weight + 0.25 &&
+            local_improvement_source.m_LinkGenes.front().m_Weight ==
+                inherited_weight,
+        "Baldwinian local improvement changes only the evaluated copy");
+    reliable_population.SetLocalImprovementHook(
+        [](Genome& candidate)
+        { candidate.m_LinkGenes.front().m_Weight += 0.25; },
+        true);
+    reliable_population.GetEvaluationGenome(reliable_requests.front());
+    Check(
+        local_improvement_source.m_LinkGenes.front().m_Weight ==
+            inherited_weight + 0.25,
+        "Lamarckian local improvement updates the stored genotype");
+    reliable_population.ClearLocalImprovementHook();
     reliable_population.SubmitEvaluation(
         reliable_requests.front().genome_id,
         reliable_requests.front().case_id,

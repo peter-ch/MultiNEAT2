@@ -1,4 +1,4 @@
-# MultiNEAT2 examples
+# MultiNEAT 3 examples
 
 The easiest way to start any example is the root graphical launcher:
 
@@ -10,6 +10,16 @@ It silently selects the current `pymultineat` build, starts the chosen demo
 immediately, offers safe smoke/inspect/full-run modes, and shows live output.
 Package installation stays outside the launcher. The commands below remain
 available for automation and advanced use.
+
+Evolution demos now use reliability-first requests by default. Stochastic
+tasks race genomes on 2/4/8/16 shared cases, validate five finalists on 32
+fresh cases, and certify the winner on 64 unseen cases. Gymnasium JSONL output
+includes environment interactions, lower-20% return, success rate, archive
+coverage, wall time, and held-out certification statistics. A result reports
+`validated=true` only when its one-sided 95% Wilson lower bound reaches the
+configured target. Use `--legacy-evolution` for the historical scalar-fitness
+mechanics, and see
+[`docs/RELIABLE_EVOLUTION.md`](../docs/RELIABLE_EVOLUTION.md) for the API.
 
 ## 3D HyperNEAT example
 
@@ -140,7 +150,7 @@ python demos/box2d/bipedal_walker_box2d.py \
   --generations 200 --output-dir runs/bipedal
 ```
 
-Current MultiNEAT2 builds write `population.state`. For compatibility, a
+Current MultiNEAT 3 builds write `population.state`. For compatibility, a
 binding too old to round-trip the full state writes `population.legacy`
 through its original `Population.Save` API instead.
 
@@ -190,9 +200,10 @@ The suite covers all eleven Gymnasium MuJoCo tasks:
 - Finite-bound-aware continuous action mapping and discrete argmax policies.
 - Recursive vector/tuple/dictionary observation encoding.
 - Compact grayscale area pooling for CarRacing images.
-- Common episode seeds for fair comparisons within each generation.
+- Common case IDs and disjoint training/validation/test seed streams.
+- Successive-halving evaluation and held-out Wilson certification.
 - Persistent worker environments for parallel evaluation.
-- Raw negative fitness support via MultiNEAT2's stable fitness scaling.
+- Raw negative fitness support via robust rank-based allocation.
 - Full population checkpoints, best-genome files, JSONL metrics, plots, video,
   and deterministic smoke runs.
 - Default, rank-selection, and exploration-heavy algorithm profiles.

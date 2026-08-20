@@ -1604,6 +1604,30 @@ PYBIND11_MODULE(pymultineat, m) {
             &NEAT::Population::GetQDArchive,
             py::return_value_policy::reference_internal)
         .def("RebinQDArchive", &NEAT::Population::RebinQDArchive)
+        .def(
+            "SetLocalImprovementHook",
+            [](NEAT::Population& population,
+               py::function hook,
+               bool lamarckian)
+            {
+                population.SetLocalImprovementHook(
+                    [hook = std::move(hook)](NEAT::Genome& genome)
+                    {
+                        py::gil_scoped_acquire acquire;
+                        hook(py::cast(
+                            &genome,
+                            py::return_value_policy::reference));
+                    },
+                    lamarckian);
+            },
+            py::arg("hook"),
+            py::arg("lamarckian") = false)
+        .def(
+            "ClearLocalImprovementHook",
+            &NEAT::Population::ClearLocalImprovementHook)
+        .def(
+            "HasLocalImprovementHook",
+            &NEAT::Population::HasLocalImprovementHook)
         .def("Epoch", &NEAT::Population::Epoch)
         .def("Save", &NEAT::Population::Save)
         .def("SaveState", &NEAT::Population::SaveState)

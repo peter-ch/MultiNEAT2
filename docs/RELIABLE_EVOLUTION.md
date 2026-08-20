@@ -73,8 +73,23 @@ Each species maintains decayed Thompson posteriors for weight mutation,
 structural addition/removal, parameter mutation, crossover, and its weight
 emitter. Archive replacement earns full credit and robust parent improvement
 earns half credit. After three generations with the same ordered topology, a
-separable normalized weight emitter may use one batch, but only when the
-species quota leaves at least half of its offspring to ordinary NEAT.
+separable normalized continuous-parameter emitter may use one batch, but only
+when the species quota leaves at least half of its offspring to ordinary NEAT.
+
+## Optional local improvement
+
+A caller can attach an e-prop, RTRL, or other task-specific improvement pass to
+the genome returned for evaluation. Baldwinian mode is the default and changes
+only the evaluated copy; Lamarckian mode writes the improved parameters back to
+the population.
+
+```python
+population.SetLocalImprovementHook(improve_genome, lamarckian=False)
+genome = population.GetEvaluationGenome(request)
+```
+
+The hook is disabled by default and is intentionally not serialized because it
+is caller-owned executable code. Reattach it after loading a checkpoint.
 
 ## Compatibility
 

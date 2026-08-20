@@ -788,23 +788,43 @@ std::vector<EvaluationRequest> Population::GetEvaluationRequests()
 }
 
 Genome Population::GetEvaluationGenome(
-    const EvaluationRequest& request) const
+    const EvaluationRequest& request)
 {
+    Genome* source = nullptr;
     if (request.archive_evaluation)
     {
         if (request.archive_index >= m_QDArchive.size())
             throw std::out_of_range("QD archive evaluation index is invalid");
-        return m_QDArchive[request.archive_index].genome;
+        source = &m_QDArchive[request.archive_index].genome;
     }
-    for (const auto& species : m_Species)
+    else
     {
-        for (const auto& genome : species.m_Individuals)
+        for (auto& species : m_Species)
         {
-            if (genome.GetID() == request.genome_id)
-                return genome;
+            for (auto& genome : species.m_Individuals)
+            {
+                if (genome.GetID() == request.genome_id)
+                {
+                    source = &genome;
+                    break;
+                }
+            }
+            if (source != nullptr)
+                break;
         }
     }
-    throw std::out_of_range("Evaluation request genome is not available");
+    if (source == nullptr)
+        throw std::out_of_range("Evaluation request genome is not available");
+    if (!m_LocalImprovementHook)
+        return *source;
+    if (m_LamarckianLocalImprovement)
+    {
+        m_LocalImprovementHook(*source);
+        return *source;
+    }
+    Genome improved = *source;
+    m_LocalImprovementHook(improved);
+    return improved;
 }
 
 void Population::SubmitEvaluation(

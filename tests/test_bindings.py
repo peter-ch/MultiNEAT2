@@ -122,6 +122,15 @@ reliable_population = neat.Population(
 )
 requests = reliable_population.GetEvaluationRequests()
 assert len(requests) == 8
+source = reliable_population.AccessGenomeByID(requests[0].genome_id)
+source_fitness = source.GetFitness()
+reliable_population.SetLocalImprovementHook(
+    lambda candidate: candidate.SetFitness(123.0)
+)
+assert reliable_population.HasLocalImprovementHook()
+assert reliable_population.GetEvaluationGenome(requests[0]).GetFitness() == 123.0
+assert source.GetFitness() == source_fitness
+reliable_population.ClearLocalImprovementHook()
 while requests:
     for request in requests:
         evaluated = reliable_population.GetEvaluationGenome(request)

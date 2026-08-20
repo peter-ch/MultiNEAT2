@@ -198,7 +198,7 @@ def evolve(
     seed: int,
     mcculloch_pitts: bool = False,
     legacy_evolution: bool = False,
-) -> tuple[neat.Genome, list[float]]:
+) -> tuple[neat.Genome, list[float], bool, float]:
     params = parameters(
         population_size, mcculloch_pitts, legacy_evolution
     )
@@ -210,6 +210,8 @@ def evolve(
         seed,
     )
     best = None
+    validated = False
+    success_lower_bound = 0.0
     history = []
     for generation in range(generations):
         generation_best = None
@@ -273,9 +275,14 @@ def evolve(
                     fitness >= 0.9 * max_steps,
                 )
             requests = population.GetEvaluationRequests()
-        best = population.GetValidatedChampion().genome
+        champion = population.GetValidatedChampion()
+        best = champion.genome
+        validated = champion.validated
+        success_lower_bound = (
+            champion.certification_summary.success_lower_bound
+        )
     assert best is not None
-    return best, history
+    return best, history, validated, success_lower_bound
 
 
 def replay(
@@ -455,7 +462,7 @@ def main() -> int:
         args.max_steps = 20
         args.no_show = True
         args.animate = False
-    best, history = evolve(
+    best, history, validated, success_lower_bound = evolve(
         args.generations,
         args.population,
         args.max_steps,
@@ -491,6 +498,8 @@ def main() -> int:
                     if args.legacy_evolution
                     else "reliable-neat"
                 ),
+                "validated": validated,
+                "success_lower_bound": success_lower_bound,
             }
         )
     )

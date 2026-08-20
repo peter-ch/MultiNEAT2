@@ -136,7 +136,7 @@ def evolve(
     seed: int,
     mcculloch_pitts: bool = False,
     legacy_evolution: bool = False,
-) -> tuple[neat.Genome, list[float]]:
+) -> tuple[neat.Genome, list[float], bool, float]:
     params = parameters(
         population_size, mcculloch_pitts, legacy_evolution
     )
@@ -148,6 +148,8 @@ def evolve(
         seed,
     )
     best = None
+    validated = False
+    success_lower_bound = 0.0
     history = []
     for generation in range(generations):
         generation_best = None
@@ -199,9 +201,14 @@ def evolve(
                     fitness >= 15.5,
                 )
             requests = population.GetEvaluationRequests()
-        best = population.GetValidatedChampion().genome
+        champion = population.GetValidatedChampion()
+        best = champion.genome
+        validated = champion.validated
+        success_lower_bound = (
+            champion.certification_summary.success_lower_bound
+        )
     assert best is not None
-    return best, history
+    return best, history, validated, success_lower_bound
 
 
 def replay(best: neat.Genome):
@@ -330,7 +337,7 @@ def main() -> int:
         args.no_show = True
         args.animate = False
     random.seed(args.seed)
-    best, history = evolve(
+    best, history, validated, success_lower_bound = evolve(
         args.generations,
         args.population,
         args.seed,
@@ -353,6 +360,8 @@ def main() -> int:
         "evolution_mode": (
             "legacy-v2" if args.legacy_evolution else "reliable-neat"
         ),
+        "validated": validated,
+        "success_lower_bound": success_lower_bound,
     }
     print(json.dumps(payload))
     if not args.no_show or args.output is not None:

@@ -4,11 +4,13 @@
 #include <cmath>
 #include <vector>
 #include <float.h>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <map>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "Innovation.h"
 #include "Genome.h"
@@ -129,6 +131,8 @@ private:
     std::map<int, std::vector<EvaluationSample>> m_CertificationEvidence;
     ValidatedChampion m_ValidatedChampion;
     std::vector<QDArchiveEntry> m_QDArchive;
+    std::function<void(Genome&)> m_LocalImprovementHook;
+    bool m_LamarckianLocalImprovement = false;
 
     void StartEvaluationCycle();
     void AdvanceEvaluationCycle();
@@ -291,7 +295,7 @@ public:
     // evaluate the returned genomes/case IDs in any process and submit the
     // resulting evidence before Epoch().
     std::vector<EvaluationRequest> GetEvaluationRequests();
-    Genome GetEvaluationGenome(const EvaluationRequest& request) const;
+    Genome GetEvaluationGenome(const EvaluationRequest& request);
     void SubmitEvaluation(
         int genome_id,
         std::uint64_t case_id,
@@ -310,6 +314,22 @@ public:
     }
     void RebinQDArchive() { RebuildQDArchive(); }
     bool TryGetQDParent(const Genome& reference, Genome& result);
+    void SetLocalImprovementHook(
+        std::function<void(Genome&)> hook,
+        bool lamarckian = false)
+    {
+        m_LocalImprovementHook = std::move(hook);
+        m_LamarckianLocalImprovement = lamarckian;
+    }
+    void ClearLocalImprovementHook()
+    {
+        m_LocalImprovementHook = {};
+        m_LamarckianLocalImprovement = false;
+    }
+    bool HasLocalImprovementHook() const
+    {
+        return static_cast<bool>(m_LocalImprovementHook);
+    }
 
     // Saves the whole population to a file
     void Save(const char* a_FileName);

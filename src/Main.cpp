@@ -58,6 +58,7 @@ double xortest(Genome& g, bool spiking, int spiking_steps) {
 int main(int argc, char** argv) {
     bool spiking = false;
     bool mcculloch_pitts = false;
+    bool legacy_evolution = false;
     int generations = 1000;
     int population_size = 150;
     int spiking_steps = 16;
@@ -76,6 +77,8 @@ int main(int argc, char** argv) {
         } else if (argument == "--mcculloch-pitts") {
             spiking = true;
             mcculloch_pitts = true;
+        } else if (argument == "--legacy-evolution") {
+            legacy_evolution = true;
         } else if (argument == "--smoke") {
             generations = 1;
             population_size = 10;
@@ -90,7 +93,7 @@ int main(int argc, char** argv) {
             std::cout
                 << "Usage: multineat_exe [--spiking|--mcculloch-pitts] "
                    "[--smoke] [--generations N] [--population N] "
-                   "[--seed N]\n";
+                   "[--seed N] [--legacy-evolution]\n";
             return 0;
         } else {
             std::cerr << "Unknown option: " << argument << '\n';
@@ -103,6 +106,11 @@ int main(int argc, char** argv) {
     }
 
     Parameters params;
+    if (legacy_evolution) {
+        params.ConfigureLegacyV2();
+    } else {
+        params.DeterministicEvaluation = true;
+    }
 
     // Setting essential NEAT parameters
     params.PopulationSize = population_size;
@@ -173,21 +181,67 @@ int main(int argc, char** argv) {
     Population pop(genomePrototype, params, true, 1.0, seed);
 
     double bestFitness = 0.0;
+    Genome bestGenome;
     for (int gen = 0; gen < generations; ++gen) {
-        for (auto& species : pop.m_Species) {
-            for (auto& individual : species.m_Individuals) {
-                double fitness = xortest(
-                    individual, spiking, spiking_steps);
-                individual.SetFitness(fitness);
-                individual.SetEvaluated();
+        if (legacy_evolution) {
+            for (auto& species : pop.m_Species) {
+                for (auto& individual : species.m_Individuals) {
+                    const double fitness = xortest(
+                        individual, spiking, spiking_steps);
+                    individual.SetFitness(fitness);
+                    individual.SetEvaluated();
+                }
             }
+            bestGenome = pop.GetBestGenome();
+        } else {
+            std::vector<EvaluationRequest> requests =
+                pop.GetEvaluationRequests();
+            while (!requests.empty()) {
+                for (const auto& request : requests) {
+                    Genome individual = pop.GetEvaluationGenome(request);
+                    const double fitness = xortest(
+                        individual, spiking, spiking_steps);
+                    pop.SubmitEvaluation(
+                        request.genome_id,
+                        request.case_id,
+                        fitness,
+                        true,
+                        fitness >= 15.9);
+                }
+                requests = pop.GetEvaluationRequests();
+            }
+            bestGenome = pop.GetProvisionalChampion();
         }
-        Genome bestGenome = pop.GetBestGenome();
         bestFitness = bestGenome.GetFitness();
         std::cout << "Generation: " << gen << ", Best Fitness: " << bestFitness << std::endl;
         if (gen + 1 < generations) {
             pop.Epoch();
         }
+    }
+    bool validated = false;
+    double success_lower_bound = 0.0;
+    if (!legacy_evolution) {
+        std::vector<EvaluationRequest> requests = pop.ValidateCandidates(5);
+        while (!requests.empty()) {
+            for (const auto& request : requests) {
+                Genome individual = pop.GetEvaluationGenome(request);
+                const double fitness = xortest(
+                    individual, spiking, spiking_steps);
+                pop.SubmitEvaluation(
+                    request.genome_id,
+                    request.case_id,
+                    fitness,
+                    true,
+                    fitness >= 15.9);
+            }
+            requests = pop.GetEvaluationRequests();
+        }
+        const ValidatedChampion champion = pop.GetValidatedChampion();
+        bestGenome = champion.genome;
+        bestFitness = champion.validation_summary.mean;
+        validated = champion.validated;
+        success_lower_bound =
+            champion.certification_summary.success_lower_bound;
     }
     std::cout
         << "{\"demo\":\"cpp_xor\",\"policy\":\""
@@ -195,7 +249,12 @@ int main(int argc, char** argv) {
             (spiking ? "lif" : "rate"))
         << "\",\"generations\":" << generations
         << ",\"population\":" << population_size
-        << ",\"best_fitness\":" << bestFitness << "}\n";
+        << ",\"best_fitness\":" << bestFitness
+        << ",\"validated\":" << (validated ? "true" : "false")
+        << ",\"success_lower_bound\":" << success_lower_bound
+        << ",\"evolution_mode\":\""
+        << (legacy_evolution ? "legacy-v2" : "reliable-neat")
+        << "\"}\n";
 
     // test the rng here
     /*RNG rng;

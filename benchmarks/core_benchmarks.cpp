@@ -242,5 +242,20 @@ int main()
               << Seconds(sparse_rtrl_start, sparse_rtrl_end)
               << " s, " << sparse_rtrl.SparseRTRLStateSize()
               << " sensitivity values\n";
+
+    constexpr unsigned int summary_steps = 1000;
+    for (bool constant : {false, true})
+    {
+        std::vector<NEAT::EvaluationSample> evidence;
+        for (unsigned int index = 0; index < 16; ++index)
+            evidence.push_back({index, constant ? 1.0 :
+                static_cast<double>((index * index) % 17), false, false, {}});
+        const auto summary_start = Clock::now();
+        for (unsigned int iteration = 0; iteration < summary_steps; ++iteration)
+            benchmark_sink += NEAT::SummarizeEvaluations(evidence).lower_confidence_bound;
+        std::cout << (constant ? "Constant" : "Variable")
+                  << " evidence: " << summary_steps << " summaries, "
+                  << Seconds(summary_start, Clock::now()) << " s\n";
+    }
     return 0;
 }

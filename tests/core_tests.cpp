@@ -301,6 +301,26 @@ int main()
                 0.90, 1024).lower_confidence_bound ==
                 evidence_summary.lower_confidence_bound,
         "genome evidence and behavior descriptors round-trip exactly");
+    const std::string evidence_before = evidence_genome.Serialize();
+    evidence_genome.SetEvaluationSamples(evidence_genome.GetEvaluationSamples());
+    Check(evidence_genome.Serialize() == evidence_before,
+          "setting evidence from its own reference preserves all samples");
+    CheckThrows<std::invalid_argument>(
+        [&] { evidence_genome.SetEvaluationSamples({
+            {20U, 1.0, false, false, {}},
+            {21U, std::numeric_limits<double>::quiet_NaN(), false, false, {}}}); },
+        "invalid bulk evidence is rejected");
+    Check(evidence_genome.Serialize() == evidence_before,
+          "rejected bulk evidence preserves genome state");
+    auto reverse_evidence = evidence;
+    std::reverse(reverse_evidence.begin(), reverse_evidence.end());
+    Check(SummarizeEvaluations(reverse_evidence, 0.90, 1024).lower_confidence_bound ==
+              evidence_summary.lower_confidence_bound,
+          "bootstrap evidence is independent of worker completion order");
+    const auto large_summary = SummarizeEvaluations({
+        {0U, -1.0e200, false, false, {}}, {1U, 1.0e200, false, false, {}}});
+    Check(std::isfinite(large_summary.standard_deviation) && large_summary.mean == 0.0,
+          "large finite scores do not overflow intermediate variance");
     Parameters invalid_crossover_parameters = advanced_parameters;
     invalid_crossover_parameters.MultipointCrossoverRate = 0.5;
     Check(!invalid_crossover_parameters.Validate(
@@ -399,6 +419,12 @@ int main()
     restored_rng.Deserialize(rng.Serialize());
     Check(rng.RandFloat() == restored_rng.RandFloat(),
           "random-generator state round-trips exactly");
+    const std::string rng_before_failure = rng.Serialize();
+    CheckThrows<std::invalid_argument>(
+        [&] { rng.Deserialize("1 2 3"); },
+        "truncated RNG state is rejected");
+    Check(rng.Serialize() == rng_before_failure,
+          "failed RNG loads preserve the random stream");
     Check(std::isfinite(rng.RandNormal()) &&
               std::isfinite(rng.RandCauchy()),
           "unbounded mutation distributions return finite samples");
@@ -460,6 +486,18 @@ int main()
     Check(legacy_network.Load(network_path.string().c_str()) &&
               legacy_network.m_connections.size() == 1,
           "legacy neural-network files remain loadable");
+    std::filesystem::remove(network_path);
+    const std::string network_before_failure = network.Serialize();
+    std::ifstream unopened_network;
+    Check(!network.Load(unopened_network),
+          "an unopened network stream returns without looping");
+    {
+        std::ofstream malformed_network(network_path);
+        malformed_network << "NNstart 1 1\nneuron 1";
+    }
+    Check(!network.Load(network_path.string().c_str()) &&
+              network.Serialize() == network_before_failure,
+          "truncated network loads preserve the running network");
     std::filesystem::remove(network_path);
     input.m_x = 0.0;
     output.m_x = 3.0;

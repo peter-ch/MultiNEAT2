@@ -7,6 +7,14 @@ Requests can be evaluated in any order or process. Case IDs are shared across
 genomes and the scheduler, samples, archive, operator state, and emitter state
 are all checkpointed for deterministic resume.
 
+Bootstrap draws and stored evidence use a canonical case ordering. Worker
+completion order therefore does not affect selection or resumed evolution.
+Serialize calls to `SubmitEvaluation` on the coordinating thread; the population
+itself is not a concurrent result queue. `GetEvaluationGenome(request)` returns
+a copy suitable for evaluation workers. Python's `AccessGenomeByIndex` and
+`AccessGenomeByID` return borrowed genomes and retain their population owner,
+but population mutations such as `Epoch` and `Tick` can invalidate those references.
+
 ## Training protocol
 
 Stochastic objectives use 2, 4, 8, and 16 cumulative cases. After each stage,
@@ -38,6 +46,9 @@ population.Epoch()
 
 Scores and descriptor values must be finite. Fitness is maximized. Set
 `DeterministicEvaluation = true` for a one-case deterministic task.
+Nonempty descriptors for one genome must have the same dimension, and QD
+descriptors must match the configured bins. Rejected scores or descriptors
+leave the request pending so it can be corrected and submitted again.
 
 ## Champion certification
 

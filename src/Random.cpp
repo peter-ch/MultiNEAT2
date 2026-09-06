@@ -157,10 +157,16 @@ namespace NEAT
     void RNG::Deserialize(const std::string& data)
     {
         std::istringstream input(data);
-        input >> m_Engine;
+        std::mt19937 restored;
+        input >> restored;
         if (!input)
             throw std::invalid_argument(
                 "RNG::Deserialize: invalid generator state.");
+        input >> std::ws;
+        if (!input.eof())
+            throw std::invalid_argument(
+                "RNG::Deserialize: unexpected trailing generator state.");
+        m_Engine = restored;
     }
 }
 

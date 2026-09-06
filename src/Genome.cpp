@@ -994,6 +994,9 @@ Genome::Genome(std::istream &data)
         m_initial_num_links = static_cast<int>(m_LinkGenes.size());
     }
     m_PhenotypeBehavior = nullptr;
+    std::sort(m_EvaluationSamples.begin(), m_EvaluationSamples.end(),
+              [](const EvaluationSample& lhs, const EvaluationSample& rhs)
+              { return lhs.case_id < rhs.case_id; });
     std::string validation_error;
     if (!Validate(&validation_error))
     {
@@ -1133,6 +1136,17 @@ void Genome::AddEvaluationSample(const EvaluationSample& sample)
             throw std::invalid_argument(
                 "Behavior descriptor values must be finite");
     }
+    for (const auto& value : m_EvaluationSamples)
+    {
+        if (value.case_id != sample.case_id &&
+            !value.behavior_descriptor.empty() &&
+            !sample.behavior_descriptor.empty() &&
+            value.behavior_descriptor.size() != sample.behavior_descriptor.size())
+        {
+            throw std::invalid_argument(
+                "A genome's behavior descriptors must have equal dimensions");
+        }
+    }
     const auto existing = std::find_if(
         m_EvaluationSamples.begin(), m_EvaluationSamples.end(),
         [&sample](const EvaluationSample& value)
@@ -1143,17 +1157,22 @@ void Genome::AddEvaluationSample(const EvaluationSample& sample)
         m_EvaluationSamples.push_back(sample);
     else
         *existing = sample;
+    std::sort(m_EvaluationSamples.begin(), m_EvaluationSamples.end(),
+              [](const EvaluationSample& lhs, const EvaluationSample& rhs)
+              { return lhs.case_id < rhs.case_id; });
     m_Fitness = GetReliableFitness();
 }
 
 void Genome::SetEvaluationSamples(
     const std::vector<EvaluationSample>& samples)
 {
-    m_EvaluationSamples.clear();
+    // Build separately: samples may alias GetEvaluationSamples(), and a bad
+    // entry must not discard the evidence that was already on this genome.
+    Genome replacement;
     for (const auto& sample : samples)
-        AddEvaluationSample(sample);
-    if (samples.empty())
-        m_Fitness = 0.0;
+        replacement.AddEvaluationSample(sample);
+    m_EvaluationSamples = std::move(replacement.m_EvaluationSamples);
+    m_Fitness = replacement.m_Fitness;
 }
 
 void Genome::ClearEvaluationSamples()

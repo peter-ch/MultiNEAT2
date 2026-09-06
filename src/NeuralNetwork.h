@@ -152,6 +152,7 @@ namespace NEAT
         std::uint64_t m_spiking_rng_state =
             UINT64_C(0x9e3779b97f4a7c15);
         std::vector<SpikeEvent> m_spike_history;
+        bool LoadFromStream(std::ifstream& input);
 
     public:
         unsigned int m_num_inputs = 0;

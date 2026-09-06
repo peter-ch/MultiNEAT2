@@ -188,3 +188,6 @@ for wrapper in physics_wrappers:
     assert "--mcculloch-pitts" in result.stdout, (
         f"{wrapper.name} does not expose its McCulloch-Pitts variant"
     )
+    assert "--fast" in result.stdout, (
+        f"{wrapper.name} does not expose physics-only fast mode"
+    )

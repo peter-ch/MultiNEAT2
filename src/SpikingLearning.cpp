@@ -674,6 +674,18 @@ namespace NEAT
         double time_step)
     {
         ValidateTopology(network);
+        AccumulateDirectSignals(
+            network, PrepareLearningSignals(learning_signals), time_step);
+    }
+
+    std::vector<double> EPropLearner::PrepareLearningSignals(
+        const std::vector<double>& learning_signals) const
+    {
+        for (double signal : learning_signals)
+        {
+            if (!std::isfinite(signal))
+                throw std::invalid_argument("e-prop learning signals must be finite");
+        }
         std::vector<double> direct;
         if (learning_signals.size() == m_output_count)
         {
@@ -681,7 +693,7 @@ namespace NEAT
         }
         else if (
             learning_signals.size() ==
-            m_neuron_count - network.NumInputs())
+            m_neuron_count - m_input_count)
         {
             direct.assign(m_neuron_count, 0.0);
             std::copy(
@@ -689,7 +701,7 @@ namespace NEAT
                 learning_signals.end(),
                 direct.begin() +
                     static_cast<std::ptrdiff_t>(
-                        network.NumInputs()));
+                        m_input_count));
         }
         else if (learning_signals.size() == m_neuron_count)
         {
@@ -701,10 +713,12 @@ namespace NEAT
                 "e-prop learning signals must match outputs, "
                 "non-input neurons, or all neurons");
         }
-        AccumulateDirectSignals(
-            network,
-            direct,
-            time_step);
+        for (double signal : direct)
+        {
+            if (!std::isfinite(signal))
+                throw std::invalid_argument("e-prop feedback signals must be finite");
+        }
+        return direct;
     }
 
     EPropStepResult EPropLearner::ApplyGradients(
@@ -918,12 +932,13 @@ namespace NEAT
         ValidateConfig();
         ValidateTopology(network);
         const double dt = FiniteTimeStep(network, time_step);
+        const auto direct = PrepareLearningSignals(learning_signals);
         EPropStepResult result;
         result.outputs =
             network.StepSpiking(inputs, dt);
-        AccumulateLearningSignals(
+        AccumulateDirectSignals(
             network,
-            learning_signals,
+            direct,
             dt);
         if (m_accumulated_steps >=
             m_config.update_interval)
@@ -947,12 +962,32 @@ namespace NEAT
         bool reset_network,
         bool apply_final_update)
     {
+        ValidateConfig();
         ValidateTopology(network);
+        const double dt = FiniteTimeStep(network, time_step);
         if (inputs.size() != targets.size())
         {
             throw std::invalid_argument(
                 "e-prop input and target sequences must have "
                 "equal lengths");
+        }
+        // Reject malformed batches before flushing state or updating weights.
+        for (std::size_t step = 0; step < inputs.size(); ++step)
+        {
+            if (inputs[step].size() != m_input_count ||
+                targets[step].size() != m_output_count)
+                throw std::invalid_argument("e-prop sequence dimensions must match the network");
+            for (double value : inputs[step])
+            {
+                if (!std::isfinite(value) ||
+                    (network.GetSpikingInputMode() == POISSON_RATE_INPUT && value < 0.0))
+                    throw std::invalid_argument("e-prop sequence contains invalid inputs");
+            }
+            for (double value : targets[step])
+            {
+                if (!std::isfinite(value))
+                    throw std::invalid_argument("e-prop targets must be finite");
+            }
         }
         if (reset_network)
         {
@@ -971,7 +1006,7 @@ namespace NEAT
                     network,
                     inputs[step],
                     targets[step],
-                    time_step);
+                    dt);
             result.outputs.push_back(
                 std::move(current.outputs));
             result.losses.push_back(current.loss);

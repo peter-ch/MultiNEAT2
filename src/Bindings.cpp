@@ -1579,8 +1579,8 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("GetNextGenomeID", &NEAT::Population::GetNextGenomeID)
         .def("GetNextSpeciesID", &NEAT::Population::GetNextSpeciesID)
         .def("SameGenomeIDCheck", &NEAT::Population::SameGenomeIDCheck)
-        .def("AccessGenomeByIndex", &NEAT::Population::AccessGenomeByIndex, py::return_value_policy::reference)
-        .def("AccessGenomeByID", &NEAT::Population::AccessGenomeByID, py::return_value_policy::reference)
+        .def("AccessGenomeByIndex", &NEAT::Population::AccessGenomeByIndex, py::return_value_policy::reference_internal)
+        .def("AccessGenomeByID", &NEAT::Population::AccessGenomeByID, py::return_value_policy::reference_internal)
         .def("GetEvaluationRequests", &NEAT::Population::GetEvaluationRequests)
         .def("GetEvaluationGenome", &NEAT::Population::GetEvaluationGenome)
         .def(
@@ -1631,7 +1631,7 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("Epoch", &NEAT::Population::Epoch)
         .def("Save", &NEAT::Population::Save)
         .def("SaveState", &NEAT::Population::SaveState)
-        .def("Tick", &NEAT::Population::Tick, py::return_value_policy::reference)
+        .def("Tick", &NEAT::Population::Tick, py::return_value_policy::reference_internal)
         .def("NoveltySearchTick", &NEAT::Population::NoveltySearchTick)
         .def(
             "InitPhenotypeBehaviorData",
@@ -1680,10 +1680,10 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("IsWorstSpecies", &NEAT::Species::IsWorstSpecies)
         .def("NumEvaluated",
              py::overload_cast<>(&NEAT::Species::NumEvaluated))
-        .def("GetLeader", &NEAT::Species::GetLeader, py::return_value_policy::reference)
-        .def("GetRepresentative", &NEAT::Species::GetRepresentative, py::return_value_policy::reference)
-        .def("GetIndividual", &NEAT::Species::GetIndividual, py::return_value_policy::reference)
-        .def("GetRandomIndividual", &NEAT::Species::GetRandomIndividual, py::return_value_policy::reference)
+        .def("GetLeader", &NEAT::Species::GetLeader, py::return_value_policy::reference_internal)
+        .def("GetRepresentative", &NEAT::Species::GetRepresentative, py::return_value_policy::reference_internal)
+        .def("GetIndividual", &NEAT::Species::GetIndividual, py::return_value_policy::reference_internal)
+        .def("GetRandomIndividual", &NEAT::Species::GetRandomIndividual, py::return_value_policy::reference_internal)
         .def("Serialize", &NEAT::Species::Serialize)
         .def_static("Deserialize", &NEAT::Species::Deserialize)
         .def_readwrite("m_BestGenome", &NEAT::Species::m_BestGenome)

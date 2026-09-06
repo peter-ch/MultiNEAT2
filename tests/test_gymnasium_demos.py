@@ -51,6 +51,37 @@ check(
     "MuJoCo catalog should cover every official v5 task",
 )
 
+live_display = demo.resolve_display_plan(False, 1, 0)
+check(
+    live_display.training_render_mode == "human"
+    and live_display.preview_every == 0,
+    "serial physics demos should open a live GUI by default",
+)
+fast_display = demo.resolve_display_plan(True, 1, 0)
+check(
+    fast_display.training_render_mode is None
+    and fast_display.preview_every == 0,
+    "fast mode should retain only headless physics",
+)
+parallel_display = demo.resolve_display_plan(False, 4, 0)
+check(
+    parallel_display.training_render_mode is None
+    and parallel_display.preview_every == 1,
+    "parallel runs should render one champion in the main process",
+)
+periodic_display = demo.resolve_display_plan(False, 1, 3)
+check(
+    periodic_display.training_render_mode is None
+    and periodic_display.preview_every == 3,
+    "render-every should use periodic champion replays",
+)
+try:
+    demo.resolve_display_plan(True, 1, 2)
+except ValueError:
+    pass
+else:
+    raise AssertionError("fast mode accepted an incompatible render schedule")
+
 vector_space = spaces.Box(
     low=np.array([-2.0, -np.inf, 0.0]),
     high=np.array([2.0, np.inf, 10.0]),
@@ -123,6 +154,20 @@ tiny_config = demo.TaskConfig(
     env_id="TinyControl-v0",
     description="In-process integration environment.",
     recurrent=False,
+)
+fake_unwrapped = type("FakeUnwrapped", (), {"render_mode": "human"})()
+fake_env = type("FakeEnv", (), {"unwrapped": fake_unwrapped})()
+display_controller = demo.InteractiveDisplay(tiny_config)
+display_controller.attach(fake_env)
+display_controller.toggle()
+check(
+    fake_unwrapped.render_mode is None,
+    "F-style fast mode should disable rendering without replacing physics",
+)
+display_controller.toggle()
+check(
+    fake_unwrapped.render_mode == "human",
+    "F-style visual mode should restore native rendering",
 )
 tiny_shape = demo.TaskShape(3, 2, "Box(3)", "Box(2)")
 population = demo.create_population(

@@ -22,13 +22,23 @@ std::uint64_t Mix(std::uint64_t value)
 
 std::uint64_t SampleSeed(const std::vector<EvaluationSample>& samples)
 {
-    std::uint64_t seed = 0x6a09e667f3bcc909ULL;
+    // Workers may complete cases in any order. Hash a canonical ordering so
+    // scheduling and checkpoint boundaries cannot change the bootstrap draws.
+    std::vector<std::pair<std::uint64_t, std::uint64_t>> evidence;
+    evidence.reserve(samples.size());
     for (const auto& sample : samples)
     {
         std::uint64_t score_bits = 0;
-        static_assert(sizeof(score_bits) == sizeof(sample.score));
-        std::memcpy(&score_bits, &sample.score, sizeof(score_bits));
-        seed = Mix(seed ^ Mix(sample.case_id) ^ Mix(score_bits));
+        const double score = sample.score == 0.0 ? 0.0 : sample.score;
+        static_assert(sizeof(score_bits) == sizeof(score));
+        std::memcpy(&score_bits, &score, sizeof(score_bits));
+        evidence.emplace_back(sample.case_id, score_bits);
+    }
+    std::sort(evidence.begin(), evidence.end());
+    std::uint64_t seed = 0x6a09e667f3bcc909ULL;
+    for (const auto& item : evidence)
+    {
+        seed = Mix(seed ^ Mix(item.first) ^ Mix(item.second));
     }
     return seed;
 }
@@ -40,18 +50,18 @@ double WilsonLowerBound(
     std::size_t samples,
     double z)
 {
-    if (samples == 0)
-        return 0.0;
     if (successes > samples || !std::isfinite(z) || z <= 0.0)
         throw std::invalid_argument("Invalid Wilson interval inputs");
+    if (samples == 0 || successes == 0)
+        return 0.0;
     const double n = static_cast<double>(samples);
     const double p = static_cast<double>(successes) / n;
-    const double z_squared = z * z;
-    const double denominator = 1.0 + z_squared / n;
-    const double center = p + z_squared / (2.0 * n);
-    const double radius = z * std::sqrt(
-        (p * (1.0 - p) + z_squared / (4.0 * n)) / n);
-    return std::clamp((center - radius) / denominator, 0.0, 1.0);
+    const double scaled_z = z / std::sqrt(n);
+    // Rationalizing center - radius avoids cancellation near zero success
+    // rates. An overflowing denominator at extreme z correctly yields zero.
+    const double denominator = p + scaled_z * (0.5 * scaled_z +
+        std::hypot(std::sqrt(p * (1.0 - p)), 0.5 * scaled_z));
+    return std::clamp(p * p / denominator, 0.0, 1.0);
 }
 
 EvaluationSummary SummarizeEvaluations(
@@ -59,17 +69,17 @@ EvaluationSummary SummarizeEvaluations(
     double confidence,
     unsigned int bootstrap_samples)
 {
-    EvaluationSummary result;
-    if (samples.empty())
-        return result;
     if (!std::isfinite(confidence) || confidence <= 0.0 || confidence >= 1.0)
         throw std::invalid_argument("Evaluation confidence must be between zero and one");
     if (bootstrap_samples == 0)
         throw std::invalid_argument("Bootstrap sample count must be greater than zero");
+    EvaluationSummary result;
+    if (samples.empty())
+        return result;
 
     std::vector<double> scores;
     scores.reserve(samples.size());
-    long double total = 0.0L;
+    double scale = 0.0;
     for (const auto& sample : samples)
     {
         if (!std::isfinite(sample.score))
@@ -81,7 +91,7 @@ EvaluationSummary SummarizeEvaluations(
                     "Behavior descriptors must contain finite values");
         }
         scores.push_back(sample.score);
-        total += static_cast<long double>(sample.score);
+        scale = std::max(scale, std::abs(sample.score));
         if (sample.has_success)
         {
             ++result.success_sample_count;
@@ -90,35 +100,49 @@ EvaluationSummary SummarizeEvaluations(
         }
     }
     result.sample_count = scores.size();
-    result.mean = static_cast<double>(
-        total / static_cast<long double>(scores.size()));
+    std::sort(scores.begin(), scores.end());
+    const bool constant = scores.front() == scores.back();
+    const double constant_score = scores.front();
+    // long double has the same range as double on MSVC. Normalize before
+    // summing or squaring to avoid overflow for otherwise finite statistics.
+    if (scale == 0.0)
+        scale = 1.0;
+    for (double& score : scores)
+        score /= scale;
+    const double normalized_mean = static_cast<double>(std::accumulate(
+        scores.begin(), scores.end(), 0.0L) /
+        static_cast<long double>(scores.size()));
+    const auto rescale_mean = [scale](double value)
+    { return std::clamp(value, -1.0, 1.0) * scale; };
+    result.mean = constant ? constant_score : rescale_mean(normalized_mean);
 
-    if (scores.size() > 1)
+    if (!constant)
     {
         long double squared = 0.0L;
         for (double score : scores)
         {
             const long double delta =
-                static_cast<long double>(score) - result.mean;
+                static_cast<long double>(score) - normalized_mean;
             squared += delta * delta;
         }
-        result.standard_deviation = std::sqrt(static_cast<double>(
+        const double normalized_deviation = std::sqrt(static_cast<double>(
             squared / static_cast<long double>(scores.size() - 1U)));
-        result.standard_error = result.standard_deviation /
-            std::sqrt(static_cast<double>(scores.size()));
+        result.standard_deviation = normalized_deviation * scale;
+        result.standard_error = (normalized_deviation /
+            std::sqrt(static_cast<double>(scores.size()))) * scale;
     }
 
-    std::sort(scores.begin(), scores.end());
     const std::size_t tail_count = std::max<std::size_t>(
         1U, static_cast<std::size_t>(
                 std::ceil(0.2 * static_cast<double>(scores.size()))));
-    result.lower_tail_mean = std::accumulate(
+    result.lower_tail_mean = constant ? constant_score : rescale_mean(
+        static_cast<double>(std::accumulate(
         scores.begin(), scores.begin() + static_cast<std::ptrdiff_t>(tail_count),
-        0.0) / static_cast<double>(tail_count);
+        0.0L) / static_cast<long double>(tail_count)));
 
-    if (scores.size() == 1)
+    if (constant)
     {
-        result.lower_confidence_bound = scores.front();
+        result.lower_confidence_bound = constant_score;
     }
     else
     {
@@ -138,14 +162,17 @@ EvaluationSummary SummarizeEvaluations(
             bootstrap_means.push_back(static_cast<double>(
                 bootstrap_total / static_cast<long double>(scores.size())));
         }
-        std::sort(bootstrap_means.begin(), bootstrap_means.end());
         const double lower_probability = 1.0 - confidence;
         const std::size_t lower_index = std::min(
             bootstrap_means.size() - 1U,
             static_cast<std::size_t>(std::floor(
                 lower_probability *
                 static_cast<double>(bootstrap_means.size() - 1U))));
-        result.lower_confidence_bound = bootstrap_means[lower_index];
+        std::nth_element(
+            bootstrap_means.begin(),
+            bootstrap_means.begin() + static_cast<std::ptrdiff_t>(lower_index),
+            bootstrap_means.end());
+        result.lower_confidence_bound = rescale_mean(bootstrap_means[lower_index]);
     }
 
     if (result.success_sample_count > 0)

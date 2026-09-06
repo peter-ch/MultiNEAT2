@@ -116,6 +116,8 @@ namespace NEAT
         double SurrogateDerivative(const Neuron& neuron) const;
         std::vector<double> BroadcastOutputSignals(
             const std::vector<double>& output_signals) const;
+        std::vector<double> PrepareLearningSignals(
+            const std::vector<double>& learning_signals) const;
         void AccumulateDirectSignals(
             NeuralNetwork& network,
             const std::vector<double>& neuron_signals,

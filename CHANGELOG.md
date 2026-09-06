@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Audit fixes
+
+- Made bootstrap summaries and stored evidence independent of worker completion
+  order, including checkpoint resume; avoided intermediate overflow for large
+  finite scores and descriptors.
+- Avoided full sorting of bootstrap replicates and skipped resampling for
+  constant evidence; added reliability aggregation microbenchmarks.
+- Fixed duplicate QD archive insertion after reevaluation, preserving the newly
+  collected archive evidence.
+- Made evidence batch replacement transactional and safe when its input aliases
+  existing samples; reject invalid descriptors before consuming requests.
+- Kept population and species owners alive for borrowed Python genome references.
+- Preserved running networks and RNG state on failed loads, and fixed a loop on
+  unopened network streams and uninitialized fields in truncated network records.
+- Validate spiking inputs, learning signals, and full training batch dimensions
+  before advancing runtime state or applying partial training.
+- Consolidated Python test registration, added reliability and runtime safety
+  suites and test timeouts, execute the installed-package consumer in CI, and
+  corrected the minimum CMake version to 3.18.
+- Fixed Windows shared-library exports and added a shared build to Windows CI.
+
 ### Spiking neural networks
 
 - Added evolvable McCulloch-Pitts neurons with binary threshold firing,

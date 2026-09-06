@@ -711,6 +711,7 @@ def build_demo_command(
         else spec.id
     )
     output = options.output_base / f"{output_name}-{stamp}"
+    effective_workers = 1 if physics and options.render else options.workers
     command.extend(
         [
             "--generations",
@@ -722,7 +723,7 @@ def build_demo_command(
             "--episodes",
             str(options.episodes),
             "--workers",
-            str(options.workers),
+            str(effective_workers),
             "--seed",
             str(options.seed),
             "--profile",
@@ -733,8 +734,8 @@ def build_demo_command(
             "10",
         ]
     )
-    if options.render:
-        command.extend(["--render-every", "10"])
+    if physics and not options.render:
+        command.append("--fast")
     if options.plot:
         command.append("--plot")
     if options.record_video:
@@ -949,7 +950,7 @@ def run_gui() -> int:
             self.seed_var = tk.IntVar(value=42)
             self.spiking_var = tk.BooleanVar(value=False)
             self.mcculloch_pitts_var = tk.BooleanVar(value=False)
-            self.render_var = tk.BooleanVar(value=False)
+            self.render_var = tk.BooleanVar(value=True)
             self.plot_var = tk.BooleanVar(value=True)
             self.video_var = tk.BooleanVar(value=False)
             self.output_var = tk.StringVar(value=str(ROOT / "runs"))
@@ -1090,7 +1091,9 @@ def run_gui() -> int:
             toggles = ttk.Frame(options, style="Panel.TFrame")
             toggles.grid(row=3, column=0, columnspan=6, sticky="ew", pady=(10, 2))
             self.render_check = ttk.Checkbutton(
-                toggles, text="Open rendering windows", variable=self.render_var
+                toggles,
+                text="Show live physics GUI (uses 1 worker; F toggles fast)",
+                variable=self.render_var,
             )
             self.render_check.pack(side="left", padx=(0, 16))
             self.spiking_check = ttk.Checkbutton(
@@ -1247,6 +1250,8 @@ def run_gui() -> int:
             self.steps_var.set(spec.max_steps)
             self.episodes_var.set(spec.episodes)
             physics = spec.family in {"Box2D", "MuJoCo"}
+            if physics and self.render_var.get():
+                self.workers_var.set(1)
             spiking_variant = supports_spiking_variant(spec)
             self.spiking_check.configure(
                 state="normal" if spiking_variant else "disabled"

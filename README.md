@@ -36,9 +36,10 @@ protocol and API.
 
 Requirements:
 
-- CMake 3.15 or newer
+- CMake 3.18 or newer
 - A C++17 compiler (recent GCC, Clang, or MSVC)
 - Python development files and pybind11 when building `pymultineat`
+- Python 3.10 or newer for the Python demos and their tests
 
 Configure, build, and test:
 
@@ -53,6 +54,7 @@ Useful CMake options:
 
 | Option | Default | Purpose |
 | --- | --- | --- |
+| `BUILD_SHARED_LIBS` | `OFF` | Build a shared core library (including a Windows DLL) |
 | `MULTINEAT_BUILD_PYTHON` | `ON` | Build the `pymultineat` extension |
 | `MULTINEAT_BUILD_DEMO` | `ON` | Build the C++ XOR demo |
 | `MULTINEAT_BUILD_BENCHMARKS` | `OFF` | Build repeatable core microbenchmarks |
@@ -70,6 +72,20 @@ cmake --build build --config Release --parallel
 The Python extension is created in the selected build configuration
 directory. Add that directory to `PYTHONPATH`, install the CMake project,
 or copy the extension into your environment before importing it.
+
+For example, in PowerShell with a Visual Studio build:
+
+```powershell
+$env:PYTHONPATH = (Resolve-Path build/Release).Path
+python -c "import pymultineat"
+```
+
+To run the optional visualization and Gymnasium tests as well, install
+`python -m pip install gymnasium -r requirements-visualization.txt` before
+running CTest. Those suites report a skip when their dependencies are absent.
+The core, bindings, evidence, and runtime safety suites need no physics or
+visualization packages. Use `-DPython3_EXECUTABLE=/path/to/python` at configure
+time when multiple Python environments are installed.
 
 ## Install and consume from CMake
 

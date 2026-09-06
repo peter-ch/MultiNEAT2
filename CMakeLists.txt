@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.15)
+cmake_minimum_required(VERSION 3.18)
 
 project(MultiNEAT VERSION 3.0.0 LANGUAGES CXX)
 
@@ -54,6 +54,7 @@ target_compile_features(multineat PUBLIC cxx_std_17)
 set_target_properties(multineat PROPERTIES
     CXX_EXTENSIONS OFF
     POSITION_INDEPENDENT_CODE ON
+    WINDOWS_EXPORT_ALL_SYMBOLS ON
 )
 target_include_directories(multineat
     PUBLIC
@@ -158,109 +159,41 @@ if(BUILD_TESTING)
         )
     endif()
 
+    set_tests_properties(multineat_core PROPERTIES TIMEOUT 120)
+    if(MULTINEAT_BUILD_DEMO)
+        set_tests_properties(multineat_cpp_mcp_demo PROPERTIES TIMEOUT 30)
+    endif()
+
     if(MULTINEAT_BUILD_PYTHON)
-        if(MSVC)
-            # A multi-config MSVC Debug extension links against python_d and
-            # requires a debug Python interpreter, which standard
-            # installations do not provide. The C++ Debug suite remains
-            # enabled.
+        function(multineat_add_python_test name script)
+            set(configurations)
+            if(MSVC)
+                # Standard Python installations do not provide python_d for
+                # MSVC Debug extensions. The native Debug suite still runs.
+                set(configurations CONFIGURATIONS Release RelWithDebInfo MinSizeRel)
+            endif()
             add_test(
-                NAME multineat_python
-                CONFIGURATIONS Release RelWithDebInfo MinSizeRel
-                COMMAND
-                    "${Python3_EXECUTABLE}"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bindings.py"
+                NAME ${name}
+                ${configurations}
+                COMMAND "${Python3_EXECUTABLE}"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/tests/${script}"
             )
-        else()
-            add_test(
-                NAME multineat_python
-                COMMAND
-                    "${Python3_EXECUTABLE}"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bindings.py"
+            set_tests_properties(${name} PROPERTIES
+                ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:pymultineat>"
+                TIMEOUT 180
             )
-        endif()
-        set_tests_properties(multineat_python PROPERTIES
-            ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:pymultineat>"
-        )
+        endfunction()
 
-        if(MSVC)
-            add_test(
-                NAME multineat_visualization
-                CONFIGURATIONS Release RelWithDebInfo MinSizeRel
-                COMMAND
-                    "${Python3_EXECUTABLE}"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_neattools.py"
-            )
-        else()
-            add_test(
-                NAME multineat_visualization
-                COMMAND
-                    "${Python3_EXECUTABLE}"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_neattools.py"
-            )
-        endif()
-        set_tests_properties(multineat_visualization PROPERTIES
-            ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:pymultineat>"
-            SKIP_RETURN_CODE 77
-        )
-
-        if(MSVC)
-            add_test(
-                NAME multineat_gymnasium_demos
-                CONFIGURATIONS Release RelWithDebInfo MinSizeRel
-                COMMAND
-                    "${Python3_EXECUTABLE}"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_gymnasium_demos.py"
-            )
-        else()
-            add_test(
-                NAME multineat_gymnasium_demos
-                COMMAND
-                    "${Python3_EXECUTABLE}"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_gymnasium_demos.py"
-            )
-        endif()
-        set_tests_properties(multineat_gymnasium_demos PROPERTIES
-            ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:pymultineat>"
-            SKIP_RETURN_CODE 77
-        )
-
-        if(MSVC)
-            add_test(
-                NAME multineat_demo_launcher
-                CONFIGURATIONS Release RelWithDebInfo MinSizeRel
-                COMMAND
-                    "${Python3_EXECUTABLE}"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_demo_launcher.py"
-            )
-        else()
-            add_test(
-                NAME multineat_demo_launcher
-                COMMAND
-                    "${Python3_EXECUTABLE}"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_demo_launcher.py"
-            )
-        endif()
-
-        if(MSVC)
-            add_test(
-                NAME multineat_spiking_demos
-                CONFIGURATIONS Release RelWithDebInfo MinSizeRel
-                COMMAND
-                    "${Python3_EXECUTABLE}"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_spiking_demos.py"
-            )
-        else()
-            add_test(
-                NAME multineat_spiking_demos
-                COMMAND
-                    "${Python3_EXECUTABLE}"
-                    "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_spiking_demos.py"
-            )
-        endif()
-        set_tests_properties(multineat_spiking_demos PROPERTIES
-            ENVIRONMENT "PYTHONPATH=$<TARGET_FILE_DIR:pymultineat>"
-            SKIP_RETURN_CODE 77
+        multineat_add_python_test(multineat_python test_bindings.py)
+        multineat_add_python_test(multineat_reliability test_reliability.py)
+        multineat_add_python_test(multineat_runtime_safety test_runtime_safety.py)
+        multineat_add_python_test(multineat_visualization test_neattools.py)
+        multineat_add_python_test(multineat_gymnasium_demos test_gymnasium_demos.py)
+        multineat_add_python_test(multineat_demo_launcher test_demo_launcher.py)
+        multineat_add_python_test(multineat_spiking_demos test_spiking_demos.py)
+        set_tests_properties(
+            multineat_visualization multineat_gymnasium_demos multineat_spiking_demos
+            PROPERTIES SKIP_RETURN_CODE 77
         )
     endif()
 endif()

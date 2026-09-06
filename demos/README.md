@@ -104,6 +104,9 @@ membrane, and response view.
 
 The graphical launcher exposes all these modes through its **Spiking policy
 variant** and **McCulloch-Pitts neurons** switches.
+For Box2D and MuJoCo, **Show physics GUI** opens the native viewer immediately;
+visible launcher runs use one evaluator so the window stays live. Clear it to
+launch directly in physics-only fast mode with the configured worker count.
 
 The Box2D and MuJoCo examples use one shared, tested trainer:
 `demos/gymnasium_neat.py`. Every task-specific file is directly runnable and
@@ -133,6 +136,9 @@ python demos/box2d/lunar_lander_box2d.py --smoke
 python demos/mujoco/inverted_pendulum_mujoco.py --smoke
 ```
 
+`--inspect` and `--smoke` are intentionally headless diagnostics. Omit them to
+run the visible interactive demo.
+
 Start a practical run with explicit output and parallel evaluation:
 
 ```sh
@@ -141,6 +147,21 @@ python demos/box2d/bipedal_walker_box2d.py \
   --profile ranked --output-dir runs/bipedal --plot \
   --checkpoint-every 10
 ```
+
+Serial Box2D and MuJoCo runs now open the simulator's native GUI by default.
+Press **F** in the physics window to toggle fast mode at runtime: rendering
+stops, but the same environment continues stepping its physics. Press **F**
+again to restore the GUI. Start directly in maximum-speed physics-only mode
+with `--fast` (or its `--headless` alias):
+
+```sh
+python demos/box2d/bipedal_walker_box2d.py --fast
+python demos/mujoco/walker2d_mujoco.py --fast
+```
+
+Parallel workers remain headless and the main process shows the current
+champion once per generation. Use `--render-every N` to reduce that preview
+frequency, or `--fast` to disable it completely.
 
 Resume the complete population, innovation database, species, and RNG state:
 
@@ -154,9 +175,8 @@ Current MultiNEAT 3 builds write `population.state`. For compatibility, a
 binding too old to round-trip the full state writes `population.legacy`
 through its original `Population.Save` API instead.
 
-Use `--record-video` to record the best policy at the end of a run or
-`--render-every N` for periodic interactive evaluation. Rendering is always
-performed in the main process.
+Use `--record-video` to record the best policy at the end of a run. Interactive
+rendering and video recording are always performed in the main process.
 
 ## Example catalog
 
@@ -203,6 +223,7 @@ The suite covers all eleven Gymnasium MuJoCo tasks:
 - Common case IDs and disjoint training/validation/test seed streams.
 - Successive-halving evaluation and held-out Wilson certification.
 - Persistent worker environments for parallel evaluation.
+- Native Box2D/MuJoCo windows with an in-place **F** fast-physics toggle.
 - Raw negative fitness support via robust rank-based allocation.
 - Full population checkpoints, best-genome files, JSONL metrics, plots, video,
   and deterministic smoke runs.

@@ -81,17 +81,31 @@ expected_pairs = {
     "--generations": "3",
     "--max-steps": "17",
     "--episodes": "2",
-    "--workers": "4",
+    "--workers": "1",
     "--seed": "9",
     "--profile": "exploratory",
-    "--render-every": "10",
 }
 for flag, value in expected_pairs.items():
     index = command.index(flag)
     check(command[index + 1] == value, f"wrong value generated for {flag}")
 check("--plot" in command, "plot flag was lost")
 check("--record-video" in command, "video flag was lost")
+check("--fast" not in command, "visible physics run was forced headless")
 check(output == ROOT / "runs" / "mujoco_reacher-fixed", "wrong output path")
+
+physics_fast_command, _ = launcher.build_demo_command(
+    physics,
+    runtime,
+    launcher.LaunchOptions(mode="run", render=False, workers=4),
+)
+check(
+    "--fast" in physics_fast_command,
+    "launcher fast mode should disable the native physics GUI",
+)
+check(
+    physics_fast_command[physics_fast_command.index("--workers") + 1] == "4",
+    "launcher fast mode lost its configured worker count",
+)
 
 xor_command, _ = launcher.build_demo_command(
     launcher.DEMO_BY_ID["xor"],

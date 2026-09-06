@@ -706,6 +706,15 @@ namespace NEAT
             throw std::invalid_argument(
                 "Spiking time step must be finite and positive");
         }
+        // Validate the whole input before advancing neurons, recording spikes,
+        // or consuming random numbers for earlier input channels.
+        for (double value : inputs)
+        {
+            if (!std::isfinite(value))
+                throw std::invalid_argument("Spiking inputs must be finite");
+            if (m_spiking_input_mode == POISSON_RATE_INPUT && value < 0.0)
+                throw std::invalid_argument("Poisson input rates cannot be negative");
+        }
 
         const double step_start = m_spiking_time;
         const double step_end = step_start + dt;
@@ -752,11 +761,6 @@ namespace NEAT
             if (i < m_num_inputs)
             {
                 const double value = inputs[i];
-                if (!std::isfinite(value))
-                {
-                    throw std::invalid_argument(
-                        "Spiking inputs must be finite");
-                }
                 bool spike = false;
                 double amplitude = 1.0;
                 switch (m_spiking_input_mode)
@@ -771,11 +775,6 @@ namespace NEAT
                     break;
                 case POISSON_RATE_INPUT:
                 {
-                    if (value < 0.0)
-                    {
-                        throw std::invalid_argument(
-                            "Poisson input rates cannot be negative");
-                    }
                     const double probability =
                         -std::expm1(-value * dt);
                     spike = random_unit() < probability;
@@ -1761,9 +1760,18 @@ namespace NEAT
 
     bool NeuralNetwork::Load(std::ifstream &a_DataFile)
     {
+        NeuralNetwork loaded;
+        if (!loaded.LoadFromStream(a_DataFile))
+            return false;
+        *this = std::move(loaded);
+        return true;
+    }
+
+    bool NeuralNetwork::LoadFromStream(std::ifstream &a_DataFile)
+    {
         std::string t_str;
-        do { a_DataFile >> t_str; } while (t_str != "NNstart" && !a_DataFile.eof());
-        if (a_DataFile.eof()) return false;
+        while (a_DataFile >> t_str && t_str != "NNstart") {}
+        if (!a_DataFile) return false;
         Clear();
         a_DataFile >> m_num_inputs >> m_num_outputs;
         int last_neuron = -1;
@@ -1783,6 +1791,10 @@ namespace NEAT
                            >> record
                            >> m_max_recorded_spikes
                            >> rng_state;
+                if (!a_DataFile || input_mode < CURRENT_INPUT ||
+                    input_mode > POISSON_RATE_INPUT || output_mode < SPIKE_OUTPUT ||
+                    output_mode > MEMBRANE_POTENTIAL_OUTPUT)
+                    return false;
                 m_spiking_input_mode =
                     static_cast<SpikingInputMode>(input_mode);
                 m_spiking_output_mode =
@@ -1794,10 +1806,13 @@ namespace NEAT
             else if (t_str == "neuron")
             {
                 Neuron t_n;
-                int t_type, t_aftype;
+                int t_type = 0, t_aftype = 0;
                 a_DataFile >> t_type >> t_n.m_a >> t_n.m_b
                            >> t_n.m_timeconst >> t_n.m_bias;
                 a_DataFile >> t_aftype >> t_n.m_split_y;
+                if (!a_DataFile || t_type < NONE || t_type > OUTPUT ||
+                    t_aftype < SIGNED_SIGMOID || t_aftype > MCCULLOCH_PITTS)
+                    return false;
                 t_n.m_type = static_cast<NeuronType>(t_type);
                 t_n.m_activation_function_type = static_cast<ActivationFunction>(t_aftype);
                 m_neurons.push_back(t_n);
@@ -1875,7 +1890,7 @@ namespace NEAT
             else if (t_str == "connection")
             {
                 Connection t_c;
-                int t_isrecur;
+                int t_isrecur = 0;
                 a_DataFile >> t_c.m_source_neuron_idx >> t_c.m_target_neuron_idx >> t_c.m_weight >> t_isrecur >> t_c.m_hebb_rate >> t_c.m_hebb_pre_rate;
                 t_c.m_recur_flag = static_cast<bool>(t_isrecur);
                 m_connections.push_back(t_c);
@@ -1926,6 +1941,9 @@ namespace NEAT
         try
         {
             ValidateNetworkTopology(*this);
+            SetSpikingTimeStep(m_spiking_time_step);
+            SetSpikingInputMode(m_spiking_input_mode);
+            SetSpikingOutputMode(m_spiking_output_mode);
         }
         catch (const std::exception&)
         {

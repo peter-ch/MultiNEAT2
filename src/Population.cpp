@@ -466,6 +466,7 @@ void Population::RefreshBehaviorDescriptor(Genome& genome)
     std::size_t dimensions = 0;
     std::size_t descriptor_samples = 0;
     std::vector<long double> totals;
+    std::vector<double> scales;
     for (const auto& sample : genome.GetEvaluationSamples())
     {
         if (sample.behavior_descriptor.empty())
@@ -474,6 +475,7 @@ void Population::RefreshBehaviorDescriptor(Genome& genome)
         {
             dimensions = sample.behavior_descriptor.size();
             totals.assign(dimensions, 0.0L);
+            scales.assign(dimensions, 0.0);
         }
         if (sample.behavior_descriptor.size() != dimensions)
         {
@@ -481,16 +483,26 @@ void Population::RefreshBehaviorDescriptor(Genome& genome)
                 "A genome's behavior descriptors must have equal dimensions");
         }
         for (std::size_t index = 0; index < dimensions; ++index)
-            totals[index] += sample.behavior_descriptor[index];
+            scales[index] = std::max(scales[index],
+                                    std::abs(sample.behavior_descriptor[index]));
         ++descriptor_samples;
     }
     if (descriptor_samples == 0)
         return;
+    for (const auto& sample : genome.GetEvaluationSamples())
+    {
+        for (std::size_t index = 0; index < sample.behavior_descriptor.size(); ++index)
+        {
+            if (scales[index] > 0.0)
+                totals[index] += sample.behavior_descriptor[index] / scales[index];
+        }
+    }
     std::vector<double> descriptor(dimensions, 0.0);
     for (std::size_t index = 0; index < dimensions; ++index)
     {
-        descriptor[index] = static_cast<double>(
-            totals[index] / static_cast<long double>(descriptor_samples));
+        descriptor[index] = std::clamp(static_cast<double>(
+            totals[index] / static_cast<long double>(descriptor_samples)),
+            -1.0, 1.0) * scales[index];
     }
     genome.SetBehaviorDescriptor(descriptor);
 }
@@ -657,6 +669,15 @@ void Population::AdvanceEvaluationCycle()
 {
     if (!m_PendingEvaluationRequests.empty())
         return;
+    if (m_ArchiveReevaluationScheduled)
+    {
+        // Training candidates were already inserted before archive work was
+        // scheduled. Re-inserting them here duplicates entries and can replace
+        // the very evidence we just collected from archive reevaluation.
+        RebuildQDArchive();
+        m_EvaluationCycleComplete = true;
+        return;
+    }
     const bool final_stage = m_Parameters.DeterministicEvaluation ||
         m_EvaluationTargetSamples >= m_Parameters.EvaluationMaxSamples;
     if (!final_stage)
@@ -771,8 +792,6 @@ void Population::AdvanceEvaluationCycle()
         m_ArchiveReevaluationScheduled = true;
         return;
     }
-    if (m_ArchiveReevaluationScheduled)
-        RebuildQDArchive();
     m_EvaluationCycleComplete = true;
 }
 
@@ -837,6 +856,17 @@ void Population::SubmitEvaluation(
 {
     if (!std::isfinite(score))
         throw std::invalid_argument("Submitted evaluation score must be finite");
+    for (double value : descriptor)
+    {
+        if (!std::isfinite(value))
+            throw std::invalid_argument("Submitted behavior descriptors must be finite");
+    }
+    if (m_Parameters.EvolutionModeSetting == ROBUST_QD_NEAT &&
+        !descriptor.empty() &&
+        descriptor.size() != m_Parameters.QDDescriptorBins.size())
+    {
+        throw std::invalid_argument("Submitted descriptor must match the QD dimensions");
+    }
     const auto request = std::find_if(
         m_PendingEvaluationRequests.begin(),
         m_PendingEvaluationRequests.end(),
@@ -865,11 +895,19 @@ void Population::SubmitEvaluation(
     }
     else if (submitted_request.phase == VALIDATION_EVALUATION)
     {
-        m_ValidationEvidence[genome_id].push_back(std::move(sample));
+        auto& evidence = m_ValidationEvidence[genome_id];
+        evidence.insert(std::lower_bound(
+            evidence.begin(), evidence.end(), case_id,
+            [](const EvaluationSample& value, std::uint64_t id)
+            { return value.case_id < id; }), std::move(sample));
     }
     else if (submitted_request.phase == CERTIFICATION_EVALUATION)
     {
-        m_CertificationEvidence[genome_id].push_back(std::move(sample));
+        auto& evidence = m_CertificationEvidence[genome_id];
+        evidence.insert(std::lower_bound(
+            evidence.begin(), evidence.end(), case_id,
+            [](const EvaluationSample& value, std::uint64_t id)
+            { return value.case_id < id; }), std::move(sample));
     }
     else
     {
@@ -3132,6 +3170,9 @@ std::map<int, std::vector<EvaluationSample>> ReadEvidence(
         {
             samples.push_back(ReadEvaluationSample(input));
         }
+        std::sort(samples.begin(), samples.end(),
+                  [](const EvaluationSample& lhs, const EvaluationSample& rhs)
+                  { return lhs.case_id < rhs.case_id; });
     }
     return evidence;
 }

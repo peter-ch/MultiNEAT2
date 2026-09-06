@@ -6,3 +6,7 @@ find_package(MultiNEAT CONFIG REQUIRED)
 
 add_executable(multineat_package_consumer main.cpp)
 target_link_libraries(multineat_package_consumer PRIVATE MultiNEAT::multineat)
+
+enable_testing()
+add_test(NAME multineat_installed_package COMMAND multineat_package_consumer)
+set_tests_properties(multineat_installed_package PROPERTIES TIMEOUT 30)

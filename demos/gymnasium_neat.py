@@ -501,6 +501,179 @@ class TaskShape:
     action_shape: str
 
 
+class DemoWindowClosed(Exception):
+    """Signal a deliberate close of an interactive physics window."""
+
+
+@dataclass(frozen=True)
+class DisplayPlan:
+    """Resolved rendering strategy for one training run."""
+
+    training_render_mode: str | None
+    preview_every: int
+    label: str
+
+
+def resolve_display_plan(
+    fast: bool,
+    workers: int,
+    render_every: int,
+) -> DisplayPlan:
+    """Choose live, periodic, or physics-only execution deterministically."""
+
+    if workers < 1:
+        raise ValueError("workers must be >= 1")
+    if render_every < 0:
+        raise ValueError("render_every must be >= 0")
+    if fast:
+        if render_every:
+            raise ValueError("--fast cannot be combined with --render-every")
+        return DisplayPlan(None, 0, "fast physics (GUI disabled)")
+    if workers == 1 and render_every == 0:
+        return DisplayPlan("human", 0, "live GUI (F toggles fast mode)")
+    preview_every = render_every if render_every else 1
+    return DisplayPlan(
+        None,
+        preview_every,
+        f"champion GUI every {preview_every} generation(s)",
+    )
+
+
+class InteractiveDisplay:
+    """Toggle native Gymnasium rendering without stopping environment physics.
+
+    Box2D uses PyGame events while MuJoCo uses the GLFW callback installed by
+    Gymnasium's native viewer.  Changing ``render_mode`` to ``None`` prevents
+    subsequent environment steps from drawing but does not recreate or pause
+    the simulator, so pressing F is a real fast-physics switch.
+    """
+
+    def __init__(self, config: TaskConfig) -> None:
+        self.config = config
+        self.fast = False
+        self._env: Any | None = None
+        self._mujoco_window: Any | None = None
+        self._mujoco_callback: Any | None = None
+        self._mujoco_original_callback: Any | None = None
+        self._close_requested = False
+
+    def attach(self, env: Any) -> None:
+        if env is self._env:
+            return
+        self._env = env
+        self._mujoco_window = None
+        self._mujoco_callback = None
+        self._mujoco_original_callback = None
+        self._close_requested = False
+        self._apply_render_mode()
+
+    def toggle(self) -> None:
+        self.fast = not self.fast
+        self._apply_render_mode()
+        self._update_title()
+        state = "FAST PHYSICS (rendering off)" if self.fast else "VISUAL"
+        print(
+            f"[{self.config.key}] display={state}; press F to toggle",
+            flush=True,
+        )
+
+    def poll(self, env: Any) -> None:
+        self.attach(env)
+        if self.config.family == "box2d":
+            self._poll_pygame()
+        elif self.config.family == "mujoco":
+            self._poll_mujoco()
+        if self._close_requested:
+            raise DemoWindowClosed
+
+    def _apply_render_mode(self) -> None:
+        if self._env is not None:
+            self._env.unwrapped.render_mode = None if self.fast else "human"
+
+    def _window_title(self) -> str:
+        mode = "FAST PHYSICS" if self.fast else "VISUAL"
+        return f"MultiNEAT - {self.config.env_id} - {mode} - F toggles mode"
+
+    def _update_title(self) -> None:
+        if self.config.family == "box2d":
+            try:
+                import pygame
+
+                if pygame.display.get_init() and pygame.display.get_surface():
+                    pygame.display.set_caption(self._window_title())
+            except ImportError:
+                return
+        elif self._mujoco_window is not None:
+            try:
+                import glfw
+
+                glfw.set_window_title(
+                    self._mujoco_window,
+                    self._window_title(),
+                )
+            except ImportError:
+                return
+
+    def _poll_pygame(self) -> None:
+        try:
+            import pygame
+        except ImportError:
+            return
+        if not pygame.get_init():
+            return
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                self._close_requested = True
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_f:
+                self.toggle()
+        self._update_title()
+
+    def _poll_mujoco(self) -> None:
+        try:
+            import glfw
+        except ImportError:
+            return
+        renderer = getattr(self._env.unwrapped, "mujoco_renderer", None)
+        viewers = getattr(renderer, "_viewers", {})
+        viewer = viewers.get("human") if viewers is not None else None
+        window = getattr(viewer, "window", None)
+        if window is not None and window is not self._mujoco_window:
+            self._mujoco_window = window
+
+            def callback(
+                callback_window: Any,
+                key: int,
+                scancode: int,
+                action: int,
+                mods: int,
+            ) -> None:
+                if key == glfw.KEY_F and action == glfw.RELEASE:
+                    self.toggle()
+                    return
+                if key == glfw.KEY_ESCAPE and action == glfw.RELEASE:
+                    self._close_requested = True
+                    return
+                if self._mujoco_original_callback is not None:
+                    self._mujoco_original_callback(
+                        callback_window,
+                        key,
+                        scancode,
+                        action,
+                        mods,
+                    )
+
+            self._mujoco_callback = callback
+            self._mujoco_original_callback = glfw.set_key_callback(
+                window,
+                callback,
+            )
+            self._update_title()
+        if window is not None:
+            glfw.poll_events()
+            if glfw.window_should_close(window):
+                self._close_requested = True
+
+
 def make_environment(config: TaskConfig, render_mode: str | None = None) -> Any:
     require_dependencies()
     kwargs = dict(config.env_kwargs)
@@ -572,6 +745,7 @@ def evaluate_on_environment(
     max_steps: int,
     activation_steps: int = 2,
     spiking_settings: SpikingPolicySettings | None = None,
+    display: InteractiveDisplay | None = None,
 ) -> float:
     """Evaluate a genome using an already-created environment."""
 
@@ -589,6 +763,8 @@ def evaluate_on_environment(
         else None
     )
     rewards = []
+    if display is not None:
+        display.attach(env)
 
     for episode_seed in episode_seeds:
         if spiking_policy is None:
@@ -596,6 +772,8 @@ def evaluate_on_environment(
         else:
             spiking_policy.reset(int(episode_seed))
         observation, _ = env.reset(seed=int(episode_seed))
+        if display is not None:
+            display.poll(env)
         if hasattr(env.action_space, "seed"):
             env.action_space.seed(int(episode_seed))
         total_reward = 0.0
@@ -609,6 +787,8 @@ def evaluate_on_environment(
                 spiking_policy,
             )
             observation, reward, terminated, truncated, _ = env.step(action)
+            if display is not None:
+                display.poll(env)
             numeric_reward = float(reward)
             if not math.isfinite(numeric_reward):
                 numeric_reward = -1_000_000.0
@@ -856,6 +1036,7 @@ class TrainOptions:
     checkpoint_every: int = 0
     resume: Path | None = None
     render_every: int = 0
+    fast: bool = False
     record_video: bool = False
     plot: bool = False
     quiet: bool = False
@@ -995,6 +1176,7 @@ def _render_or_record(
     options: TrainOptions,
     generation: int,
     record: bool,
+    display: InteractiveDisplay | None = None,
 ) -> float:
     if options.spiking and not record:
         return _show_spiking_rollout(genome, config, options)
@@ -1089,6 +1271,7 @@ def _render_or_record(
             options.max_steps,
             options.activation_steps,
             _spiking_settings(options),
+            display,
         )
     finally:
         env.close()
@@ -1348,8 +1531,21 @@ def train(options: TrainOptions) -> TrainResult:
         _spiking_settings(options).validate()
     if (options.plot or options.record_video) and options.output_dir is None:
         raise ValueError("--plot and --record-video require --output-dir")
+    display_plan = resolve_display_plan(
+        options.fast,
+        options.workers,
+        options.render_every,
+    )
 
     config = TASKS[options.task]
+    interactive_display = (
+        None if options.fast else InteractiveDisplay(config)
+    )
+    evaluation_display = (
+        interactive_display
+        if display_plan.training_render_mode == "human"
+        else None
+    )
     shape = inspect_task(config, options.seed)
     _write_run_metadata(options, config, shape)
 
@@ -1403,7 +1599,10 @@ def train(options: TrainOptions) -> TrainResult:
             ),
         )
     else:
-        serial_env = make_environment(config)
+        serial_env = make_environment(
+            config,
+            display_plan.training_render_mode,
+        )
 
     history = []
     best_fitness = -math.inf
@@ -1417,6 +1616,11 @@ def train(options: TrainOptions) -> TrainResult:
         else config.success_threshold
     )
     started = time.perf_counter()
+    if not options.quiet:
+        print(
+            f"[{config.key}] display={display_plan.label}",
+            flush=True,
+        )
     try:
         for offset in range(options.generations):
             generation = start_generation + offset
@@ -1444,6 +1648,7 @@ def train(options: TrainOptions) -> TrainResult:
                             options.max_steps,
                             options.activation_steps,
                             _spiking_settings(options),
+                            evaluation_display,
                         )
                         for genome in genomes
                     ]
@@ -1481,6 +1686,7 @@ def train(options: TrainOptions) -> TrainResult:
                                 options.max_steps,
                                 options.activation_steps,
                                 _spiking_settings(options),
+                                evaluation_display,
                             )
                             for genome, seeds in zip(
                                 request_genomes, request_seeds
@@ -1566,8 +1772,11 @@ def train(options: TrainOptions) -> TrainResult:
                     flush=True,
                 )
 
-            if options.render_every and (
-                (offset + 1) % options.render_every == 0
+            if (
+                display_plan.preview_every
+                and interactive_display is not None
+                and not interactive_display.fast
+                and (offset + 1) % display_plan.preview_every == 0
             ):
                 _render_or_record(
                     best_genome,
@@ -1575,6 +1784,7 @@ def train(options: TrainOptions) -> TrainResult:
                     options,
                     generation,
                     record=False,
+                    display=interactive_display,
                 )
 
             is_final_generation = offset + 1 == options.generations
@@ -1605,6 +1815,7 @@ def train(options: TrainOptions) -> TrainResult:
                                 options.max_steps,
                                 options.activation_steps,
                                 _spiking_settings(options),
+                                evaluation_display,
                             )
                             for genome, seeds in zip(
                                 request_genomes, request_seeds
@@ -1736,6 +1947,7 @@ def smoke_task(
             spiking=spiking,
             mcculloch_pitts=mcculloch_pitts,
             spiking_steps=4,
+            fast=True,
             quiet=quiet,
         )
     )
@@ -1866,7 +2078,23 @@ def _parser(default_task: str | None) -> argparse.ArgumentParser:
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--resume", type=Path)
     parser.add_argument("--checkpoint-every", type=int, default=10)
-    parser.add_argument("--render-every", type=int, default=0)
+    parser.add_argument(
+        "--fast",
+        "--headless",
+        dest="fast",
+        action="store_true",
+        help="disable the GUI and run physics as fast as possible",
+    )
+    parser.add_argument(
+        "--render-every",
+        type=int,
+        default=0,
+        metavar="N",
+        help=(
+            "use headless training with a champion GUI every N generations; "
+            "without this option serial runs render live"
+        ),
+    )
     parser.add_argument("--record-video", action="store_true")
     parser.add_argument("--plot", action="store_true")
     parser.add_argument("--quiet", action="store_true")
@@ -1904,6 +2132,7 @@ def main(default_task: str | None = None) -> int:
             )
             return 0
         if args.smoke:
+            args.fast = True
             result = smoke_task(
                 args.task,
                 args.seed,
@@ -1960,6 +2189,7 @@ def main(default_task: str | None = None) -> int:
                     checkpoint_every=args.checkpoint_every,
                     resume=args.resume,
                     render_every=args.render_every,
+                    fast=args.fast,
                     record_video=args.record_video,
                     plot=args.plot,
                     quiet=args.quiet,
@@ -1973,6 +2203,9 @@ def main(default_task: str | None = None) -> int:
             f"policy={'mcculloch-pitts' if args.mcculloch_pitts else ('lif' if args.spiking else 'rate')}",
             flush=True,
         )
+        return 0
+    except DemoWindowClosed:
+        print(f"closed task={config.key}", flush=True)
         return 0
     except (RuntimeError, ValueError, KeyError) as error:
         parser.exit(2, f"error: {error}\n")

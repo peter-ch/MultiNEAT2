@@ -58,6 +58,25 @@ jobs:
       - name: Link installed-package consumer
         run: cmake --build consumer-build --config Release --parallel 2
 
+      - name: Run installed-package consumer
+        run: ctest --test-dir consumer-build -C Release --output-on-failure
+
+      - name: Configure Windows shared library
+        if: runner.os == 'Windows'
+        run: >-
+          cmake -S . -B build-shared
+          -DBUILD_SHARED_LIBS=ON
+          -DMULTINEAT_BUILD_PYTHON=OFF
+          -DMULTINEAT_WARNINGS_AS_ERRORS=ON
+
+      - name: Build Windows shared library
+        if: runner.os == 'Windows'
+        run: cmake --build build-shared --config Release --parallel 2
+
+      - name: Test Windows shared library
+        if: runner.os == 'Windows'
+        run: ctest --test-dir build-shared -C Release --output-on-failure
+
   sanitizers:
     runs-on: ubuntu-latest
     timeout-minutes: 20

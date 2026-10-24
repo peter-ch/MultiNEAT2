@@ -27,6 +27,11 @@ __pycache__/
 .venv/
 venv/
 /runs/
+.ipynb_checkpoints/
+
+# Demo outputs written outside runs/
+*.npz
+*.mp4
 
 # Editors and operating systems
 .DS_Store

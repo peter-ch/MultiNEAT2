@@ -1,7 +1,10 @@
 #ifndef MULTINEAT_SERIALIZATION_H
 #define MULTINEAT_SERIALIZATION_H
 
+#include <cctype>
+#include <cstdlib>
 #include <iomanip>
+#include <locale>
 #include <istream>
 #include <limits>
 #include <map>
@@ -105,10 +108,14 @@ inline std::vector<TraitType> ReadTraitValues(std::istream& input)
     std::size_t count = 0;
     input >> count;
     RequireStream(input, "trait value list");
+    // Counts are untrusted: grow element by element and stop on bad input
+    // rather than reserving an arbitrary allocation up front.
     std::vector<TraitType> values;
-    values.reserve(count);
     for (std::size_t i = 0; i < count; ++i)
+    {
         values.push_back(ReadTraitValue(input));
+        RequireStream(input, "trait value list");
+    }
     return values;
 }
 
@@ -144,6 +151,7 @@ inline std::map<std::string, Trait> ReadTraits(std::istream& input)
         trait.value = ReadTraitValue(input);
         input >> std::quoted(trait.dep_key);
         trait.dep_values = ReadTraitValues(input);
+        RequireStream(input, "trait map");
         traits.emplace(std::move(key), std::move(trait));
     }
     return traits;
@@ -157,6 +165,16 @@ inline void WriteTraitParameters(
     output << marker << ' ' << schemas.size() << '\n';
     for (const auto& [key, schema] : schemas)
     {
+        const auto details_for = [&key, &schema](const auto* details)
+        {
+            if (details == nullptr)
+            {
+                throw std::invalid_argument(
+                    "trait schema '" + key + "': type '" + schema.type +
+                    "' does not match its details.");
+            }
+            return details;
+        };
         output << "TraitSchema " << std::quoted(key) << ' '
                << schema.m_ImportanceCoeff << ' ' << schema.m_MutationProb << ' '
                << std::quoted(schema.type) << ' ' << std::quoted(schema.dep_key)
@@ -167,19 +185,22 @@ inline void WriteTraitParameters(
         output << "TraitDetails ";
         if (schema.type == "int")
         {
-            const auto& details = std::get<IntTraitParameters>(schema.m_Details);
+            const auto& details = *details_for(
+                std::get_if<IntTraitParameters>(&schema.m_Details));
             output << details.min << ' ' << details.max << ' '
                    << details.mut_power << ' ' << details.mut_replace_prob;
         }
         else if (schema.type == "float")
         {
-            const auto& details = std::get<FloatTraitParameters>(schema.m_Details);
+            const auto& details = *details_for(
+                std::get_if<FloatTraitParameters>(&schema.m_Details));
             output << details.min << ' ' << details.max << ' '
                    << details.mut_power << ' ' << details.mut_replace_prob;
         }
         else if (schema.type == "str")
         {
-            const auto& details = std::get<StringTraitParameters>(schema.m_Details);
+            const auto& details = *details_for(
+                std::get_if<StringTraitParameters>(&schema.m_Details));
             output << details.set.size();
             for (const auto& item : details.set)
                 output << ' ' << std::quoted(item);
@@ -189,7 +210,8 @@ inline void WriteTraitParameters(
         }
         else if (schema.type == "intset")
         {
-            const auto& details = std::get<IntSetTraitParameters>(schema.m_Details);
+            const auto& details = *details_for(
+                std::get_if<IntSetTraitParameters>(&schema.m_Details));
             output << details.set.size();
             for (const auto& item : details.set)
                 output << ' ' << item.value;
@@ -199,7 +221,8 @@ inline void WriteTraitParameters(
         }
         else if (schema.type == "floatset")
         {
-            const auto& details = std::get<FloatSetTraitParameters>(schema.m_Details);
+            const auto& details = *details_for(
+                std::get_if<FloatSetTraitParameters>(&schema.m_Details));
             output << details.set.size();
             for (const auto& item : details.set)
                 output << ' ' << item.value;
@@ -222,10 +245,14 @@ inline std::vector<T> ReadNumericVector(std::istream& input)
     std::size_t count = 0;
     input >> count;
     RequireStream(input, "numeric vector");
-    std::vector<T> values(count);
-    for (auto& value : values)
+    std::vector<T> values;
+    for (std::size_t i = 0; i < count; ++i)
+    {
+        T value{};
         input >> value;
-    RequireStream(input, "numeric vector");
+        RequireStream(input, "numeric vector");
+        values.push_back(value);
+    }
     return values;
 }
 
@@ -246,6 +273,7 @@ ReadTraitParameters(std::istream& input)
               >> std::quoted(schema.dep_key);
         if (token != "TraitSchema")
             throw std::runtime_error("trait schema map: missing TraitSchema marker.");
+        RequireStream(input, "trait schema");
         schema.dep_values = ReadTraitValues(input);
 
         input >> token;
@@ -270,9 +298,14 @@ ReadTraitParameters(std::istream& input)
             StringTraitParameters details;
             std::size_t set_size = 0;
             input >> set_size;
-            details.set.resize(set_size);
-            for (auto& item : details.set)
+            RequireStream(input, "string trait set");
+            for (std::size_t item_index = 0; item_index < set_size; ++item_index)
+            {
+                std::string item;
                 input >> std::quoted(item);
+                RequireStream(input, "string trait set");
+                details.set.push_back(std::move(item));
+            }
             details.probs = ReadNumericVector<double>(input);
             schema.m_Details = details;
         }
@@ -318,6 +351,67 @@ ReadTraitParameters(std::istream& input)
 inline void UseRoundTripPrecision(std::ostream& output)
 {
     output << std::setprecision(std::numeric_limits<double>::max_digits10);
+}
+
+// Standard streams write non-finite doubles as "inf"/"nan" but cannot read
+// them back. This facet parses each whitespace-delimited floating-point token
+// with strtod, which accepts those spellings, and fails on trailing garbage.
+class RoundTripNumGet : public std::num_get<char>
+{
+protected:
+    iter_type do_get(
+        iter_type in,
+        iter_type end,
+        std::ios_base& stream,
+        std::ios_base::iostate& error,
+        double& value) const override
+    {
+        std::string token;
+        while (in != end && !std::isspace(
+                                static_cast<unsigned char>(*in),
+                                stream.getloc()))
+        {
+            token.push_back(*in);
+            ++in;
+        }
+        if (in == end)
+            error |= std::ios_base::eofbit;
+        if (token.empty())
+        {
+            error |= std::ios_base::failbit;
+            return in;
+        }
+        char* parsed_end = nullptr;
+        const double parsed = std::strtod(token.c_str(), &parsed_end);
+        if (parsed_end != token.c_str() + token.size())
+        {
+            error |= std::ios_base::failbit;
+            return in;
+        }
+        value = parsed;
+        return in;
+    }
+
+    iter_type do_get(
+        iter_type in,
+        iter_type end,
+        std::ios_base& stream,
+        std::ios_base::iostate& error,
+        float& value) const override
+    {
+        double parsed = 0.0;
+        in = do_get(in, end, stream, error, parsed);
+        if (!(error & std::ios_base::failbit))
+            value = static_cast<float>(parsed);
+        return in;
+    }
+};
+
+// Makes `input >> double` accept the non-finite values written by an output
+// stream using UseRoundTripPrecision.
+inline void UseRoundTripParsing(std::istream& input)
+{
+    input.imbue(std::locale(input.getloc(), new RoundTripNumGet));
 }
 
 } // namespace Serialization

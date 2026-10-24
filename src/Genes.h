@@ -77,7 +77,6 @@ namespace NEAT
         // Arbitrary traits
         std::map<std::string, Trait> m_Traits;
 
-        Gene& operator=(const Gene&) = default;
 
         // Initialize traits (randomize) based on parameters
         void InitTraits(const std::map<std::string, TraitParameters> &tp, RNG &a_RNG)
@@ -169,8 +168,12 @@ namespace NEAT
                 TraitType mine = mine_it->second.value;
                 TraitType yours = it->second.value;
 
-                // Type must match
-                if (mine.index() != yours.index())
+                // Types must match. Numeric values assigned from Python may
+                // arrive as int for a float trait; widen exactly instead of
+                // failing.
+                if (mine.index() != yours.index() &&
+                    !CoerceTraitValue(yours, mine.index(), false) &&
+                    !CoerceTraitValue(mine, yours.index(), false))
                 {
                     throw std::runtime_error("Types of traits don't match in mating");
                 }
@@ -238,9 +241,16 @@ namespace NEAT
                     if (m_Traits.count(it->second.dep_key) != 0)
                     {
                         // see if the dep trait matches
+                        const TraitType& dependency =
+                            m_Traits.at(it->second.dep_key).value;
                         for (const auto &dv : it->second.dep_values)
                         {
-                            if (m_Traits.at(it->second.dep_key).value == dv)
+                            // Compare numbers across int/double so a
+                            // dependency value of 1.0 matches an int 1.
+                            TraitType candidate = dv;
+                            if (CoerceTraitValue(
+                                    candidate, dependency.index(), true) &&
+                                dependency == candidate)
                             {
                                 doit = true;
                                 break;
@@ -266,6 +276,13 @@ namespace NEAT
                             if (itp.min > itp.max)
                             {
                                 throw std::invalid_argument("Integer trait minimum exceeds maximum");
+                            }
+                            if (!CoerceTraitValue(
+                                    trait_it->second.value, 0, true))
+                            {
+                                throw std::invalid_argument(
+                                    "Integer trait '" + it->first +
+                                    "' holds a non-integer value");
                             }
                             int val = std::get<int>(trait_it->second.value);
                             int original = val;
@@ -298,8 +315,17 @@ namespace NEAT
                                 }
                                 for (int attempt = 0; attempt < 32 && val == original; ++attempt)
                                 {
-                                    val = original + a_RNG.RandInt(-itp.mut_power, itp.mut_power);
-                                    Clamp(val, itp.min, itp.max);
+                                    // Sum in 64 bits and clamp before
+                                    // narrowing: near INT_MAX/INT_MIN the
+                                    // int sum would overflow.
+                                    long long wide =
+                                        static_cast<long long>(original) +
+                                        a_RNG.RandInt(-itp.mut_power, itp.mut_power);
+                                    if (wide < itp.min)
+                                        wide = itp.min;
+                                    if (wide > itp.max)
+                                        wide = itp.max;
+                                    val = static_cast<int>(wide);
                                 }
                                 if (val == original)
                                 {
@@ -316,6 +342,13 @@ namespace NEAT
                             if (itp.min > itp.max)
                             {
                                 throw std::invalid_argument("Floating-point trait minimum exceeds maximum");
+                            }
+                            if (!CoerceTraitValue(
+                                    trait_it->second.value, 1, false))
+                            {
+                                throw std::invalid_argument(
+                                    "Floating-point trait '" + it->first +
+                                    "' holds a non-numeric value");
                             }
                             double val = std::get<double>(trait_it->second.value);
                             double original = val;
@@ -487,7 +520,11 @@ namespace NEAT
                 {
                     if (std::holds_alternative<int>(mine))
                     {
-                        dist[it->first] = std::abs(std::get<int>(mine) - std::get<int>(yours));
+                        // Subtract in double: the int difference can
+                        // overflow for widely separated values.
+                        dist[it->first] = std::abs(
+                            static_cast<double>(std::get<int>(mine)) -
+                            static_cast<double>(std::get<int>(yours)));
                     }
                     else if (std::holds_alternative<double>(mine))
                     {
@@ -500,8 +537,11 @@ namespace NEAT
                     }
                     else if (std::holds_alternative<intsetelement>(mine))
                     {
-                        dist[it->first] = std::abs(std::get<intsetelement>(mine).value 
-                                                 - std::get<intsetelement>(yours).value);
+                        dist[it->first] = std::abs(
+                            static_cast<double>(
+                                std::get<intsetelement>(mine).value) -
+                            static_cast<double>(
+                                std::get<intsetelement>(yours).value));
                     }
                     else if (std::holds_alternative<floatsetelement>(mine))
                     {
@@ -572,7 +612,6 @@ namespace NEAT
             m_STDPMaxWeight = 8.0;
         }
 
-        LinkGene& operator=(const LinkGene&) = default;
 
         double GetWeight() const { return m_Weight; }
         void SetWeight(double w)  { m_Weight = w; }
@@ -711,7 +750,6 @@ namespace NEAT
                         rhs.m_MCPInhibitoryVeto);
         }
 
-        NeuronGene& operator=(const NeuronGene&) = default;
 
         int ID() const        { return m_ID; }
         NeuronType Type() const { return m_Type; }

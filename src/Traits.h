@@ -1,6 +1,7 @@
 #ifndef MULTINEAT_TRAITS_H
 #define MULTINEAT_TRAITS_H
 
+#include <cstddef>
 #include <string>
 #include <vector>
 #include <variant> 
@@ -18,8 +19,6 @@ namespace NEAT
         {
             return rhs.value == value;
         }
-
-        intsetelement& operator=(const intsetelement&) = default;
     };
 
     // Represents an element in a float set trait
@@ -32,8 +31,6 @@ namespace NEAT
         {
             return rhs.value == value;
         }
-
-        floatsetelement& operator=(const floatsetelement&) = default;
     };
 
     // Using std::variant to store possible trait types
@@ -53,8 +50,6 @@ namespace NEAT
             mut_power = 0;
             mut_replace_prob = 0.0;
         }
-
-        IntTraitParameters& operator=(const IntTraitParameters&) = default;
     };
 
     class FloatTraitParameters
@@ -71,8 +66,6 @@ namespace NEAT
             mut_power = 0.0;
             mut_replace_prob = 0.0;
         }
-
-        FloatTraitParameters& operator=(const FloatTraitParameters&) = default;
     };
 
     class StringTraitParameters
@@ -80,8 +73,6 @@ namespace NEAT
     public:
         std::vector<std::string> set;  // the set of possible strings
         std::vector<double> probs;     // their respective probabilities for appearance
-
-        StringTraitParameters& operator=(const StringTraitParameters&) = default;
     };
 
     class IntSetTraitParameters
@@ -89,8 +80,6 @@ namespace NEAT
     public:
         std::vector<intsetelement> set; // the set of possible ints
         std::vector<double> probs;      // their respective probabilities for appearance
-
-        IntSetTraitParameters& operator=(const IntSetTraitParameters&) = default;
     };
 
     class FloatSetTraitParameters
@@ -98,9 +87,6 @@ namespace NEAT
     public:
         std::vector<floatsetelement> set; // the set of possible floats
         std::vector<double> probs;        // their respective probabilities for appearance
-
-        FloatSetTraitParameters& operator=(
-            const FloatSetTraitParameters&) = default;
     };
 
     // Holds parameters describing how a given trait mutates,
@@ -130,8 +116,6 @@ namespace NEAT
             dep_values{std::string("")}
         {
         }
-
-        TraitParameters& operator=(const TraitParameters&) = default;
     };
 
     // Represents an actual trait instance on a LinkGene, NeuronGene, or GenomeGene
@@ -146,8 +130,6 @@ namespace NEAT
         {
         }
 
-        Trait& operator=(const Trait&) = default;
-
         bool operator==(const Trait& rhs) const
         {
             return value == rhs.value &&
@@ -160,6 +142,99 @@ namespace NEAT
             return !(*this == rhs);
         }
     };
+
+    // Index of the TraitType alternative that a trait of the given schema
+    // type string ("int", "float", "str", "intset", "floatset") stores, or
+    // std::variant_npos for an unsupported type string. The same index is
+    // the TraitParameters::m_Details alternative for that type.
+    inline std::size_t TraitValueIndexForSchemaType(const std::string& type)
+    {
+        if (type == "int")
+            return 0;
+        if (type == "float")
+            return 1;
+        if (type == "str")
+            return 2;
+        if (type == "intset")
+            return 3;
+        if (type == "floatset")
+            return 4;
+        return std::variant_npos;
+    }
+
+    // Converts a numeric trait value to the alternative at target_index when
+    // the conversion is exact. Widening conversions (int -> double, int or
+    // double -> set element of the same kind) are always applied. Narrowing
+    // conversions (an integral double -> int or intsetelement) are applied
+    // only when allow_narrowing is true, i.e. when the caller knows the
+    // schema type. Returns true when value holds target_index afterwards.
+    inline bool CoerceTraitValue(
+        TraitType& value,
+        std::size_t target_index,
+        bool allow_narrowing)
+    {
+        if (value.index() == target_index)
+            return true;
+        const auto exact_int = [](double number, int& result)
+        {
+            if (!std::isfinite(number) || std::floor(number) != number ||
+                number < -2147483648.0 || number > 2147483647.0)
+                return false;
+            result = static_cast<int>(number);
+            return true;
+        };
+        switch (target_index)
+        {
+        case 0: // int
+            if (allow_narrowing && std::holds_alternative<double>(value))
+            {
+                int converted = 0;
+                if (!exact_int(std::get<double>(value), converted))
+                    return false;
+                value = converted;
+                return true;
+            }
+            return false;
+        case 1: // double
+            if (std::holds_alternative<int>(value))
+            {
+                value = static_cast<double>(std::get<int>(value));
+                return true;
+            }
+            return false;
+        case 3: // intsetelement
+            if (std::holds_alternative<int>(value))
+            {
+                intsetelement element;
+                element.value = std::get<int>(value);
+                value = element;
+                return true;
+            }
+            if (allow_narrowing && std::holds_alternative<double>(value))
+            {
+                intsetelement element;
+                if (!exact_int(std::get<double>(value), element.value))
+                    return false;
+                value = element;
+                return true;
+            }
+            return false;
+        case 4: // floatsetelement
+            if (std::holds_alternative<double>(value) ||
+                std::holds_alternative<int>(value))
+            {
+                floatsetelement element;
+                element.value = std::holds_alternative<double>(value)
+                    ? std::get<double>(value)
+                    : static_cast<double>(std::get<int>(value));
+                value = element;
+                return true;
+            }
+            return false;
+        default:
+            return false;
+        }
+    }
 
 } // namespace NEAT
 

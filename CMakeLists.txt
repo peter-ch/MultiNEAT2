@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.18...3.31)
 
 project(MultiNEAT VERSION 3.0.0 LANGUAGES CXX)
 
@@ -142,6 +142,9 @@ if(MULTINEAT_BUILD_PYTHON)
 
     pybind11_add_module(pymultineat MODULE src/Bindings.cpp)
     target_link_libraries(pymultineat PRIVATE MultiNEAT::multineat)
+    target_compile_definitions(pymultineat PRIVATE
+        MULTINEAT_VERSION_STRING="${PROJECT_VERSION}"
+    )
     multineat_enable_warnings(pymultineat)
     multineat_enable_sanitizers(pymultineat)
 endif()
@@ -152,6 +155,18 @@ if(BUILD_TESTING)
     multineat_enable_warnings(multineat_tests)
     multineat_enable_sanitizers(multineat_tests)
     add_test(NAME multineat_core COMMAND multineat_tests)
+    add_executable(multineat_population_tests tests/population_tests.cpp)
+    target_link_libraries(multineat_population_tests PRIVATE MultiNEAT::multineat)
+    multineat_enable_warnings(multineat_population_tests)
+    multineat_enable_sanitizers(multineat_population_tests)
+    add_test(NAME multineat_population COMMAND multineat_population_tests)
+    set_tests_properties(multineat_population PROPERTIES TIMEOUT 120)
+    add_executable(multineat_network_tests tests/network_tests.cpp)
+    target_link_libraries(multineat_network_tests PRIVATE MultiNEAT::multineat)
+    multineat_enable_warnings(multineat_network_tests)
+    multineat_enable_sanitizers(multineat_network_tests)
+    add_test(NAME multineat_network COMMAND multineat_network_tests)
+    set_tests_properties(multineat_network PROPERTIES TIMEOUT 120)
     if(MULTINEAT_BUILD_DEMO)
         add_test(
             NAME multineat_cpp_mcp_demo
@@ -196,6 +211,17 @@ if(BUILD_TESTING)
             PROPERTIES SKIP_RETURN_CODE 77
         )
     endif()
+endif()
+
+if(SKBUILD)
+    # Python wheel built by scikit-build-core (pip install .): ship the
+    # extension and the visualization helpers into site-packages only.
+    if(NOT MULTINEAT_BUILD_PYTHON)
+        message(FATAL_ERROR "Python wheels require MULTINEAT_BUILD_PYTHON=ON")
+    endif()
+    install(TARGETS pymultineat LIBRARY DESTINATION . RUNTIME DESTINATION .)
+    install(FILES neattools.py DESTINATION .)
+    return()
 endif()
 
 install(

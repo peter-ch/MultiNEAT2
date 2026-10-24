@@ -3,12 +3,17 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
+#include <locale>
+#include <map>
 #include <memory>
+#include <sstream>
 #include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include "FileIO.h"
 #include "Genome.h"
 #include "NeuralNetwork.h"
 #include "Parameters.h"
@@ -2575,6 +2580,392 @@ int main()
         novelty_population.ComputeSparseness(
             novelty_population.AccessGenomeByIndex(0)) == 10.0,
         "novelty sparseness excludes the queried behavior by identity");
+
+    // Regression: FS-NEAT adds at most one bias link per output.
+    {
+        Parameters fs_parameters;
+        GenomeInitStruct fs_init;
+        fs_init.NumInputs = 3;
+        fs_init.NumOutputs = 1;
+        fs_init.FS_NEAT = true;
+        fs_init.FS_NEAT_links = 2;
+        for (int attempt = 0; attempt < 8; ++attempt)
+        {
+            Genome fs_genome(fs_parameters, fs_init);
+            std::string fs_error;
+            const bool fs_valid = fs_genome.Validate(&fs_error);
+            Check(fs_valid && fs_genome.NumLinks() == 3,
+                  "FS-NEAT seeds one bias link per output: " + fs_error);
+        }
+
+        // The RNG overload makes FS-NEAT topology and traits reproducible.
+        TraitParameters seeded_trait;
+        seeded_trait.type = "float";
+        FloatTraitParameters seeded_details;
+        seeded_details.min = -1.0;
+        seeded_details.max = 1.0;
+        seeded_trait.m_Details = seeded_details;
+        fs_parameters.LinkTraits["w"] = seeded_trait;
+        fs_parameters.GenomeTraits["g"] = seeded_trait;
+        GenomeInitStruct wide_fs;
+        wide_fs.NumInputs = 12;
+        wide_fs.NumOutputs = 4;
+        wide_fs.FS_NEAT = true;
+        wide_fs.FS_NEAT_links = 9;
+        bool reproducible = true;
+        bool varied = false;
+        Genome reference;
+        for (long seed = 1; seed <= 6; ++seed)
+        {
+            RNG first_rng;
+            first_rng.Seed(seed);
+            RNG second_rng;
+            second_rng.Seed(seed);
+            const Genome first(fs_parameters, wide_fs, first_rng);
+            const Genome second_genome(fs_parameters, wide_fs, second_rng);
+            reproducible = reproducible && first.IsIdenticalTo(second_genome) &&
+                           first_rng.Serialize() == second_rng.Serialize() &&
+                           first.Validate();
+            if (seed == 1)
+                reference = first;
+            else if (!first.IsIdenticalTo(reference))
+                varied = true;
+        }
+        Check(reproducible && varied,
+              "seeded genome construction is reproducible and seed-dependent");
+    }
+
+    // Regression: Genome::Save(FILE*) writes the complete current format,
+    // and concatenated genomes in one file load back individually.
+    {
+        Parameters save_parameters;
+        TraitParameters save_trait;
+        save_trait.type = "int";
+        IntTraitParameters save_trait_details;
+        save_trait_details.min = 0;
+        save_trait_details.max = 9;
+        save_trait.m_Details = save_trait_details;
+        save_parameters.NeuronTraits["tag"] = save_trait;
+        Genome saved = MakeGenome(save_parameters);
+        saved.SetID(77);
+        saved.m_NeuronGenes.back().m_MCPInhibitoryVeto = false;
+        saved.m_NeuronGenes.back().m_Traits["tag"].value = 7;
+        saved.SetNeuronXY(0, 12, 34);
+        EvaluationSample save_sample;
+        save_sample.case_id = 5;
+        save_sample.score = 0.25;
+        saved.AddEvaluationSample(save_sample);
+        saved.SetEvaluated();
+        LineageRecord save_lineage;
+        save_lineage.parent_ids = {3, 4};
+        save_lineage.best_parent_score = 1.5;
+        saved.SetLineage(save_lineage);
+        Genome second = saved;
+        second.SetID(78);
+        const auto save_path = std::filesystem::temp_directory_path() /
+                               "multineat_genome_full_save.txt";
+        saved.Save(save_path.string().c_str());
+        Genome loaded(save_path.string().c_str());
+        Check(loaded.IsIdenticalTo(saved) && loaded.GetID() == 77 &&
+                  loaded.GetFitness() == saved.GetFitness() &&
+                  loaded.IsEvaluated() &&
+                  loaded.GetEvaluationSamples().size() == 1 &&
+                  loaded.GetLineage().parent_ids.size() == 2 &&
+                  loaded.GetNeuronByIndex(0).x == 12 &&
+                  !loaded.m_NeuronGenes.back().m_MCPInhibitoryVeto,
+              "Genome::Save preserves traits, state, samples and lineage");
+        std::FILE* save_file =
+            detail::OpenFile(save_path.string().c_str(), "w");
+        Check(save_file != nullptr, "genome save file opens");
+        if (save_file != nullptr)
+        {
+            saved.Save(save_file);
+            second.Save(save_file);
+            std::fclose(save_file);
+            std::ifstream concatenated(save_path);
+            Genome first_loaded(concatenated);
+            Genome second_loaded(concatenated);
+            Check(first_loaded.GetID() == 77 && second_loaded.GetID() == 78 &&
+                      second_loaded.IsIdenticalTo(second),
+                  "concatenated genome saves load back in order");
+        }
+        std::filesystem::remove(save_path);
+        const Genome legacy_format = Genome::Deserialize(
+            "GenomeStart 9\n"
+            "Neuron 1 1 0 1 0 0 0 0\n"
+            "Neuron 2 2 0 1 0 0 0 0\n"
+            "Neuron 3 4 1 1 1 0 0 0\n"
+            "Link 1 3 1 0 0.5\n"
+            "Link 2 3 2 0 -0.5\n"
+            "GenomeEnd\n");
+        Check(legacy_format.NumInputs() == 2 && legacy_format.NumLinks() == 2,
+              "format-1 genome text remains loadable");
+    }
+
+    // Regression: removing a simple neuron on a recurrent path keeps the
+    // merged link recurrent so depth calculation still succeeds.
+    {
+        Parameters simple_parameters;
+        GenomeInitStruct simple_init;
+        simple_init.NumInputs = 2;
+        simple_init.NumOutputs = 1;
+        Genome simple(simple_parameters, simple_init);
+        simple.m_NeuronGenes.emplace_back(HIDDEN, 4, 0.5);
+        simple.m_LinkGenes.emplace_back(3, 4, 3, 0.5, false);
+        simple.m_LinkGenes.emplace_back(4, 3, 4, 0.5, true);
+        InnovationDatabase simple_innovations;
+        simple_innovations.Init(simple);
+        RNG simple_rng;
+        simple_rng.Seed(5);
+        Check(simple.Mutate_RemoveSimpleNeuron(
+                  simple_innovations, simple_parameters, simple_rng),
+              "a simple neuron on a recurrent path can be removed");
+        bool merged_recurrent = false;
+        for (const auto& link : simple.m_LinkGenes)
+        {
+            if (link.FromNeuronID() == 3 && link.ToNeuronID() == 3)
+                merged_recurrent = link.IsRecurrent();
+        }
+        Check(merged_recurrent,
+              "a merged self-loop is marked recurrent");
+        bool depth_ok = true;
+        try
+        {
+            simple.CalculateDepth();
+        }
+        catch (const std::exception&)
+        {
+            depth_ok = false;
+        }
+        Check(depth_ok, "depth succeeds after removing a recurrent simple neuron");
+    }
+
+    // Regression: an output with one real input and one outgoing link is not
+    // a dead end; only an output whose sole link is a self-loop is.
+    {
+        Parameters dead_parameters;
+        dead_parameters.DontUseBiasNeuron = true;
+        GenomeInitStruct dead_init;
+        dead_init.NumInputs = 1;
+        dead_init.NumOutputs = 2;
+        Genome connected(dead_parameters, dead_init);
+        connected.m_LinkGenes.emplace_back(2, 3, 3, 0.5, true);
+        Check(!connected.HasDeadEnds(),
+              "an output feeding a recurrent link is not a dead end");
+        Check(!connected.Cleanup() && connected.NumLinks() == 3,
+              "cleanup keeps an output with a recurrent outgoing link");
+
+        Genome looped(dead_parameters, dead_init);
+        looped.m_LinkGenes.erase(looped.m_LinkGenes.begin());
+        looped.m_LinkGenes.emplace_back(2, 2, 3, 0.5, true);
+        Check(looped.HasDeadEnds(),
+              "an output whose only link is a self-loop is a dead end");
+        Check(looped.Cleanup() && looped.NumLinks() == 1 &&
+                  looped.m_LinkGenes.front().FromNeuronID() == 1,
+              "cleanup removes the isolated output self-loop");
+    }
+
+    // Regression: clone detection includes the McCulloch-Pitts veto flag.
+    {
+        Parameters veto_parameters;
+        Genome veto_genome = MakeGenome(veto_parameters);
+        Genome veto_variant = veto_genome;
+        veto_variant.m_NeuronGenes.back().m_MCPInhibitoryVeto =
+            !veto_genome.m_NeuronGenes.back().m_MCPInhibitoryVeto;
+        Check(!veto_genome.IsIdenticalTo(veto_variant),
+              "clone detection includes the McCulloch-Pitts veto");
+    }
+
+    // Regression: non-finite fitness bookkeeping validates and round-trips.
+    {
+        Parameters nonfinite_parameters;
+        Genome nonfinite = MakeGenome(nonfinite_parameters);
+        nonfinite.SetFitness(std::numeric_limits<double>::infinity());
+        nonfinite.SetAdjFitness(std::numeric_limits<double>::quiet_NaN());
+        LineageRecord nonfinite_lineage;
+        nonfinite_lineage.best_parent_score =
+            -std::numeric_limits<double>::infinity();
+        nonfinite.SetLineage(nonfinite_lineage);
+        std::string nonfinite_error;
+        const bool nonfinite_valid = nonfinite.Validate(&nonfinite_error);
+        Check(nonfinite_valid,
+              "non-finite fitness passes genome validation: " +
+                  nonfinite_error);
+        bool nonfinite_round_trip = false;
+        try
+        {
+            const Genome restored_nonfinite =
+                Genome::Deserialize(nonfinite.Serialize());
+            nonfinite_round_trip =
+                std::isinf(restored_nonfinite.GetFitness()) &&
+                restored_nonfinite.GetFitness() > 0.0 &&
+                std::isnan(restored_nonfinite.GetAdjFitness()) &&
+                std::isinf(
+                    restored_nonfinite.GetLineage().best_parent_score);
+        }
+        catch (const std::exception& error)
+        {
+            std::cerr << "non-finite round trip: " << error.what() << '\n';
+        }
+        Check(nonfinite_round_trip,
+              "non-finite fitness round-trips through serialization");
+        std::istringstream genome_input(nonfinite.Serialize());
+        const std::locale genome_locale = genome_input.getloc();
+        Genome locale_genome(static_cast<std::istream&>(genome_input));
+        Check(genome_input.getloc() == genome_locale,
+              "genome parsing restores the caller's stream locale");
+    }
+
+    // Regression: integer trait arithmetic cannot overflow.
+    {
+        Gene low;
+        Gene high;
+        low.m_Traits["i"].value = std::numeric_limits<int>::min();
+        high.m_Traits["i"].value = std::numeric_limits<int>::max();
+        intsetelement low_element;
+        low_element.value = std::numeric_limits<int>::min();
+        intsetelement high_element;
+        high_element.value = std::numeric_limits<int>::max();
+        low.m_Traits["s"].value = low_element;
+        high.m_Traits["s"].value = high_element;
+        const auto distances = low.GetTraitDistances(high.m_Traits);
+        Check(distances.at("i") == 4294967295.0 &&
+                  distances.at("s") == 4294967295.0,
+              "integer trait distances do not overflow");
+
+        std::map<std::string, TraitParameters> wide_schema;
+        TraitParameters wide;
+        wide.type = "int";
+        wide.m_MutationProb = 1.0;
+        IntTraitParameters wide_details;
+        wide_details.min = std::numeric_limits<int>::min();
+        wide_details.max = std::numeric_limits<int>::max();
+        wide_details.mut_power = std::numeric_limits<int>::max();
+        wide_details.mut_replace_prob = 0.0;
+        wide.m_Details = wide_details;
+        wide_schema["i"] = wide;
+        RNG wide_rng;
+        wide_rng.Seed(11);
+        bool wide_ok = true;
+        for (int round = 0; round < 64; ++round)
+        {
+            Gene edge;
+            const bool from_top = round % 2 == 0;
+            edge.m_Traits["i"].value = from_top
+                ? std::numeric_limits<int>::max()
+                : std::numeric_limits<int>::min();
+            const int before = std::get<int>(edge.m_Traits["i"].value);
+            edge.MutateTraits(wide_schema, wide_rng);
+            const int after = std::get<int>(edge.m_Traits["i"].value);
+            // A wrapped sum would land on the opposite side of zero.
+            if (after == before || (from_top ? after < 0 : after >= 0))
+                wide_ok = false;
+        }
+        Check(wide_ok, "integer trait mutation near INT_MAX/INT_MIN changes value safely");
+    }
+
+    // Regression: malformed counts raise runtime_error, not allocation errors.
+    {
+        Parameters bounded_parameters;
+        const std::string valid =
+            MakeGenome(bounded_parameters).Serialize();
+        const auto corrupt = [&valid](const std::string& marker,
+                                      const std::string& replacement)
+        {
+            std::string data = valid;
+            const std::size_t start = data.find(marker);
+            const std::size_t end = data.find('\n', start);
+            data.replace(start, end - start, replacement);
+            return data;
+        };
+        const std::vector<std::string> malformed{
+            corrupt("EvaluationSamples", "EvaluationSamples 18446744073709551615"),
+            corrupt("EvaluationSamples",
+                    "EvaluationSamples 1\nEvaluationSample 1 0.5 0 0 "
+                    "18446744073709551615"),
+            corrupt("BehaviorDescriptor", "BehaviorDescriptor 4611686018427387904"),
+            corrupt("Lineage", "Lineage 4611686018427387904"),
+            corrupt("Lineage", "Lineage 0 4611686018427387904"),
+            corrupt("Lineage", "Lineage 0 0 0 0 0 4611686018427387904"),
+            corrupt("GenomeTraits", "GenomeTraits 1\nTrait \"k\" 0 1 \"d\" "
+                                    "4611686018427387904"),
+            "GenomeStart 1\nNeuron 1 99 0 1 0 0 0 0\nGenomeEnd\n",
+            "GenomeStart 1\nNeuron 1 1 0 9999 0 0 0 0\nGenomeEnd\n",
+            "GenomeStart 1\nGenomeFormat 6\nNeuron 1 1 0 1 0 0 0 0 nan 0\n"
+            "GenomeEnd\n"};
+        for (std::size_t index = 0; index < malformed.size(); ++index)
+        {
+            bool runtime_error = false;
+            try
+            {
+                Genome::Deserialize(malformed[index]);
+            }
+            catch (const std::runtime_error&)
+            {
+                runtime_error = true;
+            }
+            catch (const std::exception&)
+            {
+            }
+            Check(runtime_error,
+                  "malformed genome input " + std::to_string(index) +
+                      " raises runtime_error");
+        }
+    }
+
+    // Regression: innovation lookups detect same-size direct edits that
+    // invalidate indexed entries. (Edits that only add entries require
+    // RebuildIndex(); misses are not confirmed by a linear scan.)
+    {
+        InnovationDatabase stale;
+        stale.m_Innovations.reserve(16);
+        for (int index = 0; index < 4; ++index)
+            stale.AddLinkInnovation(1 + index, 10);
+        Check(stale.CheckInnovation(1, 10, NEW_LINK) == 1,
+              "fresh innovation index answers queries");
+        std::vector<Innovation> replacement = stale.m_Innovations;
+        replacement[0] = Innovation(1, NEW_LINK, 7, 8, NONE, -1);
+        stale.m_Innovations = replacement;
+        Check(stale.CheckInnovation(1, 10, NEW_LINK) == -1,
+              "stale index does not report a removed innovation");
+        Check(stale.CheckInnovation(7, 8, NEW_LINK) == 1,
+              "stale index finds a same-size reassigned innovation");
+        Check(stale.CheckAllInnovations(7, 8, NEW_LINK).size() == 1 &&
+                  stale.CheckLastInnovation(2, 10, NEW_LINK) == 2,
+              "innovation queries stay consistent after direct edits");
+    }
+
+    // Regression: custom substrate connectivity is validated at build time.
+    {
+        Parameters hyper_parameters;
+        std::vector<std::vector<double>> hyper_inputs{{-1.0}};
+        std::vector<std::vector<double>> hyper_hidden;
+        std::vector<std::vector<double>> hyper_outputs{{1.0}};
+        Substrate hyper_substrate(hyper_inputs, hyper_hidden, hyper_outputs);
+        hyper_substrate.m_query_weights_only = true;
+        hyper_substrate.m_custom_conn_obeys_flags = false;
+        GenomeInitStruct hyper_init;
+        hyper_init.NumInputs = hyper_substrate.GetMinCPPNInputs();
+        hyper_init.NumOutputs = hyper_substrate.GetMinCPPNOutputs();
+        Genome hyper_cppn(hyper_parameters, hyper_init);
+        NeuralNetwork hyper_network;
+        hyper_substrate.m_custom_connectivity = {{INPUT, 0, OUTPUT, 5}};
+        CheckThrows<std::out_of_range>(
+            [&] { hyper_cppn.BuildHyperNEATPhenotype(hyper_network, hyper_substrate); },
+            "HyperNEAT rejects out-of-range custom connectivity indexes");
+        hyper_substrate.m_custom_connectivity = {{INPUT, 0, HIDDEN, 0}};
+        CheckThrows<std::out_of_range>(
+            [&] { hyper_cppn.BuildHyperNEATPhenotype(hyper_network, hyper_substrate); },
+            "HyperNEAT rejects custom links to absent hidden neurons");
+        hyper_substrate.m_custom_connectivity = {{NONE, 0, OUTPUT, 0}};
+        CheckThrows<std::invalid_argument>(
+            [&] { hyper_cppn.BuildHyperNEATPhenotype(hyper_network, hyper_substrate); },
+            "HyperNEAT rejects custom connectivity with invalid neuron types");
+        hyper_substrate.m_custom_connectivity = {{INPUT, 0, OUTPUT, 0}};
+        hyper_cppn.BuildHyperNEATPhenotype(hyper_network, hyper_substrate);
+        Check(hyper_network.m_connections.size() == 1,
+              "valid custom connectivity still builds");
+    }
 
     if (failures != 0)
     {

@@ -8,6 +8,7 @@
 #include <limits>
 #include <memory>
 #include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -90,6 +91,11 @@ private:
     // Adjusts each species's fitness
     void AdjustFitness();
 
+    // Real-time (Tick) counterpart of AdjustFitness(): computes shared,
+    // positive adjusted fitness for evaluated genomes so per-species parent
+    // selection is fitness-driven between generations.
+    void AdjustRealTimeFitness();
+
     // Calculates how many offspring each genome should have
     void CountOffspring();
 
@@ -133,6 +139,11 @@ private:
     std::vector<QDArchiveEntry> m_QDArchive;
     std::function<void(Genome&)> m_LocalImprovementHook;
     bool m_LamarckianLocalImprovement = false;
+    // Genomes (population IDs, plus archive copies keyed separately) whose
+    // stored genotype has already received the Lamarckian improvement in the
+    // current generation. Cleared by Epoch(); saved in checkpoints so a
+    // resumed run does not improve them twice.
+    std::set<std::pair<bool, int>> m_LamarckianImproved;
 
     void StartEvaluationCycle();
     void AdvanceEvaluationCycle();
@@ -312,8 +323,19 @@ public:
     {
         return m_QDArchive;
     }
-    void RebinQDArchive() { RebuildQDArchive(); }
+    // Re-bins the QD archive after descriptor bounds/bins change. Throws
+    // std::logic_error while archive re-evaluation requests are pending,
+    // because re-binning reorders entries referenced by archive_index.
+    void RebinQDArchive();
     bool TryGetQDParent(const Genome& reference, Genome& result);
+    // Installs a local-improvement hook used by GetEvaluationGenome(). A
+    // Baldwinian hook (lamarckian=false) improves a fresh copy on every call.
+    // A Lamarckian hook writes the improvement back into the stored genome
+    // and is applied at most once per genome per generation, so all evidence
+    // collected in a generation describes the same phenotype. The record of
+    // improved genomes survives hook re-installation and checkpoints (hooks
+    // are not serialized, so callers re-install them after resuming) and is
+    // reset only by Epoch().
     void SetLocalImprovementHook(
         std::function<void(Genome&)> hook,
         bool lamarckian = false)
@@ -372,8 +394,11 @@ public:
     ///////////////////////////////
     // Novelty search
 
-    // A pointer to the archive of PhenotypeBehaviors
-    // Necessary to contain derived custom classes.
+    // A pointer to a caller-owned archive of PhenotypeBehaviors, set by the
+    // raw-pointer InitPhenotypeBehaviorData overload. It is nullptr when the
+    // shared_ptr overload is used: that archive is owned by the population
+    // itself (so copies/moves never alias another object's storage). Use
+    // GetBehaviorArchive() to reach whichever archive is active.
     std::vector< PhenotypeBehavior >* m_BehaviorArchive = nullptr;
 
     // Call this function to allocate memory for your custom
@@ -406,6 +431,11 @@ public:
 private:
     std::vector<std::shared_ptr<PhenotypeBehavior>> m_OwnedBehaviorData;
     std::vector<PhenotypeBehavior> m_OwnedBehaviorArchive;
+    // True when novelty search uses m_OwnedBehaviorArchive. A flag instead of
+    // a self-pointer keeps defaulted copy/move operations safe.
+    bool m_UsesOwnedBehaviorArchive = false;
+    std::vector<PhenotypeBehavior>* ActiveBehaviorArchive();
+    const std::vector<PhenotypeBehavior>* ActiveBehaviorArchive() const;
         
     };
 

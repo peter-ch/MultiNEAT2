@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 import subprocess
@@ -17,6 +18,37 @@ except ModuleNotFoundError:
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+# Each demo must be a standalone file: only the standard library, third-party
+# packages and pymultineat may be imported, never another repo Python module.
+STANDALONE_DEMOS = (
+    "xor.py",
+    "asteroid_nav.py",
+    "hyperneat_3d.py",
+    "spiking_cartpole.py",
+    "spiking_pattern.py",
+    "spiking_eprop.py",
+)
+REPO_MODULES = {"neattools", "spiking_neat", "gymnasium_neat", "demos"} | {
+    path.stem
+    for directory in (ROOT, ROOT / "demos")
+    for path in directory.glob("*.py")
+}
+for script in STANDALONE_DEMOS:
+    tree = ast.parse((ROOT / "demos" / script).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            names = [node.module or ""] if node.level == 0 else ["<relative>"]
+        else:
+            continue
+        for name in names:
+            top_level = name.split(".")[0]
+            assert top_level not in REPO_MODULES and top_level != "<relative>", (
+                f"{script} imports repo module {name!r}; demos must be standalone"
+            )
 
 
 for model_flag, expected_model in (

@@ -1,4 +1,5 @@
 #include "SpikingLearning.h"
+#include "Serialization.h"
 
 #include <algorithm>
 #include <cmath>
@@ -358,9 +359,17 @@ namespace NEAT
                  ++output)
             {
                 double value = 0.0;
+                const bool is_output =
+                    neuron >= output_begin &&
+                    neuron < output_begin + m_output_count;
                 if (neuron == output_begin + output)
                 {
                     value = 1.0;
+                }
+                else if (is_output)
+                {
+                    // Each output receives only its own loss derivative.
+                    value = 0.0;
                 }
                 else if (
                     m_config.feedback_mode ==
@@ -519,8 +528,10 @@ namespace NEAT
             }
             else
             {
+                // The analog value the solver transmitted this step, not
+                // the source activation it has since updated.
                 state.synaptic_trace =
-                    source_neuron.m_activation;
+                    connection.m_presynaptic_signal;
             }
 
             if (!IsTrainable(network, index))
@@ -535,19 +546,27 @@ namespace NEAT
                     "and finite membrane resistance");
             }
 
-            const double membrane_fraction =
-                dt / target_neuron.m_timeconst;
+            // Matches the solver's exact exponential membrane update.
             const double membrane_decay =
-                1.0 - membrane_fraction;
+                std::exp(-dt / target_neuron.m_timeconst);
+            const double membrane_fraction =
+                -std::expm1(-dt / target_neuron.m_timeconst);
+            const bool memoryless_target =
+                target_neuron.m_activation_function_type ==
+                MCCULLOCH_PITTS;
             const double old_voltage =
                 state.voltage_eligibility;
             const double old_adaptation =
                 state.adaptation_eligibility;
+            // A McCulloch-Pitts potential is its instantaneous input, so
+            // its exact eligibility is the synaptic trace itself.
             double voltage_eligibility =
-                membrane_decay * old_voltage +
-                membrane_fraction *
-                    target_neuron.m_membrane_resistance *
-                    state.synaptic_trace;
+                memoryless_target
+                    ? state.synaptic_trace
+                    : membrane_decay * old_voltage +
+                          membrane_fraction *
+                              target_neuron.m_membrane_resistance *
+                              state.synaptic_trace;
             double adaptation_eligibility = 0.0;
             const double surrogate =
                 SurrogateDerivative(target_neuron);
@@ -568,14 +587,14 @@ namespace NEAT
                         "e-prop requires valid adaptive-LIF "
                         "parameters");
                 }
+                // The solver decays adaptation before the voltage update.
+                const double adaptation_decay = std::exp(
+                    -dt / target_neuron.m_adaptation_time_constant);
                 voltage_eligibility -=
-                    membrane_fraction * old_adaptation;
+                    membrane_fraction * adaptation_decay *
+                    old_adaptation;
                 adaptation_eligibility =
-                    std::exp(
-                        -dt /
-                        target_neuron
-                            .m_adaptation_time_constant) *
-                        old_adaptation +
+                    adaptation_decay * old_adaptation +
                     target_neuron.m_adaptation_increment *
                         surrogate * voltage_eligibility;
             }
@@ -655,7 +674,7 @@ namespace NEAT
             state.gradient += gradient;
 
             const double reset_jump =
-                target_neuron.m_spike
+                target_neuron.m_spike && !memoryless_target
                     ? target_neuron.m_spike_threshold -
                           target_neuron.m_reset_potential
                     : 0.0;
@@ -1115,6 +1134,7 @@ namespace NEAT
         const std::string& data)
     {
         std::istringstream input(data);
+        Serialization::UseRoundTripParsing(input);
         if (!ReadMarker(input, "EPropFormat"))
         {
             throw std::runtime_error(

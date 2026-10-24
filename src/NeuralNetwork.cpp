@@ -13,6 +13,7 @@
 #include "FileIO.h"
 #include "Assert.h"
 #include "Utils.h"
+#include "Serialization.h"
 
 #define sqr(x) ((x)*(x))
 #define LEARNING_RATE 0.0001
@@ -21,6 +22,22 @@ namespace NEAT
 {
     namespace
     {
+        // Sanity bound for per-neuron substrate coordinates read from files.
+        constexpr std::size_t kMaxSubstrateCoordinates = 1024;
+
+        // Exponentially decaying state is flushed to zero once negligible.
+        // Repeated multiplication otherwise stalls at a subnormal value: a
+        // residual inhibitory current then vetoes McCulloch-Pitts neurons
+        // indefinitely, and subnormal arithmetic is very slow on x86.
+        constexpr double kSpikingStateFloor = 1e-12;
+
+        void DecayState(double& value, double factor)
+        {
+            value *= factor;
+            if (std::abs(value) < kSpikingStateFloor)
+                value = 0.0;
+        }
+
         void ValidateNetworkTopology(const NeuralNetwork& network)
         {
             const std::size_t neuron_count = network.m_neurons.size();
@@ -304,11 +321,7 @@ namespace NEAT
         if (IsSpiking())
         {
             ValidateNetworkTopology(*this);
-            std::vector<double> inputs;
-            inputs.reserve(m_num_inputs);
-            for (unsigned int i = 0; i < m_num_inputs; ++i)
-                inputs.push_back(m_neurons[i].m_activation);
-            StepSpiking(inputs);
+            StepSpiking(SpikingInputDrive());
             return;
         }
         // The phenotype builder guarantees valid endpoint indexes. This is the
@@ -321,6 +334,10 @@ namespace NEAT
             conn.m_signal = conn.m_source_activation * conn.m_weight;
             m_neurons[conn.m_target_neuron_idx].m_activesum += conn.m_signal;
         }
+        // Custom substrates may target input neurons; their sums are unused
+        // but must not accumulate across steps.
+        for (size_t i = 0; i < m_num_inputs; i++)
+            m_neurons[i].m_activesum = 0;
         for (size_t i = m_num_inputs; i < m_neurons.size(); i++)
         {
             Neuron& neuron = m_neurons[i];
@@ -354,6 +371,8 @@ namespace NEAT
         }
         for (auto &conn : m_connections)
             m_neurons[conn.m_target_neuron_idx].m_activesum += conn.m_signal;
+        for (size_t i = 0; i < m_num_inputs; i++)
+            m_neurons[i].m_activesum = 0;
         for (size_t i = m_num_inputs; i < m_neurons.size(); i++)
         {
             Neuron& neuron = m_neurons[i];
@@ -396,10 +415,18 @@ namespace NEAT
         }
         for (auto &conn : m_connections)
             m_neurons[conn.m_target_neuron_idx].m_activesum += conn.m_signal;
+        for (size_t i = 0; i < m_num_inputs; i++)
+            m_neurons[i].m_activesum = 0;
         for (size_t i = m_num_inputs; i < m_neurons.size(); i++)
         {
-            double t_const = a_dtime / m_neurons[i].m_timeconst;
-            m_neurons[i].m_membrane_potential = (1.0 - t_const) * m_neurons[i].m_membrane_potential + t_const * m_neurons[i].m_activesum;
+            // Exact solution of tau dv/dt = input - v over the step. Explicit
+            // Euler overshoots for dt > tau and diverges for dt > 2 tau; for
+            // small steps the two agree to first order.
+            const double t_const =
+                -std::expm1(-a_dtime / m_neurons[i].m_timeconst);
+            m_neurons[i].m_membrane_potential +=
+                t_const * (m_neurons[i].m_activesum -
+                           m_neurons[i].m_membrane_potential);
         }
         for (size_t i = m_num_inputs; i < m_neurons.size(); i++)
         {
@@ -466,7 +493,10 @@ namespace NEAT
         const size_t mx = std::min(a_Inputs.size(),
                                    static_cast<size_t>(m_num_inputs));
         for (size_t i = 0; i < mx; i++)
+        {
             m_neurons[i].m_activation = a_Inputs[i];
+            m_neurons[i].m_last_input = a_Inputs[i];
+        }
     }
 
     void NeuralNetwork::InputExact(const std::vector<double>& a_Inputs)
@@ -482,7 +512,28 @@ namespace NEAT
                 "Neural network input count exceeds its neuron count");
         }
         for (std::size_t i = 0; i < a_Inputs.size(); ++i)
+        {
             m_neurons[i].m_activation = a_Inputs[i];
+            m_neurons[i].m_last_input = a_Inputs[i];
+        }
+    }
+
+    std::vector<double> NeuralNetwork::SpikingInputDrive() const
+    {
+        // Poisson sampling replaces an input's activation with the sampled
+        // spike, so the requested rate is kept in m_last_input. Without
+        // this, repeated Activate() calls ran at 0 or 1 Hz after one step.
+        const bool poisson =
+            m_spiking_input_mode == POISSON_RATE_INPUT;
+        std::vector<double> inputs;
+        inputs.reserve(m_num_inputs);
+        for (unsigned int i = 0; i < m_num_inputs; ++i)
+        {
+            inputs.push_back(
+                poisson ? m_neurons[i].m_last_input
+                        : m_neurons[i].m_activation);
+        }
+        return inputs;
     }
 
     void NeuralNetwork::ActivateSteps(unsigned int steps, bool fast)
@@ -492,10 +543,7 @@ namespace NEAT
         if (IsSpiking())
         {
             ValidateNetworkTopology(*this);
-            std::vector<double> inputs;
-            inputs.reserve(m_num_inputs);
-            for (unsigned int i = 0; i < m_num_inputs; ++i)
-                inputs.push_back(m_neurons[i].m_activation);
+            const std::vector<double> inputs = SpikingInputDrive();
             for (unsigned int step = 0; step < steps; ++step)
                 StepSpiking(inputs);
         }
@@ -740,8 +788,12 @@ namespace NEAT
             if (!m_record_spikes)
                 return;
             m_spike_history.push_back(event);
+            // Trim in batches: erasing one event from the front of a full
+            // history on every spike moved the whole buffer each time.
+            const std::size_t slack =
+                std::max<std::size_t>(1, m_max_recorded_spikes / 4);
             if (m_max_recorded_spikes > 0 &&
-                m_spike_history.size() > m_max_recorded_spikes)
+                m_spike_history.size() >= m_max_recorded_spikes + slack)
             {
                 const std::size_t excess =
                     m_spike_history.size() -
@@ -761,6 +813,7 @@ namespace NEAT
             if (i < m_num_inputs)
             {
                 const double value = inputs[i];
+                neuron.m_last_input = value;
                 bool spike = false;
                 double amplitude = 1.0;
                 switch (m_spiking_input_mode)
@@ -823,9 +876,9 @@ namespace NEAT
                     "Spiking synapses require a non-negative finite delay "
                     "a positive finite time constant, and a finite weight");
             }
-            connection.m_synaptic_current *=
-                std::exp(-dt /
-                         connection.m_synaptic_time_constant);
+            DecayState(
+                connection.m_synaptic_current,
+                std::exp(-dt / connection.m_synaptic_time_constant));
             connection.m_signal = 0.0;
             connection.m_presynaptic_signal = 0.0;
 
@@ -922,8 +975,9 @@ namespace NEAT
                     "Spike-rate filters require a positive finite "
                     "time constant");
             }
-            neuron.m_rate_trace *=
-                std::exp(-dt / neuron.m_rate_time_constant);
+            DecayState(
+                neuron.m_rate_trace,
+                std::exp(-dt / neuron.m_rate_time_constant));
 
             if (!IsSpikingActivation(
                     neuron.m_activation_function_type))
@@ -1047,12 +1101,17 @@ namespace NEAT
                 }
                 else
                 {
-                    neuron.m_membrane_potential +=
-                        (dt / neuron.m_timeconst) *
-                        (neuron.m_resting_potential -
-                         neuron.m_membrane_potential +
-                         neuron.m_membrane_resistance * current -
-                         neuron.m_adaptation);
+                    // Exact integration with current and adaptation held
+                    // over the step. Explicit Euler overshot for dt > tau,
+                    // so purely inhibitory drive could produce spikes.
+                    const double steady_state =
+                        neuron.m_resting_potential +
+                        neuron.m_membrane_resistance * current -
+                        neuron.m_adaptation;
+                    neuron.m_membrane_potential =
+                        steady_state +
+                        (neuron.m_membrane_potential - steady_state) *
+                            std::exp(-dt / neuron.m_timeconst);
                     if (neuron.m_membrane_potential >=
                         neuron.m_spike_threshold)
                     {
@@ -1108,10 +1167,12 @@ namespace NEAT
                     "STDP requires positive trace time constants and "
                     "ordered finite weight bounds");
             }
-            connection.m_stdp_pre_trace *=
-                std::exp(-dt / connection.m_stdp_tau_plus);
-            connection.m_stdp_post_trace *=
-                std::exp(-dt / connection.m_stdp_tau_minus);
+            DecayState(
+                connection.m_stdp_pre_trace,
+                std::exp(-dt / connection.m_stdp_tau_plus));
+            DecayState(
+                connection.m_stdp_post_trace,
+                std::exp(-dt / connection.m_stdp_tau_minus));
             const bool pre =
                 m_neurons[static_cast<std::size_t>(
                     connection.m_source_neuron_idx)].m_spike;
@@ -1664,7 +1725,7 @@ namespace NEAT
         fprintf(a_file, "%u %u\n", m_num_inputs, m_num_outputs);
         fprintf(
             a_file,
-            "spiking_state %3.18f %3.18f %d %d %d %zu %llu\n",
+            "spiking_state %.17g %.17g %d %d %d %zu %llu\n",
             m_spiking_time,
             m_spiking_time_step,
             static_cast<int>(m_spiking_input_mode),
@@ -1674,17 +1735,17 @@ namespace NEAT
             static_cast<unsigned long long>(m_spiking_rng_state));
         for (const auto &neuron : m_neurons)
         {
-            fprintf(a_file, "neuron %d %3.18f %3.18f %3.18f %3.18f %d %3.18f\n",
+            fprintf(a_file, "neuron %d %.17g %.17g %.17g %.17g %d %.17g\n",
                     static_cast<int>(neuron.m_type), neuron.m_a,
                     neuron.m_b, neuron.m_timeconst, neuron.m_bias,
                     static_cast<int>(neuron.m_activation_function_type),
                     neuron.m_split_y);
             fprintf(
                 a_file,
-                "spiking_neuron %3.18f %3.18f %3.18f %3.18f "
-                "%3.18f %3.18f %3.18f %3.18f %3.18f %3.18f "
-                "%3.18f %3.18f %3.18f %3.18f %3.18f %d %llu "
-                "%3.18f %3.18f %3.18f\n",
+                "spiking_neuron %.17g %.17g %.17g %.17g "
+                "%.17g %.17g %.17g %.17g %.17g %.17g "
+                "%.17g %.17g %.17g %.17g %.17g %d %llu "
+                "%.17g %.17g %.17g\n",
                 neuron.m_spike_threshold,
                 neuron.m_reset_potential,
                 neuron.m_resting_potential,
@@ -1713,8 +1774,8 @@ namespace NEAT
                 static_cast<int>(neuron.m_inhibitory_input));
             fprintf(
                 a_file,
-                "spatial_neuron %3.18f %3.18f %3.18f %3.18f %3.18f "
-                "%3.18f %zu",
+                "spatial_neuron %.17g %.17g %.17g %.17g %.17g "
+                "%.17g %zu",
                 neuron.m_x,
                 neuron.m_y,
                 neuron.m_z,
@@ -1723,21 +1784,27 @@ namespace NEAT
                 neuron.m_sz,
                 neuron.m_substrate_coords.size());
             for (double coordinate : neuron.m_substrate_coords)
-                fprintf(a_file, " %3.18f", coordinate);
+                fprintf(a_file, " %.17g", coordinate);
             fprintf(a_file, "\n");
+            fprintf(
+                a_file,
+                "runtime_neuron %.17g %.17g %.17g\n",
+                neuron.m_activation,
+                neuron.m_activesum,
+                neuron.m_last_input);
         }
         for (const auto &conn : m_connections)
         {
-            fprintf(a_file, "connection %d %d %3.18f %d %3.18f %3.18f\n",
+            fprintf(a_file, "connection %d %d %.17g %d %.17g %.17g\n",
                     conn.m_source_neuron_idx,
                     conn.m_target_neuron_idx, conn.m_weight,
                     static_cast<int>(conn.m_recur_flag),
                     conn.m_hebb_rate, conn.m_hebb_pre_rate);
             fprintf(
                 a_file,
-                "spiking_connection %3.18f %3.18f %3.18f %d "
-                "%3.18f %3.18f %3.18f %3.18f %3.18f %3.18f "
-                "%3.18f %3.18f\n",
+                "spiking_connection %.17g %.17g %.17g %d "
+                "%.17g %.17g %.17g %.17g %.17g %.17g "
+                "%.17g %.17g\n",
                 conn.m_synaptic_delay,
                 conn.m_synaptic_time_constant,
                 conn.m_synaptic_current,
@@ -1752,8 +1819,25 @@ namespace NEAT
                 conn.m_stdp_max_weight);
             fprintf(
                 a_file,
-                "spatial_connection %3.18f\n",
+                "spatial_connection %.17g\n",
                 conn.m_length);
+            fprintf(
+                a_file,
+                "runtime_connection %.17g %.17g %.17g %zu",
+                conn.m_signal,
+                conn.m_source_activation,
+                conn.m_presynaptic_signal,
+                conn.m_pending_events.size());
+            for (const auto& event : conn.m_pending_events)
+            {
+                fprintf(
+                    a_file,
+                    " %.17g %.17g %.17g",
+                    event.delivery_time,
+                    event.amplitude,
+                    event.source_amplitude);
+            }
+            fprintf(a_file, "\n");
         }
         fprintf(a_file, "NNend\n\n");
     }
@@ -1761,8 +1845,16 @@ namespace NEAT
     bool NeuralNetwork::Load(std::ifstream &a_DataFile)
     {
         NeuralNetwork loaded;
-        if (!loaded.LoadFromStream(a_DataFile))
+        try
+        {
+            if (!loaded.LoadFromStream(a_DataFile))
+                return false;
+        }
+        catch (const std::exception&)
+        {
+            // Corrupt counts can request impossible allocations.
             return false;
+        }
         *this = std::move(loaded);
         return true;
     }
@@ -1772,6 +1864,7 @@ namespace NEAT
         std::string t_str;
         while (a_DataFile >> t_str && t_str != "NNstart") {}
         if (!a_DataFile) return false;
+        Serialization::UseRoundTripParsing(a_DataFile);
         Clear();
         a_DataFile >> m_num_inputs >> m_num_outputs;
         int last_neuron = -1;
@@ -1883,6 +1976,11 @@ namespace NEAT
                 a_DataFile >> neuron.m_x >> neuron.m_y >> neuron.m_z
                            >> neuron.m_sx >> neuron.m_sy >> neuron.m_sz
                            >> coordinate_count;
+                if (!a_DataFile || coordinate_count > kMaxSubstrateCoordinates)
+                {
+                    Clear();
+                    return false;
+                }
                 neuron.m_substrate_coords.resize(coordinate_count);
                 for (double& coordinate : neuron.m_substrate_coords)
                     a_DataFile >> coordinate;
@@ -1931,6 +2029,52 @@ namespace NEAT
                 }
                 a_DataFile >> m_connections[static_cast<std::size_t>(
                     last_connection)].m_length;
+            }
+            else if (t_str == "runtime_neuron")
+            {
+                if (last_neuron < 0)
+                {
+                    Clear();
+                    return false;
+                }
+                Neuron& neuron = m_neurons[static_cast<std::size_t>(
+                    last_neuron)];
+                a_DataFile >> neuron.m_activation
+                           >> neuron.m_activesum
+                           >> neuron.m_last_input;
+            }
+            else if (t_str == "runtime_connection")
+            {
+                if (last_connection < 0)
+                {
+                    Clear();
+                    return false;
+                }
+                Connection& connection =
+                    m_connections[static_cast<std::size_t>(
+                        last_connection)];
+                std::size_t event_count = 0;
+                a_DataFile >> connection.m_signal
+                           >> connection.m_source_activation
+                           >> connection.m_presynaptic_signal
+                           >> event_count;
+                if (!a_DataFile)
+                {
+                    Clear();
+                    return false;
+                }
+                connection.m_pending_events.clear();
+                for (std::size_t event_index = 0;
+                     event_index < event_count && a_DataFile;
+                     ++event_index)
+                {
+                    PendingSynapticEvent event;
+                    a_DataFile >> event.delivery_time
+                               >> event.amplitude
+                               >> event.source_amplitude;
+                    if (a_DataFile)
+                        connection.m_pending_events.push_back(event);
+                }
             }
         }
         if (!a_DataFile || t_str != "NNend")
@@ -2089,6 +2233,30 @@ namespace NEAT
     {
         NeuralNetwork network;
         std::istringstream input(data);
+        Serialization::UseRoundTripParsing(input);
+        // Every serialized element occupies at least one character, so a
+        // larger count is corrupt and must not drive an allocation.
+        const auto require_count = [&data](std::size_t count)
+        {
+            if (count > data.size())
+            {
+                throw std::runtime_error(
+                    "NeuralNetwork::Deserialize: element count exceeds the "
+                    "serialized data.");
+            }
+            return count;
+        };
+        const auto checked_enums = [](int type, int activation)
+        {
+            if (type < NONE || type > OUTPUT ||
+                activation < SIGNED_SIGMOID ||
+                activation > MCCULLOCH_PITTS)
+            {
+                throw std::runtime_error(
+                    "NeuralNetwork::Deserialize: invalid neuron or "
+                    "activation type.");
+            }
+        };
         std::string token;
         input >> token;
         if (token != "NeuralNetworkFormat")
@@ -2114,6 +2282,12 @@ namespace NEAT
                 input >> type >> neuron.m_a >> neuron.m_b
                       >> neuron.m_timeconst >> neuron.m_bias >> activation
                       >> neuron.m_split_y;
+                if (!input)
+                {
+                    throw std::runtime_error(
+                        "NeuralNetwork::Deserialize: truncated neuron.");
+                }
+                checked_enums(type, activation);
                 neuron.m_type = static_cast<NeuronType>(type);
                 neuron.m_activation_function_type =
                     static_cast<ActivationFunction>(activation);
@@ -2183,7 +2357,7 @@ namespace NEAT
         if (token != "TotalWeightChange")
             throw std::runtime_error(
                 "NeuralNetwork::Deserialize: missing weight-change state.");
-        network.m_total_weight_change.resize(count);
+        network.m_total_weight_change.resize(require_count(count));
         for (double& value : network.m_total_weight_change)
             input >> value;
 
@@ -2191,7 +2365,7 @@ namespace NEAT
         if (token != "Neurons")
             throw std::runtime_error(
                 "NeuralNetwork::Deserialize: missing Neurons marker.");
-        network.m_neurons.reserve(count);
+        network.m_neurons.reserve(require_count(count));
         for (std::size_t i = 0; i < count; ++i)
         {
             input >> token;
@@ -2209,6 +2383,8 @@ namespace NEAT
             input >> activation >> neuron.m_x >> neuron.m_y >> neuron.m_z
                   >> neuron.m_sx >> neuron.m_sy >> neuron.m_sz
                   >> neuron.m_split_y >> type;
+            if (input)
+                checked_enums(type, activation);
             neuron.m_activation_function_type =
                 static_cast<ActivationFunction>(activation);
             neuron.m_type = static_cast<NeuronType>(type);
@@ -2252,7 +2428,7 @@ namespace NEAT
             if (token != "SubstrateCoordinates")
                 throw std::runtime_error(
                     "NeuralNetwork::Deserialize: missing coordinates.");
-            neuron.m_substrate_coords.resize(coordinates);
+            neuron.m_substrate_coords.resize(require_count(coordinates));
             for (double& coordinate : neuron.m_substrate_coords)
                 input >> coordinate;
 
@@ -2261,7 +2437,7 @@ namespace NEAT
             if (token != "Sensitivity")
                 throw std::runtime_error(
                     "NeuralNetwork::Deserialize: missing sensitivity state.");
-            neuron.m_sensitivity_matrix.resize(rows);
+            neuron.m_sensitivity_matrix.resize(require_count(rows));
             for (auto& row : neuron.m_sensitivity_matrix)
             {
                 std::size_t columns = 0;
@@ -2269,7 +2445,7 @@ namespace NEAT
                 if (token != "SensitivityRow")
                     throw std::runtime_error(
                         "NeuralNetwork::Deserialize: missing sensitivity row.");
-                row.resize(columns);
+                row.resize(require_count(columns));
                 for (double& value : row)
                     input >> value;
             }
@@ -2280,7 +2456,7 @@ namespace NEAT
         if (token != "Connections")
             throw std::runtime_error(
                 "NeuralNetwork::Deserialize: missing Connections marker.");
-        network.m_connections.reserve(count);
+        network.m_connections.reserve(require_count(count));
         for (std::size_t i = 0; i < count; ++i)
         {
             input >> token;
@@ -2325,7 +2501,7 @@ namespace NEAT
                         "NeuralNetwork::Deserialize: missing pending "
                         "synaptic events.");
                 }
-                connection.m_pending_events.resize(pending_count);
+                connection.m_pending_events.resize(require_count(pending_count));
                 for (auto& event : connection.m_pending_events)
                 {
                     input >> event.delivery_time >> event.amplitude;
@@ -2351,7 +2527,7 @@ namespace NEAT
             if (token != "SparseRTRL")
                 throw std::runtime_error(
                     "NeuralNetwork::Deserialize: missing sparse RTRL state.");
-            network.m_sparse_rtrl_sensitivities.resize(rows);
+            network.m_sparse_rtrl_sensitivities.resize(require_count(rows));
             for (auto& row : network.m_sparse_rtrl_sensitivities)
             {
                 std::size_t columns = 0;
@@ -2359,7 +2535,7 @@ namespace NEAT
                 if (token != "SparseRTRLRow")
                     throw std::runtime_error(
                         "NeuralNetwork::Deserialize: missing sparse RTRL row.");
-                row.resize(columns);
+                row.resize(require_count(columns));
                 for (double& value : row)
                     input >> value;
             }
@@ -2388,7 +2564,7 @@ namespace NEAT
                 throw std::runtime_error(
                     "NeuralNetwork::Deserialize: missing spike history.");
             }
-            network.m_spike_history.resize(event_count);
+            network.m_spike_history.resize(require_count(event_count));
             for (auto& event : network.m_spike_history)
             {
                 int is_input = 0;

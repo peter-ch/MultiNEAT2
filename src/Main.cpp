@@ -1,7 +1,10 @@
 #include <iostream>
+#include <cctype>
+#include <cerrno>
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
+#include <limits>
 #include <string>
 #include <vector>
 #include "Genome.h"
@@ -55,6 +58,27 @@ double xortest(Genome& g, bool spiking, int spiking_steps) {
     return fitness;
 }
 
+namespace {
+// Parses an entire command-line token as a base-10 int. Rejects empty input,
+// trailing characters ("12abc"), and values outside the int range instead of
+// letting std::stoi throw an uncaught exception.
+bool ParseStrictInt(const char* text, int& result) {
+    if (text == nullptr || *text == '\0' ||
+        std::isspace(static_cast<unsigned char>(*text)))
+        return false;
+    errno = 0;
+    char* end = nullptr;
+    const long long value = std::strtoll(text, &end, 10);
+    if (end == text || *end != '\0' || errno == ERANGE)
+        return false;
+    if (value < std::numeric_limits<int>::min() ||
+        value > std::numeric_limits<int>::max())
+        return false;
+    result = static_cast<int>(value);
+    return true;
+}
+}
+
 int main(int argc, char** argv) {
     bool spiking = false;
     bool mcculloch_pitts = false;
@@ -70,7 +94,16 @@ int main(int argc, char** argv) {
                 std::cerr << option << " requires an integer value\n";
                 std::exit(2);
             }
-            return std::stoi(argv[++index]);
+            const char* text = argv[++index];
+            int parsed = 0;
+            if (!ParseStrictInt(text, parsed)) {
+                std::cerr << option << " requires an integer value in ["
+                          << std::numeric_limits<int>::min() << ", "
+                          << std::numeric_limits<int>::max()
+                          << "], got '" << text << "'\n";
+                std::exit(2);
+            }
+            return parsed;
         };
         if (argument == "--spiking") {
             spiking = true;

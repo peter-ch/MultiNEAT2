@@ -1,0 +1,39 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "pybind11>=2.12"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "pymultineat"
+version = "3.0.0"
+description = "MultiNEAT 3: NEAT, HyperNEAT, ES-HyperNEAT and spiking neuroevolution"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+authors = [{ name = "Peter Chervenski" }]
+classifiers = [
+    "Programming Language :: C++",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+[project.optional-dependencies]
+viz = ["numpy>=1.24", "matplotlib>=3.7", "networkx>=3.1"]
+box2d = ["gymnasium[box2d]>=1.2,<2", "numpy>=1.24"]
+mujoco = ["gymnasium[mujoco]>=1.2,<2", "numpy>=1.24"]
+games = ["numpy>=1.24", "pygame>=2.5"]
+test = ["pytest>=8"]
+
+[tool.scikit-build]
+minimum-version = "build-system.requires"
+build-dir = "build/{wheel_tag}"
+wheel.expand-macos-universal-tags = true
+sdist.exclude = [".github", "build*", "runs", "*.ipynb"]
+
+[tool.scikit-build.cmake.define]
+MULTINEAT_BUILD_PYTHON = "ON"
+MULTINEAT_BUILD_DEMO = "OFF"
+BUILD_TESTING = "OFF"
+
+[tool.ruff]
+target-version = "py310"
+extend-exclude = ["build", "runs"]

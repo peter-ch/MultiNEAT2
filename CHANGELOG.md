@@ -2,6 +2,66 @@
 
 ## Unreleased
 
+### Second audit (2026-10-24)
+
+Correctness:
+
+- McCulloch-Pitts neurons were vetoed forever by a single inhibitory spike:
+  decaying synaptic currents stalled at a subnormal value. Decayed currents and
+  STDP/rate traces are now flushed to zero below `1e-12`.
+- LIF and leaky rate neurons use exact exponential integration; explicit Euler
+  overshot for time steps longer than the membrane time constant, so purely
+  inhibitory drive could fire a neuron. e-prop eligibility now matches the
+  solver, uses an exact memoryless path for McCulloch-Pitts targets, the
+  decayed adaptation for adaptive LIF, and the transmitted analog signal.
+- e-prop random/uniform feedback mixed other outputs' errors into each output.
+- Poisson-rate inputs fell to 0 or 1 Hz after one step of an `Activate()` loop.
+- `NeuralNetwork.Save()` dropped in-flight delayed spikes and printed values in
+  fixed point (losing small magnitudes); corrupt files threw instead of failing
+  to load. `Serialize()` output containing `inf`/`nan` could not be read back,
+  and oversized counts raised `length_error` instead of `runtime_error`.
+- FS-NEAT seeds contained duplicate bias links and failed validation.
+- `Genome::Save(FILE*)` (and therefore `Population.Save()`) lost traits,
+  McCulloch-Pitts vetoes, coordinates, and evaluation state.
+- Removing a neuron between recurrent links produced a non-recurrent cycle;
+  dead-end detection removed healthy outputs that had an outgoing recurrent
+  link; clone detection ignored the inhibitory veto gene.
+- Real-time evolution (`Tick`) selected parents uniformly at random (adjusted
+  fitness was never computed) and legacy truncation picked the worst survivor.
+- `NoveltySearchTick` never marked offspring as evaluated, so novelty runs
+  failed after about one population's worth of ticks.
+- Copying or moving a `Population` aliased the source's novelty archive.
+- One non-finite fitness in legacy mode made every later checkpoint fail.
+- Lamarckian improvement ran once per evaluation request instead of once per
+  genome per generation.
+- Python: container and variant properties (`m_NeuronGenes`, trait maps,
+  `m_Details`, evaluation samples, QD archive, ...) returned references that
+  dangled after reallocation; they now return copies. `m_PhenotypeBehavior`
+  is read-only. `Parameters.Save()` no longer truncates the file when
+  serialization fails, `Load()` keeps custom constraint callbacks, scalar
+  parsing is strict, and `RNG.Seed()` accepts 64-bit seeds.
+- Custom HyperNEAT connectivity, genome/network/parameter deserializers, and
+  the demo executable's command line validate untrusted input.
+
+Performance:
+
+- Genes, genomes, traits, and species regained move semantics (a declared copy
+  assignment had disabled them), and crossover aligns genes through pointers:
+  multipoint crossover is about 1.8x faster.
+- Spike-history trimming is amortized, and `neattools.SpikingRecorder` reads
+  events lazily instead of rebuilding them on every step.
+
+Demos, packaging, and CI:
+
+- Every demo is a standalone file that depends only on `pymultineat` and
+  third-party packages; the shared `gymnasium_neat.py` and `spiking_neat.py`
+  modules are gone. Numba is optional for the Asteroids demo.
+- `pip install .` builds a wheel through scikit-build-core and installs
+  `pymultineat` (with `__version__`) and `neattools`.
+- CI uses current actions, pip caching, Python 3.10/3.12/3.13, a Box2D/MuJoCo
+  smoke job, and a wheel job. New native suites cover networks and
+  populations.
+
 ### Audit fixes
 
 - Made bootstrap summaries and stored evidence independent of worker completion

@@ -24,7 +24,7 @@ import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Sequence
+from collections.abc import Iterable, Sequence
 
 
 ROOT = Path(__file__).resolve().parent
@@ -809,7 +809,7 @@ def run_gui() -> int:
         GREEN = "#34d399"
         RED = "#fb7185"
 
-        def __init__(self, root: "tk.Tk") -> None:
+        def __init__(self, root: tk.Tk) -> None:
             self.root = root
             self.events: queue.Queue[tuple] = queue.Queue()
             self.active_process: subprocess.Popen[str] | None = None
@@ -1372,11 +1372,23 @@ def run_gui() -> int:
                 )
                 return
             spec = self.selected_spec()
+            # Read the form before marking the launcher busy: invalid numeric
+            # text raises TclError, which previously left Launch disabled.
+            try:
+                options = self.options()
+            except (tk.TclError, ValueError):
+                messagebox.showerror(
+                    "Invalid setting",
+                    "Generations, population, steps, episodes, workers, and "
+                    "seed must be whole numbers.",
+                    parent=self.root,
+                )
+                return
             self._set_busy(True, f"Starting {spec.title}…")
             self.stop_requested = False
             threading.Thread(
                 target=self._launch_worker,
-                args=(spec, self.options(), runtime),
+                args=(spec, options, runtime),
                 daemon=True,
             ).start()
 

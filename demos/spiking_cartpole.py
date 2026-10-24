@@ -4,12 +4,14 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 from dataclasses import dataclass
 import json
 import math
 from pathlib import Path
 import random
 import sys
+from typing import Callable, Sequence
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -285,13 +287,245 @@ def evolve(
     return best, history, validated, success_lower_bound
 
 
+# ---------------------------------------------------------------------------
+# Recording and visualization (matplotlib/networkx are imported only here)
+# ---------------------------------------------------------------------------
+BACKGROUND = "#0f172a"
+FOREGROUND = "#e2e8f0"
+MUTED = "#94a3b8"
+GRID = "#334155"
+NEURON_STYLE = {  # neuron type -> (color, marker)
+    neat.INPUT: ("#22c55e", "s"),
+    neat.BIAS: ("#facc15", "h"),
+    neat.HIDDEN: ("#38bdf8", "o"),
+    neat.OUTPUT: ("#fb7185", "D"),
+}
+TRACE_COLORS = ("#2563eb", "#38bdf8", "#fb7185")
+
+
+class SpikingRecorder:
+    """Step a spiking network and keep membrane and firing-rate traces.
+
+    Spike events themselves are kept by the network (``EnableSpikeRecording``)
+    and read back through :attr:`events`.
+    """
+
+    def __init__(self, network: neat.NeuralNetwork) -> None:
+        self.network = network
+        self.times: list[float] = []
+        self.membrane: list[list[float]] = []
+        self.filtered_rates: list[list[float]] = []
+
+    def clear(self) -> None:
+        """Drop the traces, e.g. after ``network.Flush()`` restarts time at 0."""
+
+        self.times.clear()
+        self.membrane.clear()
+        self.filtered_rates.clear()
+
+    @property
+    def events(self) -> list:
+        return list(self.network.GetSpikeHistory())
+
+    def step(self, inputs: Sequence[float], time_step: float) -> list[float]:
+        output = self.network.StepSpiking(list(inputs), time_step)
+        neurons = self.network.m_neurons
+        self.times.append(float(self.network.SpikingTime()))
+        self.membrane.append([float(n.m_membrane_potential) for n in neurons])
+        self.filtered_rates.append([float(n.m_rate_trace) for n in neurons])
+        return list(output)
+
+
+def style_axis(ax, title: str, xlabel: str = "", ylabel: str = "") -> None:
+    ax.set_title(title, color=FOREGROUND)
+    ax.set_xlabel(xlabel, color=FOREGROUND)
+    ax.set_ylabel(ylabel, color=FOREGROUND)
+    ax.set_facecolor(BACKGROUND)
+    ax.figure.patch.set_facecolor(BACKGROUND)
+    ax.tick_params(colors=MUTED)
+
+
+def dark_legend(ax, **kwargs) -> None:
+    legend = ax.legend(facecolor=BACKGROUND, edgecolor=GRID, framealpha=0.88, **kwargs)
+    for text in legend.get_texts():
+        text.set_color(FOREGROUND)
+
+
+def draw_spiking_network(network: neat.NeuralNetwork, ax, title: str | None = None) -> None:
+    """Draw a phenotype: spiking neurons are enlarged, others show potential.
+
+    Blue links are excitatory, red inhibitory; width grows with |weight|.
+    """
+
+    import networkx as nx
+
+    neurons = network.m_neurons
+    graph = nx.DiGraph()
+    graph.add_nodes_from(range(len(neurons)))
+    levels: dict[float, list[int]] = {}
+    for index, neuron in enumerate(neurons):
+        level = float(neuron.m_split_y)
+        if neuron.m_type in (neat.INPUT, neat.BIAS):
+            level = 0.0
+        elif neuron.m_type == neat.OUTPUT:
+            level = 1.0
+        levels.setdefault(level, []).append(index)
+    positions = {
+        index: ((order + 1.0) / (len(indices) + 1.0), level)
+        for level, indices in levels.items()
+        for order, index in enumerate(indices)
+    }
+
+    connections = network.m_connections
+    max_abs_weight = max((abs(c.m_weight) for c in connections), default=1.0)
+    for connection in connections:
+        source = connection.m_source_neuron_idx
+        target = connection.m_target_neuron_idx
+        weight = connection.m_weight
+        magnitude = math.sqrt(abs(weight) / max_abs_weight) if max_abs_weight else 0.0
+        curved = connection.m_recur_flag or source == target
+        nx.draw_networkx_edges(
+            graph, positions, edgelist=[(source, target)],
+            width=0.6 + 4.4 * magnitude, alpha=0.25 + 0.7 * magnitude,
+            edge_color="#2563eb" if weight > 0 else "#ef4444" if weight < 0 else "#64748b",
+            style="dotted" if connection.m_stdp_enabled else "solid",
+            connectionstyle="arc3,rad=0.22" if curved else "arc3,rad=0.02",
+            arrows=True, arrowsize=12, ax=ax,
+        )
+    for neuron_type, (color, marker) in NEURON_STYLE.items():
+        nodes = [i for i, neuron in enumerate(neurons) if neuron.m_type == neuron_type]
+        if not nodes:
+            continue
+        spiking = [bool(neurons[i].m_spike) for i in nodes]
+        nx.draw_networkx_nodes(
+            graph, positions, nodelist=nodes, node_shape=marker, node_color=color,
+            node_size=[950 if s else 650 for s in spiking],
+            edgecolors=[FOREGROUND if s else GRID for s in spiking],
+            linewidths=[3.0 if s else 1.0 for s in spiking],
+            ax=ax,
+        )
+    labels = {
+        index: f"{index}\n★" if neuron.m_spike else f"{index}\n{neuron.m_membrane_potential:.2f}"
+        for index, neuron in enumerate(neurons)
+    }
+    nx.draw_networkx_labels(graph, positions, labels=labels, font_size=8,
+                            font_color=FOREGROUND, ax=ax)
+    if title is None:
+        active = sum(bool(neuron.m_spike) for neuron in neurons)
+        title = f"Spiking phenotype · t={network.SpikingTime():.3f}s · {active} active"
+    style_axis(ax, title)
+    ax.axis("off")
+
+
+def plot_spike_raster(
+    network: neat.NeuralNetwork,
+    ax,
+    window: tuple[float, float] | None = None,
+) -> None:
+    """Scatter recorded input and neuron spikes on a shared time axis."""
+
+    events = network.GetSpikeHistory()
+    if window is not None:
+        events = [e for e in events if window[0] <= e.time <= window[1]]
+    for is_input, label, color in (
+        (True, "Input spike", NEURON_STYLE[neat.INPUT][0]),
+        (False, "Neuron spike", NEURON_STYLE[neat.OUTPUT][0]),
+    ):
+        selected = [event for event in events if bool(event.input) == is_input]
+        if selected:
+            ax.scatter(
+                [event.time for event in selected],
+                [event.neuron_index for event in selected],
+                marker="|", s=80, linewidths=1.5, color=color, label=label,
+            )
+    if window is not None:
+        ax.set_xlim(*window)
+    style_axis(ax, "Spike trains", "Time (s)", "Neuron")
+    ax.grid(axis="x", color=GRID, alpha=0.35)
+    if events:
+        dark_legend(ax, loc="upper right")
+
+
+def plot_traces(
+    recorder: SpikingRecorder,
+    ax,
+    neurons: Sequence[int],
+    quantity: str = "membrane",
+    window: tuple[float, float] | None = None,
+) -> None:
+    """Plot membrane potentials or filtered firing rates of chosen neurons."""
+
+    samples = recorder.membrane if quantity == "membrane" else recorder.filtered_rates
+    first = 0 if window is None else bisect.bisect_left(recorder.times, window[0])
+    times = recorder.times[first:]
+    for order, neuron in enumerate(neurons):
+        ax.plot(
+            times,
+            [sample[neuron] for sample in samples[first:]],
+            label=f"neuron {neuron}",
+            color=TRACE_COLORS[order % len(TRACE_COLORS)],
+            alpha=0.9,
+        )
+    if window is not None:
+        ax.set_xlim(*window)
+    if quantity == "membrane":
+        style_axis(ax, "Membrane potentials", "Time (s)", "Potential")
+    else:
+        style_axis(ax, "Filtered firing rates", "Time (s)", "Filtered rate (Hz)")
+    ax.grid(color=GRID, alpha=0.3)
+    if neurons and times:
+        dark_legend(ax, loc="upper right", ncol=2)
+
+
+def animate_spiking_network(
+    network: neat.NeuralNetwork,
+    recorder: SpikingRecorder,
+    input_provider: Callable[[int, float], Sequence[float]],
+    *,
+    frames: int,
+    interval: int,
+    time_step: float,
+    window_seconds: float,
+    environment_draw: Callable[[object, int], None],
+    trace_neurons: Sequence[int] | None = None,
+):
+    """Animate topology, a scrolling spike raster, traces and the task.
+
+    Each frame advances the network by one solver step with
+    ``input_provider(frame, time)``. Keep the returned animation alive.
+    """
+
+    import matplotlib.pyplot as plt
+    from matplotlib.animation import FuncAnimation
+
+    figure, axes = plt.subplots(2, 2, figsize=(14, 8), constrained_layout=True)
+    (network_axis, environment_axis), (raster_axis, membrane_axis) = axes
+    if trace_neurons is None:
+        trace_neurons = list(range(network.NumInputs(), len(network.m_neurons)))
+
+    def update(frame: int) -> list:
+        recorder.step(input_provider(frame, network.SpikingTime()), time_step)
+        now = float(network.SpikingTime())
+        window = (max(0.0, now - window_seconds), now + 1.0e-12)
+        for axis in axes.flat:
+            axis.clear()
+        draw_spiking_network(network, network_axis)
+        plot_spike_raster(network, raster_axis, window)
+        plot_traces(recorder, membrane_axis, trace_neurons, "membrane", window)
+        environment_draw(environment_axis, frame)
+        return []
+
+    return FuncAnimation(
+        figure, update, frames=frames, interval=interval,
+        blit=False, cache_frame_data=False,
+    )
+
+
 def replay(
     genome: neat.Genome,
     max_steps: int,
     seed: int,
 ):
-    from neattools import SpikingRecorder
-
     environment = CartPole()
     environment.reset(seed)
     network = build_network(genome, seed + 101)
@@ -360,13 +594,6 @@ def visualize(
     animate: bool,
 ) -> None:
     import matplotlib.pyplot as plt
-    from neattools import (
-        AnimateSpikingNetwork,
-        DrawSpikingNetwork,
-        PlotFiringRates,
-        PlotSpikeRaster,
-        SpikingRecorder,
-    )
 
     if animate:
         environment = CartPole()
@@ -377,6 +604,7 @@ def visualize(
         state = {"force": 0.0, "alive": True, "control": 0}
 
         def inputs(frame: int, _time: float) -> list[float]:
+            # The SNN runs SNN_STEPS_PER_CONTROL solver steps per physics step.
             if frame > 0 and frame % SNN_STEPS_PER_CONTROL == 0:
                 output = network.OutputFilteredSpikes()
                 state["force"] = math.tanh(
@@ -385,19 +613,21 @@ def visualize(
                 state["alive"] = environment.step(state["force"])
                 state["control"] += 1
                 if not state["alive"]:
+                    # Restart the episode; Flush() also resets SNN time to 0.
                     environment.reset(seed + state["control"])
                     network.Flush()
                     network.SeedSpiking(seed + 101 + state["control"])
+                    recorder.clear()
                     state["alive"] = True
             return environment.rates()
 
-        def draw_environment(axis, _frame, _network, _recorder) -> None:
+        def draw_environment(axis, _frame: int) -> None:
             draw_cartpole(axis, environment, state["force"])
 
-        animation = AnimateSpikingNetwork(
+        animation = animate_spiking_network(
             network,
+            recorder,
             inputs,
-            recorder=recorder,
             frames=max_steps * SNN_STEPS_PER_CONTROL,
             interval=15,
             time_step=SNN_DT,
@@ -407,23 +637,24 @@ def visualize(
                 network.NumInputs() + 1,
             ],
             environment_draw=draw_environment,
-            show=output is None,
         )
-        if output is not None:
+        if output is None:
+            plt.show()
+        else:
             output.parent.mkdir(parents=True, exist_ok=True)
             animation.save(output, fps=60)
         return
 
     environment, network, recorder, _ = replay(best, max_steps, seed)
     figure, axes = plt.subplots(2, 2, figsize=(14, 8), constrained_layout=True)
-    DrawSpikingNetwork(network, ax=axes[0, 0], show=False)
+    draw_spiking_network(network, axes[0, 0])
     draw_cartpole(axes[0, 1], environment)
-    PlotSpikeRaster(recorder, ax=axes[1, 0], show=False)
-    PlotFiringRates(
+    plot_spike_raster(network, axes[1, 0])
+    plot_traces(
         recorder,
-        ax=axes[1, 1],
-        neurons=[network.NumInputs(), network.NumInputs() + 1],
-        show=False,
+        axes[1, 1],
+        [network.NumInputs(), network.NumInputs() + 1],
+        "rate",
     )
     if output is None:
         plt.show()

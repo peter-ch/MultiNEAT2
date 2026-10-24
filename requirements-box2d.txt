@@ -1,4 +1,4 @@
-# SWIG is needed when pip cannot use a prebuilt Box2D wheel.
-swig>=4.1
+# gymnasium[box2d] pulls in the prebuilt Box2D wheel (box2d==2.3.10).
+# Install SWIG separately only if pip must build Box2D from source.
 gymnasium[box2d]>=1.2,<2
 numpy>=1.24

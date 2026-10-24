@@ -20,7 +20,8 @@ from pathlib import Path
 import random
 import sys
 import time
-from typing import Optional, List, Tuple
+from dataclasses import dataclass
+from typing import Optional, List, Sequence, Tuple
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
@@ -29,15 +30,17 @@ if str(_PROJECT_ROOT) not in sys.path:
 import pygame  # noqa: E402
 import pymultineat as pnt  # noqa: E402
 
-# Import numba and numpy for optimized routines.
-import numba  # noqa: E402
 import numpy as np  # noqa: E402
-from spiking_neat import (  # noqa: E402
-    SpikingPolicy,
-    SpikingPolicySettings,
-    configure_spiking_genome,
-    configure_spiking_parameters,
-)
+
+# Numba accelerates the physics kernels when it is installed and compatible
+# with the active NumPy. Otherwise the same functions run as plain Python.
+try:
+    import numba  # noqa: E402
+
+    njit = numba.njit
+except ImportError:  # pragma: no cover - depends on the local environment
+    def njit(function):
+        return function
 
 # -----------------------------
 # Constants and configuration
@@ -85,7 +88,7 @@ MAX_TRIAL_TIME = 30000
 # -----------------------------
 # Numba-accelerated helper functions
 # -----------------------------
-@numba.njit
+@njit
 def ray_circle_intersection_numba(ox, oy, dx, dy, cx, cy, r):
     # Computes intersection t along a ray (origin + t*direction)
     f0 = ox - cx
@@ -106,7 +109,7 @@ def ray_circle_intersection_numba(ox, oy, dx, dy, cx, cy, r):
     else:
         return -1.0
 
-@numba.njit
+@njit
 def get_sensor_readings_numba(ship_x, ship_y, ship_angle, sensor_offsets, asteroid_positions, asteroid_radii, max_sensor_range):
     num_sensors = sensor_offsets.shape[0]
     readings = np.empty(num_sensors, dtype=np.float64)
@@ -134,7 +137,7 @@ def get_sensor_readings_numba(ship_x, ship_y, ship_angle, sensor_offsets, astero
         readings[i] = reading
     return readings, endpoints
 
-@numba.njit
+@njit
 def update_ship_numba(ship_x, ship_y, ship_vx, ship_vy, ship_angle, rotation, thrust,
                       max_velocity, friction, screen_width, screen_height):
     ship_angle = (ship_angle + rotation) % 360.0
@@ -155,14 +158,14 @@ def update_ship_numba(ship_x, ship_y, ship_vx, ship_vy, ship_angle, rotation, th
     ship_vy *= friction
     return ship_x, ship_y, ship_vx, ship_vy, ship_angle
 
-@numba.njit
+@njit
 def update_asteroids_numba(asteroid_positions, asteroid_velocities, screen_width, screen_height):
     for i in range(asteroid_positions.shape[0]):
         asteroid_positions[i, 0] = (asteroid_positions[i, 0] + asteroid_velocities[i, 0]) % screen_width
         asteroid_positions[i, 1] = (asteroid_positions[i, 1] + asteroid_velocities[i, 1]) % screen_height
     return asteroid_positions
 
-@numba.njit
+@njit
 def check_collision_numba(ship_x, ship_y, ship_radius, asteroid_positions, asteroid_radii):
     for i in range(asteroid_positions.shape[0]):
         dx = ship_x - asteroid_positions[i, 0]
@@ -244,6 +247,106 @@ def spawn_asteroids(ship: Ship) -> List[Asteroid]:
     if len(asteroids) < NUM_ASTEROIDS:
         print("Warning: Could not place all asteroids without overlap after many attempts.", flush=True)
     return asteroids
+
+# -----------------------------
+# Spiking policy (--spiking / --mcculloch-pitts)
+# -----------------------------
+@dataclass(frozen=True)
+class SpikingPolicySettings:
+    """Temporal encoding and decoding settings for an evolved SNN."""
+
+    simulation_steps: int = 8
+    time_step: float = 0.001
+    input_rate_hz: float = 200.0
+    output_rate_hz: float = 200.0
+
+    def validate(self) -> None:
+        if self.simulation_steps < 1:
+            raise ValueError("spiking simulation_steps must be positive")
+        values = (self.time_step, self.input_rate_hz, self.output_rate_hz)
+        if not all(math.isfinite(value) and value > 0.0 for value in values):
+            raise ValueError("spiking rates and time step must be finite and positive")
+
+
+def configure_spiking_parameters(params: pnt.Parameters, neuron_model: str) -> None:
+    """Apply a recurrent, control-oriented evolvable SNN preset (no STDP)."""
+
+    if neuron_model == "mcculloch-pitts":
+        params.ConfigureMcCullochPitts(True, False)
+    else:
+        params.ConfigureSpiking(False)
+    params.DontUseBiasNeuron = True
+    params.AllowLoops = True
+    params.RecurrentProb = 0.2
+    params.SplitRecurrent = True
+    params.SplitLoopedRecurrent = True
+    params.MinWeight = -12.0
+    params.MaxWeight = 12.0
+    params.WeightMutationMaxPower = 1.0
+    params.WeightReplacementMaxPower = 6.0
+    params.MinSpikingTimeConstant = 0.005
+    params.MaxSpikingTimeConstant = 0.04
+    params.MinSpikeRateTimeConstant = 0.02
+    params.MaxSpikeRateTimeConstant = 0.08
+    params.MinSpikeThreshold = 0.4
+    params.MaxSpikeThreshold = 1.4
+    params.MinSynapticDelay = 0.0
+    params.MaxSynapticDelay = 0.012
+    params.InitialSTDPEnabledProb = 0.0
+
+
+def configure_spiking_genome(init: pnt.GenomeInitStruct, neuron_model: str) -> None:
+    """Select the stateful neuron model used by the seed genome."""
+
+    if neuron_model == "mcculloch-pitts":
+        init.HiddenActType = pnt.MCCULLOCH_PITTS
+        init.OutputActType = pnt.MCCULLOCH_PITTS
+    else:
+        init.HiddenActType = pnt.SPIKING_ADAPTIVE_LIF
+        init.OutputActType = pnt.SPIKING_LIF
+
+
+class SpikingPolicy:
+    """Drive a spiking phenotype with Poisson-rate inputs, read filtered rates."""
+
+    def __init__(self, network: pnt.NeuralNetwork, settings: SpikingPolicySettings) -> None:
+        settings.validate()
+        if not network.IsSpiking():
+            raise ValueError("SpikingPolicy requires a spiking phenotype")
+        self.network = network
+        self.settings = settings
+        network.SetSpikingInputMode(pnt.POISSON_RATE_INPUT)
+        network.SetSpikingOutputMode(pnt.FILTERED_SPIKE_OUTPUT)
+        network.SetSpikingTimeStep(settings.time_step)
+        network.EnableSTDP(False)
+
+    def reset(self, seed: int) -> None:
+        self.network.Flush()
+        self.network.SeedSpiking(int(seed))
+
+    def step_unsigned(self, values: Sequence[float]) -> List[float]:
+        """Map inputs in [-1, 1] to rates; return output rates scaled to [0, 1]."""
+
+        if len(values) != self.network.NumInputs():
+            raise ValueError(
+                f"Spiking policy expected {self.network.NumInputs()} inputs, "
+                f"received {len(values)}"
+            )
+        rates = []
+        for value in values:
+            numeric = float(value)
+            if not math.isfinite(numeric):
+                numeric = 0.0
+            normalized = min(1.0, max(-1.0, numeric))
+            rates.append(0.5 * (normalized + 1.0) * self.settings.input_rate_hz)
+        outputs: List[float] = []
+        for _ in range(self.settings.simulation_steps):
+            outputs = list(self.network.StepSpiking(rates, self.settings.time_step))
+        return [
+            min(1.0, max(0.0, output / self.settings.output_rate_hz))
+            for output in outputs
+        ]
+
 
 # -----------------------------
 # Asteroids Simulation Runner
@@ -670,13 +773,7 @@ def main() -> None:
     params.AllowLoops = True
     params.AllowClones = True
     if args.spiking:
-        configure_spiking_parameters(
-            pnt,
-            params,
-            recurrent=True,
-            enable_stdp=False,
-            neuron_model=neuron_model,
-        )
+        configure_spiking_parameters(params, neuron_model)
 
     # Genome initialization: NUM_SENSORS (plus bias) inputs and 3 outputs.
     init_struct = pnt.GenomeInitStruct()
@@ -687,9 +784,7 @@ def main() -> None:
     init_struct.HiddenActType = pnt.UNSIGNED_SIGMOID
     init_struct.OutputActType = pnt.UNSIGNED_SIGMOID
     if args.spiking:
-        configure_spiking_genome(
-            pnt, init_struct, neuron_model=neuron_model
-        )
+        configure_spiking_genome(init_struct, neuron_model)
 
     genome_prototype = pnt.Genome(params, init_struct)
     seed = args.seed if args.seed is not None else int(time.time())

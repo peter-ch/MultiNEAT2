@@ -1,4 +1,6 @@
 numpy>=1.24
 pygame>=2.5
+# Optional: accelerates the Asteroids physics kernels. The demo falls back
+# to plain Python when Numba is missing or incompatible with NumPy.
 numba>=0.60
 -r requirements-visualization.txt

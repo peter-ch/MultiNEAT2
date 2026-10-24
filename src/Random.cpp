@@ -3,15 +3,34 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
 
 namespace NEAT
 {
-    void RNG::Seed(long seed)
+    void RNG::Seed(long long seed)
     {
-        m_Engine.seed(static_cast<std::mt19937::result_type>(seed));
+        using result_type = std::mt19937::result_type;
+        constexpr long long signed_min =
+            static_cast<long long>(std::numeric_limits<std::int32_t>::min());
+        constexpr long long unsigned_max =
+            static_cast<long long>(std::numeric_limits<std::uint32_t>::max());
+        std::uint32_t folded = 0;
+        if (seed >= signed_min && seed <= unsigned_max)
+        {
+            // Historical behaviour: the 32-bit value (two's complement for
+            // negative seeds) seeds the engine directly.
+            folded = static_cast<std::uint32_t>(seed);
+        }
+        else
+        {
+            const auto bits = static_cast<std::uint64_t>(seed);
+            folded = static_cast<std::uint32_t>(bits) ^
+                     static_cast<std::uint32_t>(bits >> 32);
+        }
+        m_Engine.seed(static_cast<result_type>(folded));
     }
 
     void RNG::TimeSeed()
@@ -19,7 +38,7 @@ namespace NEAT
         using namespace std::chrono;
         auto now = system_clock::now();
         auto ms = duration_cast<milliseconds>(now.time_since_epoch()).count();
-        Seed(static_cast<long>(ms));
+        Seed(static_cast<long long>(ms));
     }
 
     int RNG::RandPosNeg()

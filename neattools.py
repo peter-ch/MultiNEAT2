@@ -19,7 +19,8 @@ import csv
 import json
 import math
 from pathlib import Path
-from typing import Any, Callable, Iterable, Mapping, MutableMapping, Sequence
+from typing import Any
+from collections.abc import Callable, Iterable, Mapping, MutableMapping, Sequence
 import warnings
 
 import matplotlib.pyplot as plt
@@ -751,7 +752,7 @@ def DrawGenomes(
         squeeze=False,
         constrained_layout=True,
     )
-    for axis, genome in zip(axes.flat, genomes):
+    for axis, genome in zip(axes.flat, genomes, strict=False):
         DrawGenome(
             genome,
             ax=axis,
@@ -829,7 +830,7 @@ def DrawGenomeComparison(
             positions[node] = tuple(
                 (left_value + right_value) / 2.0
                 for left_value, right_value in zip(
-                    left_positions[node], right_positions[node]
+                    left_positions[node], right_positions[node], strict=True
                 )
             )
         elif node in left_positions:
@@ -848,7 +849,7 @@ def DrawGenomeComparison(
     }
     diff_axis = axes[1]
     diff_axis.set_facecolor(theme.background)
-    for _, (nodes, color) in node_groups.items():
+    for nodes, color in node_groups.values():
         if nodes:
             nx.draw_networkx_nodes(
                 union,
@@ -1273,8 +1274,6 @@ class EvolutionTracker:
                 encoding="utf-8",
             )
         elif destination.suffix.lower() == ".csv":
-            import csv
-
             keys = list(self.history[0]) if self.history else []
             with destination.open("w", newline="", encoding="utf-8") as stream:
                 writer = csv.DictWriter(stream, fieldnames=keys)
@@ -1852,11 +1851,31 @@ class SpikingRecorder:
         self.spikes: list[list[float]] = []
         self.outputs: list[list[float]] = []
         self.weights: list[list[float]] = []
-        self.events: list[dict[str, Any]] = []
+        # Events are read from the network's own spike history on demand;
+        # rebuilding them on every record() made long rollouts quadratic.
+        self._events_since: float | None = None
 
     @property
     def neuron_count(self) -> int:
         return len(self.network.m_neurons)
+
+    @property
+    def events(self) -> list[dict[str, Any]]:
+        """Spike events recorded since the last clear()."""
+
+        if self._events_since is None and not self.times:
+            return []
+        rows = _spike_event_rows(self.network)
+        if self._events_since is None:
+            return rows
+        since = self._events_since
+        # Input spikes are stamped at the start of a step and neuron spikes
+        # at its end, so a step that began at `since` keeps its input events.
+        return [
+            row
+            for row in rows
+            if row["time"] > since or (row["input"] and row["time"] == since)
+        ]
 
     def clear(self, *, reset_network: bool = False) -> None:
         self.times.clear()
@@ -1865,9 +1884,12 @@ class SpikingRecorder:
         self.spikes.clear()
         self.outputs.clear()
         self.weights.clear()
-        self.events.clear()
         if reset_network:
             self.network.Flush()
+            self._events_since = None
+        else:
+            # Keep the network history but hide events recorded before now.
+            self._events_since = float(self.network.SpikingTime())
 
     def record(self) -> None:
         neurons = self.network.m_neurons
@@ -1887,7 +1909,6 @@ class SpikingRecorder:
         self.weights.append(
             [float(connection.m_weight) for connection in self.network.m_connections]
         )
-        self.events = _spike_event_rows(self.network)
 
     def step(
         self,

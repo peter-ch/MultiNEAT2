@@ -4,6 +4,8 @@ from pathlib import Path
 
 import pymultineat as neat
 
+assert isinstance(neat.__version__, str) and neat.__version__
+
 
 def make_genome(parameters: neat.Parameters) -> neat.Genome:
     init = neat.GenomeInitStruct()

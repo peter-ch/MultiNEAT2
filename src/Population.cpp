@@ -9,6 +9,7 @@
 #include <stdexcept>
 
 #include "Genome.h"
+#include "Serialization.h"
 #include "Species.h"
 #include "Random.h"
 #include "Population.h"
@@ -704,8 +705,12 @@ void Population::AdvanceEvaluationCycle()
                 candidates.begin(), candidates.end(),
                 [](const Genome* lhs, const Genome* rhs)
                 {
-                    if (lhs->GetFitness() != rhs->GetFitness())
-                        return lhs->GetFitness() > rhs->GetFitness();
+                    const double lhs_fitness =
+                        FitnessForOrdering(lhs->GetFitness());
+                    const double rhs_fitness =
+                        FitnessForOrdering(rhs->GetFitness());
+                    if (lhs_fitness != rhs_fitness)
+                        return lhs_fitness > rhs_fitness;
                     if (lhs->GetEvaluationSummary().mean !=
                         rhs->GetEvaluationSummary().mean)
                     {
@@ -838,7 +843,17 @@ Genome Population::GetEvaluationGenome(
         return *source;
     if (m_LamarckianLocalImprovement)
     {
-        m_LocalImprovementHook(*source);
+        // Apply the write-back improvement once per genome per generation.
+        // Every case (and every retried request) of this generation then
+        // evaluates the same improved phenotype instead of compounding the
+        // hook and mixing evidence from different genotypes.
+        const std::pair<bool, int> key{
+            request.archive_evaluation, source->GetID()};
+        if (m_LamarckianImproved.find(key) == m_LamarckianImproved.end())
+        {
+            m_LocalImprovementHook(*source);
+            m_LamarckianImproved.insert(key);
+        }
         return *source;
     }
     Genome improved = *source;
@@ -1044,14 +1059,14 @@ std::vector<EvaluationRequest> Population::ValidateCandidates(
         candidates.begin(), candidates.end(),
         [&](const Genome* lhs, const Genome* rhs)
         {
-            return lhs->GetReliableFitness(
+            return FitnessForOrdering(lhs->GetReliableFitness(
                        m_Parameters.FitnessAggregationMode,
                        m_Parameters.EvaluationConfidence,
-                       m_Parameters.EvaluationBootstrapSamples) >
-                   rhs->GetReliableFitness(
+                       m_Parameters.EvaluationBootstrapSamples)) >
+                   FitnessForOrdering(rhs->GetReliableFitness(
                        m_Parameters.FitnessAggregationMode,
                        m_Parameters.EvaluationConfidence,
-                       m_Parameters.EvaluationBootstrapSamples);
+                       m_Parameters.EvaluationBootstrapSamples));
         });
     candidates.resize(std::min<std::size_t>(candidate_count, candidates.size()));
     m_PendingEvaluationRequests.clear();
@@ -1078,6 +1093,23 @@ std::vector<EvaluationRequest> Population::ValidateCandidates(
 ValidatedChampion Population::GetValidatedChampion() const
 {
     return m_ValidatedChampion;
+}
+
+void Population::RebinQDArchive()
+{
+    // Re-binning regroups and reorders m_QDArchive, so a pending archive
+    // re-evaluation request would afterwards address a different entry.
+    if (std::any_of(
+            m_PendingEvaluationRequests.begin(),
+            m_PendingEvaluationRequests.end(),
+            [](const EvaluationRequest& request)
+            { return request.archive_evaluation; }))
+    {
+        throw std::logic_error(
+            "RebinQDArchive cannot run while QD archive re-evaluation "
+            "requests are pending; submit them first");
+    }
+    RebuildQDArchive();
 }
 
 bool Population::TryGetQDParent(
@@ -1321,7 +1353,9 @@ Population::Population(const std::string a_sFileName)
     Speciate();
     m_BestGenome = m_Species[0].GetLeader();
     m_BestGenomeEver = m_BestGenome;
-    m_BestFitnessEver = m_BestGenome.GetFitness();
+    // Genome files may carry legacy non-finite fitness; population state
+    // must stay finite to remain serializable.
+    m_BestFitnessEver = FitnessForOrdering(m_BestGenome.GetFitness());
 
     // Set up the phased search variables
     CalculateMPC();
@@ -1528,6 +1562,49 @@ void Population::AdjustFitness()
                 std::isfinite(adjusted) && adjusted > 0.0
                     ? adjusted / maximum_adjusted
                     : 1.0e-12);
+        }
+    }
+}
+
+void Population::AdjustRealTimeFitness()
+{
+    // Mirrors AdjustFitness(): the population-wide fitness transform (the
+    // default shifts so the minimum is positive) followed by fitness sharing
+    // (division by species size). Only evaluated, finite genomes carry
+    // evidence; unevaluated ones are excluded from the transform and keep a
+    // zero adjusted fitness (GetIndividual never selects them), non-finite
+    // ones receive the transform's minimal weight. Species age/stagnation
+    // multipliers are generational and constant within a species, so they do
+    // not affect real-time within-species selection and are not applied.
+    std::vector<double> raw_fitness;
+    raw_fitness.reserve(NumGenomes());
+    for (const auto& species : m_Species)
+    {
+        for (const auto& genome : species.m_Individuals)
+        {
+            raw_fitness.push_back(
+                genome.IsEvaluated()
+                    ? genome.GetFitness()
+                    : std::numeric_limits<double>::quiet_NaN());
+        }
+    }
+    if (raw_fitness.empty())
+        return;
+    const std::vector<double> transformed =
+        TransformFitnessValues(raw_fitness, m_Parameters);
+
+    std::size_t index = 0;
+    for (auto& species : m_Species)
+    {
+        const double species_size =
+            static_cast<double>(species.m_Individuals.size());
+        for (auto& genome : species.m_Individuals)
+        {
+            const double value = transformed[index++];
+            genome.SetAdjFitness(
+                genome.IsEvaluated() && std::isfinite(value)
+                    ? value / species_size
+                    : 0.0);
         }
     }
 }
@@ -2238,6 +2315,7 @@ void Population::Epoch()
     m_Generation++;
     m_PendingEvaluationRequests.clear();
     m_RacingCandidates.clear();
+    m_LamarckianImproved.clear();
     m_EvaluationStage = 0;
     m_EvaluationTargetSamples = 0;
     m_EvaluationCycleComplete = false;
@@ -2354,9 +2432,9 @@ Genome Population::RemoveWorstIndividual()
         {
             if (!genome.IsEvaluated())
                 continue;
-            const double fitness = std::isfinite(genome.GetFitness())
-                ? genome.GetFitness()
-                : 0.0;
+            if (!std::isfinite(genome.GetFitness()))
+                continue;
+            const double fitness = genome.GetFitness();
             minimum_fitness = have_finite_fitness
                 ? std::min(minimum_fitness, fitness)
                 : fitness;
@@ -2380,12 +2458,13 @@ Genome Population::RemoveWorstIndividual()
                 if (m_Species[i].m_Individuals[j].IsEvaluated())
                 {
                     numev++;
-                    const double fitness = std::isfinite(
-                        m_Species[i].m_Individuals[j].GetFitness())
-                        ? m_Species[i].m_Individuals[j].GetFitness()
-                        : 0.0;
-                    const double t_adjusted_fitness =
-                        (fitness + fitness_offset) * adjinv;
+                    // Invalid (non-finite) legacy fitness ranks below every
+                    // valid score, so such individuals are replaced first.
+                    const double fitness =
+                        m_Species[i].m_Individuals[j].GetFitness();
+                    const double t_adjusted_fitness = std::isfinite(fitness)
+                        ? (fitness + fitness_offset) * adjinv
+                        : std::numeric_limits<double>::lowest();
             
                     if (t_adjusted_fitness < t_worst_fitness)
                     {
@@ -2579,13 +2658,13 @@ Genome* Population::Tick(Genome& a_deleted_genome)
     {
         for(int j=0; j<(int)m_Species[i].m_Individuals.size(); j++)
         {
-            double t_fitness = m_Species[i].m_Individuals[j].GetFitness();
+            const double t_fitness =
+                m_Species[i].m_Individuals[j].GetFitness();
             if (!m_Species[i].m_Individuals[j].IsEvaluated())
                 continue;
+            // Invalid legacy fitness never becomes the best-ever genome.
             if (!std::isfinite(t_fitness))
-            {
-                t_fitness = 0;
-            }
+                continue;
             
             if (t_fitness > m_BestFitnessEver)
             {
@@ -2723,6 +2802,10 @@ Genome* Population::Tick(Genome& a_deleted_genome)
         m_Species[i].CalculateAverageFitness();
     }
 
+    // Per-species parent selection (Species::GetIndividual) works on
+    // adjusted fitness, which only Epoch() used to compute.
+    AdjustRealTimeFitness();
+
 #ifdef VDEBUG
     std::cout << "choose parents\n";
 #endif
@@ -2831,6 +2914,9 @@ void Population::InitPhenotypeBehaviorData(
     a_population->resize(NumGenomes());
     m_BehaviorArchive = a_archive;
     m_BehaviorArchive->clear();
+    m_UsesOwnedBehaviorArchive = false;
+    m_OwnedBehaviorData.clear();
+    m_OwnedBehaviorArchive.clear();
 
     std::size_t counter = 0;
     for (auto &species : m_Species)
@@ -2865,7 +2951,10 @@ void Population::InitPhenotypeBehaviorData(
 
     m_OwnedBehaviorData = a_population;
     m_OwnedBehaviorArchive.clear();
-    m_BehaviorArchive = &m_OwnedBehaviorArchive;
+    // No self-pointer: a defaulted copy/move would leave it aimed at the
+    // source object's archive. ActiveBehaviorArchive() resolves the flag.
+    m_BehaviorArchive = nullptr;
+    m_UsesOwnedBehaviorArchive = true;
 
     std::size_t counter = 0;
     for (auto& species : m_Species)
@@ -2879,19 +2968,35 @@ void Population::InitPhenotypeBehaviorData(
     }
 }
 
+std::vector<PhenotypeBehavior>* Population::ActiveBehaviorArchive()
+{
+    return m_UsesOwnedBehaviorArchive ? &m_OwnedBehaviorArchive
+                                      : m_BehaviorArchive;
+}
+
+const std::vector<PhenotypeBehavior>*
+Population::ActiveBehaviorArchive() const
+{
+    return m_UsesOwnedBehaviorArchive ? &m_OwnedBehaviorArchive
+                                      : m_BehaviorArchive;
+}
+
 const std::vector<PhenotypeBehavior>& Population::GetBehaviorArchive() const
 {
-    if (m_BehaviorArchive == nullptr)
+    const std::vector<PhenotypeBehavior>* archive = ActiveBehaviorArchive();
+    if (archive == nullptr)
     {
         throw std::runtime_error(
             "Novelty search behavior data has not been initialized");
     }
-    return *m_BehaviorArchive;
+    return *archive;
 }
 
 bool Population::NoveltySearchTick(Genome& a_SuccessfulGenome)
 {
-    if (m_BehaviorArchive == nullptr)
+    std::vector<PhenotypeBehavior>* const behavior_archive =
+        ActiveBehaviorArchive();
+    if (behavior_archive == nullptr)
     {
         throw std::runtime_error(
             "Novelty search behavior data has not been initialized");
@@ -2927,16 +3032,21 @@ bool Population::NoveltySearchTick(Genome& a_SuccessfulGenome)
     bool t_success = t_new_baby->m_PhenotypeBehavior->Acquire( t_new_baby );
 
 
-    // if found a successful one, just copy it and return true
-    if (t_success)
-    {
-        a_SuccessfulGenome = *t_new_baby;
-        return true;
-    }
-
     // We have the new behavior, now let's calculate the sparseness of
     // the point in behavior space
     double t_sparseness = ComputeSparseness(*t_new_baby);
+
+    // if found a successful one, just copy it and return true
+    if (t_success)
+    {
+        // The baby has been evaluated: mark it so it can be selected as a
+        // parent and later replaced (otherwise Tick() eventually runs out of
+        // evaluated individuals).
+        t_new_baby->SetFitness(t_sparseness);
+        t_new_baby->SetEvaluated();
+        a_SuccessfulGenome = *t_new_baby;
+        return true;
+    }
 
     // OK now we have the sparseness for this behavior
     // if the sparseness is above Pmin, add this behavior to the archive
@@ -2945,12 +3055,12 @@ bool Population::NoveltySearchTick(Genome& a_SuccessfulGenome)
     {
         // Do not archive the same behavior characterization repeatedly.
         const auto present = std::find(
-            m_BehaviorArchive->begin(),
-            m_BehaviorArchive->end(),
+            behavior_archive->begin(),
+            behavior_archive->end(),
             *t_new_baby->m_PhenotypeBehavior);
-        if (present == m_BehaviorArchive->end())
+        if (present == behavior_archive->end())
         {
-            m_BehaviorArchive->push_back( *(t_new_baby->m_PhenotypeBehavior) );
+            behavior_archive->push_back( *(t_new_baby->m_PhenotypeBehavior) );
             m_GensSinceLastArchiving = 0;
             m_QuickAddCounter++;
         }
@@ -2986,6 +3096,7 @@ bool Population::NoveltySearchTick(Genome& a_SuccessfulGenome)
 
     // Now we assign a fitness score based on the sparseness
     t_new_baby->SetFitness( t_sparseness );
+    t_new_baby->SetEvaluated();
 
     a_SuccessfulGenome = *t_new_baby;
 
@@ -3028,11 +3139,11 @@ double Population::ComputeSparseness(Genome& genome)
                 m_Species[i].m_Individuals[j].m_PhenotypeBehavior);
         }
     }
-    if(m_BehaviorArchive)
+    if (std::vector<PhenotypeBehavior>* archive = ActiveBehaviorArchive())
     {
-        for(unsigned int i=0; i<m_BehaviorArchive->size(); i++)
+        for (auto& behavior : *archive)
         {
-            add_distance(&((*m_BehaviorArchive)[i]));
+            add_distance(&behavior);
         }
     }
     
@@ -3244,6 +3355,16 @@ std::string Population::Serialize() const
         output << ' ' << entry.reevaluations << '\n';
         output << entry.genome.Serialize();
     }
+    // Optional block (written only when non-empty, so ordinary checkpoints
+    // stay readable by older readers): genomes already improved by a
+    // Lamarckian hook this generation.
+    if (!m_LamarckianImproved.empty())
+    {
+        output << "LamarckianImproved " << m_LamarckianImproved.size();
+        for (const auto& key : m_LamarckianImproved)
+            output << ' ' << key.first << ' ' << key.second;
+        output << '\n';
+    }
     output << "PopulationEnd\n";
     return output.str();
 }
@@ -3251,6 +3372,7 @@ std::string Population::Serialize() const
 Population Population::Deserialize(const std::string &data)
 {
     std::istringstream input(data);
+    Serialization::UseRoundTripParsing(input);
     std::string token;
     input >> token;
     if (token != "PopulationStart")
@@ -3490,6 +3612,25 @@ Population Population::Deserialize(const std::string &data)
     }
 
     input >> token;
+    if (token == "LamarckianImproved")
+    {
+        std::size_t improved_count = 0;
+        input >> improved_count;
+        for (std::size_t index = 0; index < improved_count; ++index)
+        {
+            bool archive = false;
+            int genome_id = -1;
+            input >> archive >> genome_id;
+            if (!input || genome_id < 0)
+            {
+                throw std::runtime_error(
+                    "Population::Deserialize: invalid LamarckianImproved "
+                    "entry.");
+            }
+            population.m_LamarckianImproved.emplace(archive, genome_id);
+        }
+        input >> token;
+    }
     if (token != "PopulationEnd")
         throw std::runtime_error(
             "Population::Deserialize: missing PopulationEnd marker.");
@@ -3504,6 +3645,7 @@ Population Population::Deserialize(const std::string &data)
     }
     population.m_TempSpecies.clear();
     population.m_BehaviorArchive = nullptr;
+    population.m_UsesOwnedBehaviorArchive = false;
     population.m_OwnedBehaviorData.clear();
     population.m_OwnedBehaviorArchive.clear();
     if (!population.m_Species.empty() &&

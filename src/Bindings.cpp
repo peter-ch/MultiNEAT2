@@ -28,8 +28,63 @@ namespace py = pybind11;
 #include "Traits.h"            
 #include "Utils.h"             
 
+// Binds a member that is (or contains) a std::vector, std::map or
+// std::variant of bound class types. def_readwrite would hand Python
+// references into the container's storage, which dangle as soon as the
+// container reallocates, is reassigned, or its owner is mutated. These
+// properties return an independent copy and assign the whole value.
+#define MULTINEAT_COPY_PROPERTY(Class, member, doc)                         \
+    def_property(                                                         \
+        #member,                                                          \
+        [](const Class& self) { return self.member; },                    \
+        [](Class& self, decltype(Class::member) value)                    \
+        { self.member = std::move(value); },                              \
+        doc)
+
 namespace
 {
+constexpr const char* kCopyDoc =
+    "Returns a copy. Modifying the returned object in place does not "
+    "change the owner; assign the whole value back instead, e.g. "
+    "``items = obj.attr; items[0].x = 1; obj.attr = items``.";
+
+constexpr const char* kTraitSchemaDoc =
+    "Returns a copy of the trait schema dict; assign the whole dict back to "
+    "change it. Numeric dependency values are converted to the dependency "
+    "trait's type when exact (see NormalizeTraitSchemas).";
+
+// Accepts any Python integer that fits in 64 bits (signed or unsigned) and
+// forwards its two's-complement bit pattern to RNG::Seed.
+long long SeedFromPython(const py::handle& value)
+{
+    py::object index = py::reinterpret_steal<py::object>(
+        PyNumber_Index(value.ptr()));
+    if (!index)
+        throw py::error_already_set();
+    int overflow = 0;
+    const long long seed =
+        PyLong_AsLongLongAndOverflow(index.ptr(), &overflow);
+    if (overflow == 0)
+    {
+        if (seed == -1 && PyErr_Occurred())
+            throw py::error_already_set();
+        return seed;
+    }
+    if (overflow > 0)
+    {
+        const unsigned long long wide =
+            PyLong_AsUnsignedLongLong(index.ptr());
+        if (PyErr_Occurred())
+        {
+            PyErr_Clear();
+            throw py::value_error(
+                "RNG.Seed: seed must fit in 64 bits.");
+        }
+        return static_cast<long long>(wide);
+    }
+    throw py::value_error("RNG.Seed: seed must fit in 64 bits.");
+}
+
 class PyPhenotypeBehavior : public NEAT::PhenotypeBehavior
 {
 public:
@@ -55,8 +110,13 @@ public:
 
 
 // Create a pybind11 module called "pymultineat"
+#ifndef MULTINEAT_VERSION_STRING
+#define MULTINEAT_VERSION_STRING "3.0.0"
+#endif
+
 PYBIND11_MODULE(pymultineat, m) {
     m.doc() = "MultiNEAT - All classes exposed via pybind11";
+    m.attr("__version__") = MULTINEAT_VERSION_STRING;
 
     // Expose enums
 
@@ -309,7 +369,7 @@ PYBIND11_MODULE(pymultineat, m) {
     py::class_<NEAT::LineageRecord>(m, "LineageRecord")
         .def(py::init<>())
         .def_readwrite("parent_ids", &NEAT::LineageRecord::parent_ids)
-        .def_readwrite("operators", &NEAT::LineageRecord::operators)
+        .MULTINEAT_COPY_PROPERTY(NEAT::LineageRecord, operators, kCopyDoc)
         .def_readwrite(
             "best_parent_score", &NEAT::LineageRecord::best_parent_score)
         .def_readwrite(
@@ -368,12 +428,13 @@ PYBIND11_MODULE(pymultineat, m) {
 
     py::class_<NEAT::IntSetTraitParameters>(m, "IntSetTraitParameters")
         .def(py::init<>())
-        .def_readwrite("set", &NEAT::IntSetTraitParameters::set)
+        .MULTINEAT_COPY_PROPERTY(NEAT::IntSetTraitParameters, set, kCopyDoc)
         .def_readwrite("probs", &NEAT::IntSetTraitParameters::probs);
 
     py::class_<NEAT::FloatSetTraitParameters>(m, "FloatSetTraitParameters")
         .def(py::init<>())
-        .def_readwrite("set", &NEAT::FloatSetTraitParameters::set)
+        .MULTINEAT_COPY_PROPERTY(
+            NEAT::FloatSetTraitParameters, set, kCopyDoc)
         .def_readwrite("probs", &NEAT::FloatSetTraitParameters::probs);
 
     py::class_<NEAT::TraitParameters>(m, "TraitParameters")
@@ -381,15 +442,44 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite("m_ImportanceCoeff", &NEAT::TraitParameters::m_ImportanceCoeff)
         .def_readwrite("m_MutationProb", &NEAT::TraitParameters::m_MutationProb)
         .def_readwrite("type", &NEAT::TraitParameters::type)
-        .def_readwrite("m_Details", &NEAT::TraitParameters::m_Details)
+        .def_property(
+            "m_Details",
+            [](const NEAT::TraitParameters& parameters) {
+                return parameters.m_Details;
+            },
+            [](NEAT::TraitParameters& parameters,
+               decltype(NEAT::TraitParameters::m_Details) details) {
+                // The detail alternative fully determines the trait type;
+                // keep the type string consistent so Save/Serialize and
+                // evolution never see a mismatched schema.
+                static const char* const type_names[] = {
+                    "int", "float", "str", "intset", "floatset"};
+                parameters.type = type_names[details.index()];
+                parameters.m_Details = std::move(details);
+            },
+            "Returns a copy of the trait details. Assign a whole "
+            "IntTraitParameters/FloatTraitParameters/... object to change "
+            "them (``d = tp.m_Details; d.max = 5; tp.m_Details = d``); "
+            "assignment also sets ``type`` to match.")
         .def_readwrite("dep_key", &NEAT::TraitParameters::dep_key)
-        .def_readwrite("dep_values", &NEAT::TraitParameters::dep_values);
+        .MULTINEAT_COPY_PROPERTY(NEAT::TraitParameters, dep_values, kCopyDoc);
 
     py::class_<NEAT::Trait>(m, "Trait")
         .def(py::init<>())
-        .def_readwrite("value", &NEAT::Trait::value)
+        .def_property(
+            "value",
+            [](const NEAT::Trait& trait) { return trait.value; },
+            [](NEAT::Trait& trait, NEAT::TraitType value) {
+                // Keep the alternative chosen from the schema when the new
+                // value converts exactly (a Python int assigned to a float
+                // trait stays a float; mutation requires the schema type).
+                NEAT::CoerceTraitValue(value, trait.value.index(), false);
+                trait.value = std::move(value);
+            },
+            "Returns a copy of the trait value. Python ints assigned to a "
+            "float or set-element trait are converted to that type.")
         .def_readwrite("dep_key", &NEAT::Trait::dep_key)
-        .def_readwrite("dep_values", &NEAT::Trait::dep_values);
+        .MULTINEAT_COPY_PROPERTY(NEAT::Trait, dep_values, kCopyDoc);
 
 
     // ========================
@@ -406,7 +496,26 @@ PYBIND11_MODULE(pymultineat, m) {
                 const std::map<std::string, NEAT::Trait>& other) {
                  return gene.GetTraitDistances(other);
              })
-        .def_readwrite("m_Traits", &NEAT::Gene::m_Traits);
+        .def_property(
+            "m_Traits",
+            [](const NEAT::Gene& gene) { return gene.m_Traits; },
+            [](NEAT::Gene& gene, std::map<std::string, NEAT::Trait> traits) {
+                for (auto& entry : traits)
+                {
+                    const auto existing = gene.m_Traits.find(entry.first);
+                    if (existing != gene.m_Traits.end())
+                    {
+                        NEAT::CoerceTraitValue(
+                            entry.second.value,
+                            existing->second.value.index(),
+                            false);
+                    }
+                }
+                gene.m_Traits = std::move(traits);
+            },
+            "Returns a copy of the trait dict. Assign the whole dict back "
+            "to change traits (``t = gene.m_Traits; t['k'].value = 2; "
+            "gene.m_Traits = t``).");
 
     py::class_<NEAT::LinkGene, NEAT::Gene>(m, "LinkGene")
         .def(py::init<>())
@@ -499,9 +608,14 @@ PYBIND11_MODULE(pymultineat, m) {
 
     py::class_<NEAT::Genome>(m, "Genome")
         .def(py::init<>())
-        .def(py::init<const NEAT::Parameters&, const NEAT::GenomeInitStruct&>())
-        .def(py::init<const char*>())
-        .def(py::init<std::ifstream&>())
+        .def(py::init<const NEAT::Parameters&, const NEAT::GenomeInitStruct&>(),
+             py::arg("parameters"), py::arg("init_struct"))
+        .def(py::init<const NEAT::Parameters&, const NEAT::GenomeInitStruct&,
+                      NEAT::RNG&>(),
+             py::arg("parameters"), py::arg("init_struct"), py::arg("rng"),
+             "Builds a seed genome drawing all random choices (FS-NEAT "
+             "links, initial traits) from rng, for reproducible runs.")
+        .def(py::init<const char*>(), py::arg("filename"))
         .def("GetNeuronByID", &NEAT::Genome::GetNeuronByID)
         .def("GetNeuronByIndex", &NEAT::Genome::GetNeuronByIndex)
         .def("GetLinkByInnovID", &NEAT::Genome::GetLinkByInnovID)
@@ -524,7 +638,9 @@ PYBIND11_MODULE(pymultineat, m) {
         .def(
             "GetEvaluationSamples",
             &NEAT::Genome::GetEvaluationSamples,
-            py::return_value_policy::reference_internal)
+            py::return_value_policy::copy,
+            "Returns a copy of the samples; use AddEvaluationSample or "
+            "SetEvaluationSamples to change them.")
         .def(
             "GetEvaluationSummary",
             &NEAT::Genome::GetEvaluationSummary,
@@ -546,12 +662,13 @@ PYBIND11_MODULE(pymultineat, m) {
         .def(
             "GetBehaviorDescriptor",
             &NEAT::Genome::GetBehaviorDescriptor,
-            py::return_value_policy::reference_internal)
+            py::return_value_policy::copy)
         .def("SetLineage", &NEAT::Genome::SetLineage)
         .def(
             "GetLineage",
             &NEAT::Genome::GetLineage,
-            py::return_value_policy::reference_internal)
+            py::return_value_policy::copy,
+            "Returns a copy; use SetLineage to change it.")
         .def("ClearLineage", &NEAT::Genome::ClearLineage)
         .def("SetAdjFitness", &NEAT::Genome::SetAdjFitness)
         .def("IsEvaluated", &NEAT::Genome::IsEvaluated)
@@ -615,11 +732,21 @@ PYBIND11_MODULE(pymultineat, m) {
              py::overload_cast<const char*>(&NEAT::Genome::Save))
         .def("Serialize", &NEAT::Genome::Serialize)
         .def_static("Deserialize", &NEAT::Genome::Deserialize)
-        .def_readwrite("m_NeuronGenes", &NEAT::Genome::m_NeuronGenes)
-        .def_readwrite("m_LinkGenes", &NEAT::Genome::m_LinkGenes)
+        .MULTINEAT_COPY_PROPERTY(NEAT::Genome, m_NeuronGenes, kCopyDoc)
+        .MULTINEAT_COPY_PROPERTY(NEAT::Genome, m_LinkGenes, kCopyDoc)
         .def_readwrite("m_GenomeGene", &NEAT::Genome::m_GenomeGene)
         .def_readwrite("m_Evaluated", &NEAT::Genome::m_Evaluated)
-        .def_readwrite("m_PhenotypeBehavior", &NEAT::Genome::m_PhenotypeBehavior)
+        // Read-only: the pointee is owned by the Population (see
+        // InitPhenotypeBehaviorData); a Python-assigned object would not be
+        // kept alive by the genome.
+        .def_property_readonly(
+            "m_PhenotypeBehavior",
+            [](const NEAT::Genome& genome) {
+                return genome.m_PhenotypeBehavior;
+            },
+            py::return_value_policy::reference_internal,
+            "Behavior attached by Population.InitPhenotypeBehaviorData "
+            "(read-only).")
         .def_readwrite("m_initial_num_neurons", &NEAT::Genome::m_initial_num_neurons)
         .def_readwrite("m_initial_num_links", &NEAT::Genome::m_initial_num_links)
         .def(py::pickle(
@@ -668,7 +795,6 @@ PYBIND11_MODULE(pymultineat, m) {
         .def(py::init<int, int>(), py::arg("a_LastInnovationNum"), py::arg("a_LastNeuronID"))
         .def("Init", (void (NEAT::InnovationDatabase::*)(int, int)) &NEAT::InnovationDatabase::Init)
         .def("InitFromGenome", (void (NEAT::InnovationDatabase::*)(const NEAT::Genome&)) &NEAT::InnovationDatabase::Init)
-        .def("InitFromFile", (void (NEAT::InnovationDatabase::*)(std::ifstream&)) &NEAT::InnovationDatabase::Init)
         .def("CheckInnovation", &NEAT::InnovationDatabase::CheckInnovation)
         .def("CheckLastInnovation", &NEAT::InnovationDatabase::CheckLastInnovation)
         .def("CheckAllInnovations", &NEAT::InnovationDatabase::CheckAllInnovations)
@@ -680,8 +806,19 @@ PYBIND11_MODULE(pymultineat, m) {
         .def("RebuildIndex", &NEAT::InnovationDatabase::RebuildIndex)
         .def("GetInnovationByIdx",
              &NEAT::InnovationDatabase::GetInnovationByIdx)
-        .def_readwrite("m_Innovations",
-                       &NEAT::InnovationDatabase::m_Innovations)
+        .def_property(
+            "m_Innovations",
+            [](const NEAT::InnovationDatabase& database) {
+                return database.m_Innovations;
+            },
+            [](NEAT::InnovationDatabase& database,
+               std::vector<NEAT::Innovation> innovations) {
+                database.m_Innovations = std::move(innovations);
+                // The lookup index caches positions; rebuild it so a
+                // same-size reassignment cannot leave stale entries.
+                database.RebuildIndex();
+            },
+            kCopyDoc)
         .def("Serialize", &NEAT::InnovationDatabase::Serialize)
         .def_static(
             "Deserialize", &NEAT::InnovationDatabase::Deserialize)
@@ -766,9 +903,8 @@ PYBIND11_MODULE(pymultineat, m) {
             "m_stdp_max_weight",
             &NEAT::Connection::m_stdp_max_weight)
         .def_readwrite("m_length", &NEAT::Connection::m_length)
-        .def_readwrite(
-            "m_pending_events",
-            &NEAT::Connection::m_pending_events);
+        .MULTINEAT_COPY_PROPERTY(
+            NEAT::Connection, m_pending_events, kCopyDoc);
 
     py::class_<NEAT::Neuron>(m, "Neuron")
         .def(py::init<>())
@@ -1116,8 +1252,9 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_static("Deserialize", &NEAT::NeuralNetwork::Deserialize)
         .def_readwrite("m_num_inputs", &NEAT::NeuralNetwork::m_num_inputs)
         .def_readwrite("m_num_outputs", &NEAT::NeuralNetwork::m_num_outputs)
-        .def_readwrite("m_connections", &NEAT::NeuralNetwork::m_connections)
-        .def_readwrite("m_neurons", &NEAT::NeuralNetwork::m_neurons)
+        .MULTINEAT_COPY_PROPERTY(
+            NEAT::NeuralNetwork, m_connections, kCopyDoc)
+        .MULTINEAT_COPY_PROPERTY(NEAT::NeuralNetwork, m_neurons, kCopyDoc)
         .def(py::pickle(
             [](const NEAT::NeuralNetwork &nn) -> std::string {
                 return nn.Serialize();
@@ -1218,9 +1355,8 @@ PYBIND11_MODULE(pymultineat, m) {
             .def(py::init<>())
             // Methods
             .def("Load", (int (NEAT::Parameters::*)(const char*)) &NEAT::Parameters::Load, py::arg("filename"))
-            .def("LoadFromStream", (int (NEAT::Parameters::*)(std::ifstream&)) &NEAT::Parameters::Load, py::arg("dataFile"))
             .def("Save", (void (NEAT::Parameters::*)(const char*)) &NEAT::Parameters::Save, py::arg("filename"))
-            .def("SaveToStream", (void (NEAT::Parameters::*)(FILE*)) &NEAT::Parameters::Save, py::arg("fstream"))
+            .def("NormalizeTraitSchemas", &NEAT::Parameters::NormalizeTraitSchemas)
             .def("Reset", &NEAT::Parameters::Reset)
             .def("ConfigureLegacyV2", &NEAT::Parameters::ConfigureLegacyV2)
             .def(
@@ -1451,9 +1587,39 @@ PYBIND11_MODULE(pymultineat, m) {
             .def_readwrite("LeoSeed", &NEAT::Parameters::LeoSeed)
             .def_readwrite("GeometrySeed", &NEAT::Parameters::GeometrySeed)
             // Universal traits
-            .def_readwrite("NeuronTraits", &NEAT::Parameters::NeuronTraits)
-            .def_readwrite("LinkTraits", &NEAT::Parameters::LinkTraits)
-            .def_readwrite("GenomeTraits", &NEAT::Parameters::GenomeTraits)
+            .def_property(
+                "NeuronTraits",
+                [](const NEAT::Parameters& parameters) {
+                    return parameters.NeuronTraits;
+                },
+                [](NEAT::Parameters& parameters,
+                   std::map<std::string, NEAT::TraitParameters> schemas) {
+                    parameters.NeuronTraits = std::move(schemas);
+                    parameters.NormalizeTraitSchemas();
+                },
+                kTraitSchemaDoc)
+            .def_property(
+                "LinkTraits",
+                [](const NEAT::Parameters& parameters) {
+                    return parameters.LinkTraits;
+                },
+                [](NEAT::Parameters& parameters,
+                   std::map<std::string, NEAT::TraitParameters> schemas) {
+                    parameters.LinkTraits = std::move(schemas);
+                    parameters.NormalizeTraitSchemas();
+                },
+                kTraitSchemaDoc)
+            .def_property(
+                "GenomeTraits",
+                [](const NEAT::Parameters& parameters) {
+                    return parameters.GenomeTraits;
+                },
+                [](NEAT::Parameters& parameters,
+                   std::map<std::string, NEAT::TraitParameters> schemas) {
+                    parameters.GenomeTraits = std::move(schemas);
+                    parameters.NormalizeTraitSchemas();
+                },
+                kTraitSchemaDoc)
             .def_readwrite("MutateNeuronTraitsProb", &NEAT::Parameters::MutateNeuronTraitsProb)
             .def_readwrite("MutateLinkTraitsProb", &NEAT::Parameters::MutateLinkTraitsProb)
             .def_readwrite("MutateGenomeTraitsProb", &NEAT::Parameters::MutateGenomeTraitsProb)
@@ -1500,9 +1666,9 @@ PYBIND11_MODULE(pymultineat, m) {
             .def_readwrite("ValidationSamples", &NEAT::Parameters::ValidationSamples)
             .def_readwrite("CertificationSamples", &NEAT::Parameters::CertificationSamples)
             .def_readwrite("ReliabilityTarget", &NEAT::Parameters::ReliabilityTarget)
-            .def_readwrite("QDDescriptorMinimums", &NEAT::Parameters::QDDescriptorMinimums)
-            .def_readwrite("QDDescriptorMaximums", &NEAT::Parameters::QDDescriptorMaximums)
-            .def_readwrite("QDDescriptorBins", &NEAT::Parameters::QDDescriptorBins)
+            .def_readwrite("QDDescriptorMinimums", &NEAT::Parameters::QDDescriptorMinimums, kCopyDoc)
+            .def_readwrite("QDDescriptorMaximums", &NEAT::Parameters::QDDescriptorMaximums, kCopyDoc)
+            .def_readwrite("QDDescriptorBins", &NEAT::Parameters::QDDescriptorBins, kCopyDoc)
             .def_readwrite("QDCellDepth", &NEAT::Parameters::QDCellDepth)
             .def_readwrite("QDArchiveReevaluationFraction", &NEAT::Parameters::QDArchiveReevaluationFraction)
             .def_readwrite("AdaptiveOperatorSelection", &NEAT::Parameters::AdaptiveOperatorSelection)
@@ -1602,7 +1768,9 @@ PYBIND11_MODULE(pymultineat, m) {
         .def(
             "GetQDArchive",
             &NEAT::Population::GetQDArchive,
-            py::return_value_policy::reference_internal)
+            py::return_value_policy::copy,
+            "Returns a copy of the archive entries (the archive changes "
+            "every epoch).")
         .def("RebinQDArchive", &NEAT::Population::RebinQDArchive)
         .def(
             "SetLocalImprovementHook",
@@ -1644,11 +1812,20 @@ PYBIND11_MODULE(pymultineat, m) {
             &NEAT::Population::GetBehaviorArchive)
         .def("Serialize", &NEAT::Population::Serialize)
         .def_static("Deserialize", &NEAT::Population::Deserialize)
-        .def_readwrite("m_GenomeArchive", &NEAT::Population::m_GenomeArchive)
+        .MULTINEAT_COPY_PROPERTY(
+            NEAT::Population, m_GenomeArchive, kCopyDoc)
         .def_readwrite("m_RNG", &NEAT::Population::m_RNG)
         .def_readwrite("m_Parameters", &NEAT::Population::m_Parameters)
         .def_readwrite("m_Generation", &NEAT::Population::m_Generation)
-        .def_readwrite("m_Species", &NEAT::Population::m_Species)
+        // Reference semantics are kept deliberately: fitness assignment via
+        // ``pop.m_Species[i].m_Individuals[j].SetFitness(f)`` is the
+        // canonical MultiNEAT idiom. The returned objects are views that are
+        // only valid until the next Epoch()/Tick()/assignment.
+        .def_readwrite(
+            "m_Species",
+            &NEAT::Population::m_Species,
+            "Live views of the species. Do not keep them (or genomes "
+            "obtained from them) across Epoch()/Tick().")
         .def_readwrite("m_ID", &NEAT::Population::m_ID)
         .def_readwrite("m_NumEvaluations", &NEAT::Population::m_NumEvaluations)
         .def(py::pickle(
@@ -1693,7 +1870,11 @@ PYBIND11_MODULE(pymultineat, m) {
         .def_readwrite("m_G", &NEAT::Species::m_G)
         .def_readwrite("m_B", &NEAT::Species::m_B)
         .def_readwrite("m_AverageFitness", &NEAT::Species::m_AverageFitness)
-        .def_readwrite("m_Individuals", &NEAT::Species::m_Individuals)
+        .def_readwrite(
+            "m_Individuals",
+            &NEAT::Species::m_Individuals,
+            "Live views of the member genomes. Do not keep them across "
+            "Epoch()/Tick().")
         .def(py::pickle(
             [](const NEAT::Species &s) -> std::string { return s.Serialize(); },
             [](const std::string &state) { return NEAT::Species::Deserialize(state); }
@@ -1705,7 +1886,14 @@ PYBIND11_MODULE(pymultineat, m) {
 
     py::class_<NEAT::RNG>(m, "RNG")
         .def(py::init<>())
-        .def("Seed", &NEAT::RNG::Seed)
+        .def(
+            "Seed",
+            [](NEAT::RNG& rng, const py::object& seed) {
+                rng.Seed(SeedFromPython(seed));
+            },
+            py::arg("seed"),
+            "Seeds the generator with any integer that fits in 64 bits. "
+            "32-bit values reproduce the historical sequences.")
         .def("TimeSeed", &NEAT::RNG::TimeSeed)
         .def("RandPosNeg", &NEAT::RNG::RandPosNeg)
         .def("RandInt", &NEAT::RNG::RandInt)

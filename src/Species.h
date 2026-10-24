@@ -18,6 +18,11 @@ namespace NEAT
 // forward
 class Population;
 
+// Maps non-finite fitness (NaN/inf, permitted in legacy mode) to the lowest
+// finite value so comparisons keep a strict weak ordering and stored scores
+// stay serializable.
+double FitnessForOrdering(double fitness);
+
 class Species
 {
 
@@ -115,9 +120,9 @@ public:
     // initializes a species with a leader genome and an ID number
     Species(const Genome& a_Seed, const Parameters& a_Parameters, int a_id);
     Species(const Species&) = default;
-
-    // assignment operator
-    Species& operator=(const Species& a_g);
+    Species(Species&&) noexcept = default;
+    Species& operator=(const Species&) = default;
+    Species& operator=(Species&&) noexcept = default;
 
     bool operator==(Species const& other) const { return m_ID == other.m_ID; }
 

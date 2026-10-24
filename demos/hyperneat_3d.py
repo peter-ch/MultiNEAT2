@@ -143,6 +143,91 @@ def evolve(
     return champion, champion_network, history
 
 
+# Colors for the 3D plot (dark theme).
+BACKGROUND = "#0f172a"
+FOREGROUND = "#e2e8f0"
+MUTED = "#94a3b8"
+NEURON_STYLE = {  # neuron type -> (color, marker)
+    neat.INPUT: ("#22c55e", "s"),
+    neat.BIAS: ("#facc15", "h"),
+    neat.HIDDEN: ("#38bdf8", "o"),
+    neat.OUTPUT: ("#fb7185", "D"),
+}
+
+
+def draw_spatial_network_3d(network: neat.NeuralNetwork, title: str):
+    """Draw neurons and directed axons at their real substrate positions.
+
+    Blue axons are excitatory, red inhibitory; thickness and opacity grow
+    with the absolute weight. Returns the 3D axis so callers can save it.
+    """
+
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    figure = plt.figure(figsize=(11, 8), constrained_layout=True)
+    ax = figure.add_subplot(111, projection="3d")
+    neurons = network.m_neurons
+    positions = [
+        np.asarray((neuron.m_x, neuron.m_y, neuron.m_z), dtype=float)
+        for neuron in neurons
+    ]
+    connections = network.m_connections
+    max_abs_weight = max((abs(c.m_weight) for c in connections), default=1.0)
+    for connection in connections:
+        source = positions[connection.m_source_neuron_idx]
+        direction = positions[connection.m_target_neuron_idx] - source
+        if np.linalg.norm(direction) == 0.0:
+            continue  # self-loops have no visible extent in 3D
+        weight = connection.m_weight
+        magnitude = (
+            math.sqrt(abs(weight) / max_abs_weight) if max_abs_weight else 0.0
+        )
+        ax.quiver(
+            *source,
+            *direction,
+            color=(
+                "#2563eb" if weight > 0.0
+                else "#ef4444" if weight < 0.0
+                else "#64748b"
+            ),
+            linewidth=0.6 + 4.4 * magnitude,
+            alpha=0.25 + 0.7 * magnitude,
+            arrow_length_ratio=0.08,
+        )
+
+    for neuron_type, (color, marker) in NEURON_STYLE.items():
+        indices = [i for i, neuron in enumerate(neurons) if neuron.m_type == neuron_type]
+        if not indices:
+            continue
+        coordinates = np.asarray([positions[i] for i in indices])
+        ax.scatter(
+            coordinates[:, 0],
+            coordinates[:, 1],
+            coordinates[:, 2],
+            marker=marker,
+            s=[105 if neurons[i].m_spike else 70 for i in indices],
+            c=color,
+            edgecolors=FOREGROUND,
+            linewidths=0.8,
+            depthshade=False,
+        )
+    for index, position in enumerate(positions):
+        ax.text(*position, f" {index}", color=FOREGROUND, fontsize=8)
+
+    ax.set_title(title, color=FOREGROUND)
+    for set_label, name in (
+        (ax.set_xlabel, "x"),
+        (ax.set_ylabel, "y"),
+        (ax.set_zlabel, "z"),
+    ):
+        set_label(name, color=FOREGROUND)
+    ax.set_facecolor(BACKGROUND)
+    figure.patch.set_facecolor(BACKGROUND)
+    ax.tick_params(colors=MUTED)
+    return ax
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--generations", type=int, default=10)
@@ -224,15 +309,12 @@ def main() -> int:
     print(json.dumps(payload, sort_keys=True))
 
     if args.output is not None or not args.no_show:
-        from neattools import DrawSpatialNetwork3D
-
-        axis = DrawSpatialNetwork3D(
+        axis = draw_spatial_network_3d(
             network,
             title=(
                 f"3D {'ES-' if es_hyperneat else ''}HyperNEAT · "
                 f"{neuron_model}"
             ),
-            show=False,
         )
         if args.output is not None:
             args.output.parent.mkdir(parents=True, exist_ok=True)

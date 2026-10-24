@@ -145,6 +145,9 @@ private:
     static std::uint64_t EndpointKey(int a_In, int a_Out);
     void EnsureIndex() const;
     void AppendToIndex(std::size_t a_Index) const;
+    // Index lookup verified against m_Innovations (rebuilds when stale).
+    const std::vector<int>* FindIndexed(
+        int a_In, int a_Out, InnovationType a_Type) const;
 
 public:
 

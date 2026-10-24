@@ -187,6 +187,9 @@ namespace NEAT
         void FlushCube();
         void Input(std::vector<double> &a_Inputs);
         void InputExact(const std::vector<double>& a_Inputs);
+        // The per-input drive used by Activate()/ActivateSteps() on spiking
+        // networks: the requested rate in Poisson mode, else the activation.
+        std::vector<double> SpikingInputDrive() const;
         std::vector<double> Output();
         void ActivateSteps(unsigned int steps, bool fast = true);
         std::vector<std::vector<double>> ActivateBatch(

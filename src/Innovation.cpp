@@ -28,6 +28,7 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 
+#include <algorithm>
 #include <fstream>
 #include <limits>
 #include <set>
@@ -350,6 +351,54 @@ InnovationDatabase InnovationDatabase::Deserialize(const std::string& data)
 
 
 
+// Returns the index positions of innovations matching (in, out, type), or
+// nullptr when there are none. m_Innovations is public, so the index can go
+// stale without a size or buffer change (for example a same-size copy
+// assignment that reuses capacity). Hits are verified against the live vector
+// and a discrepancy triggers RebuildIndex(). Misses are trusted: confirming
+// them with a linear scan made every lookup of a new link O(n). C++ code that
+// edits m_Innovations directly must call RebuildIndex(); the Python property
+// setter does so automatically.
+const std::vector<int>* InnovationDatabase::FindIndexed(
+    int a_In, int a_Out, InnovationType a_Type) const
+{
+    const auto matches = [a_In, a_Out, a_Type](const Innovation& innovation)
+    {
+        return innovation.InnovType() == a_Type &&
+               innovation.FromNeuronID() == a_In &&
+               innovation.ToNeuronID() == a_Out;
+    };
+
+    EnsureIndex();
+    for (int pass = 0; pass < 2; ++pass)
+    {
+        const auto& index =
+            a_Type == NEW_LINK
+                ? m_LinkInnovationIndex
+                : m_NeuronInnovationIndex;
+        const auto found = index.find(EndpointKey(a_In, a_Out));
+        if (found == index.end())
+            return nullptr;
+        const bool consistent = std::all_of(
+            found->second.begin(),
+            found->second.end(),
+            [this, &matches](int position)
+            {
+                return position >= 0 &&
+                       static_cast<std::size_t>(position) <
+                           m_Innovations.size() &&
+                       matches(m_Innovations[
+                           static_cast<std::size_t>(position)]);
+            });
+        if (consistent)
+            return &found->second;
+        RebuildIndex();
+    }
+    // A freshly rebuilt index is consistent, so the second pass returns.
+    return nullptr;
+}
+
+
 // Checks the database if the innovation has already occured
 // Returns the innovation id if true or -1 if false
 // If it is a NEW_LINK innovation, in & out specify the neuron IDs being connected
@@ -360,17 +409,10 @@ int InnovationDatabase::CheckInnovation(int a_In, int a_Out, InnovationType a_Ty
         (a_Type != NEW_NEURON && a_Type != NEW_LINK))
         throw std::invalid_argument("Invalid innovation query");
 
-    EnsureIndex();
-    const auto& index =
-        a_Type == NEW_LINK
-            ? m_LinkInnovationIndex
-            : m_NeuronInnovationIndex;
-    const auto found = index.find(EndpointKey(a_In, a_Out));
-    return found == index.end()
+    const std::vector<int>* found = FindIndexed(a_In, a_Out, a_Type);
+    return found == nullptr
         ? -1
-        : m_Innovations[static_cast<std::size_t>(
-              found->second.front())]
-              .ID();
+        : m_Innovations[static_cast<std::size_t>(found->front())].ID();
 }
 
 
@@ -379,17 +421,11 @@ int InnovationDatabase::CheckLastInnovation(int a_In, int a_Out, InnovationType 
     if (a_In <= 0 || a_Out <= 0 ||
         (a_Type != NEW_NEURON && a_Type != NEW_LINK))
         throw std::invalid_argument("Invalid innovation query");
-    EnsureIndex();
-    const auto& index =
-        a_Type == NEW_LINK
-            ? m_LinkInnovationIndex
-            : m_NeuronInnovationIndex;
-    const auto found = index.find(EndpointKey(a_In, a_Out));
-    return found == index.end()
+
+    const std::vector<int>* found = FindIndexed(a_In, a_Out, a_Type);
+    return found == nullptr
         ? -1
-        : m_Innovations[static_cast<std::size_t>(
-              found->second.back())]
-              .ID();
+        : m_Innovations[static_cast<std::size_t>(found->back())].ID();
 }
 
 
@@ -400,13 +436,8 @@ std::vector<int> InnovationDatabase::CheckAllInnovations(int a_In, int a_Out, In
         (a_Type != NEW_NEURON && a_Type != NEW_LINK))
         throw std::invalid_argument("Invalid innovation query");
 
-    EnsureIndex();
-    const auto& index =
-        a_Type == NEW_LINK
-            ? m_LinkInnovationIndex
-            : m_NeuronInnovationIndex;
-    const auto found = index.find(EndpointKey(a_In, a_Out));
-    return found == index.end() ? std::vector<int>{} : found->second;
+    const std::vector<int>* found = FindIndexed(a_In, a_Out, a_Type);
+    return found == nullptr ? std::vector<int>{} : *found;
 }
 
 
@@ -418,13 +449,10 @@ int InnovationDatabase::FindNeuronID(int a_In, int a_Out) const
     if (a_In <= 0 || a_Out <= 0)
         throw std::invalid_argument("Invalid neuron innovation query");
 
-    EnsureIndex();
-    const auto found = m_NeuronInnovationIndex.find(
-        EndpointKey(a_In, a_Out));
-    return found == m_NeuronInnovationIndex.end()
+    const std::vector<int>* found = FindIndexed(a_In, a_Out, NEW_NEURON);
+    return found == nullptr
         ? -1
-        : m_Innovations[static_cast<std::size_t>(
-              found->second.front())]
+        : m_Innovations[static_cast<std::size_t>(found->front())]
               .NeuronID();
 }
 
@@ -432,13 +460,11 @@ int InnovationDatabase::FindLastNeuronID(int a_In, int a_Out) const
 {
     if (a_In <= 0 || a_Out <= 0)
         throw std::invalid_argument("Invalid neuron innovation query");
-    EnsureIndex();
-    const auto found = m_NeuronInnovationIndex.find(
-        EndpointKey(a_In, a_Out));
-    return found == m_NeuronInnovationIndex.end()
+
+    const std::vector<int>* found = FindIndexed(a_In, a_Out, NEW_NEURON);
+    return found == nullptr
         ? -1
-        : m_Innovations[static_cast<std::size_t>(
-              found->second.back())]
+        : m_Innovations[static_cast<std::size_t>(found->back())]
               .NeuronID();
 }
 

@@ -309,49 +309,6 @@ Genome::Genome()
 }
 
 
-Genome::Genome(const Genome &a_G)
-  : m_ID(a_G.m_ID), m_NumInputs(a_G.m_NumInputs),
-    m_NumOutputs(a_G.m_NumOutputs), m_Fitness(a_G.m_Fitness),
-    m_AdjustedFitness(a_G.m_AdjustedFitness), m_Depth(a_G.m_Depth),
-    m_OffspringAmount(a_G.m_OffspringAmount),
-    m_EvaluationSamples(a_G.m_EvaluationSamples),
-    m_BehaviorDescriptor(a_G.m_BehaviorDescriptor),
-    m_Lineage(a_G.m_Lineage),
-    m_NeuronGenes(a_G.m_NeuronGenes), m_LinkGenes(a_G.m_LinkGenes),
-    m_GenomeGene(a_G.m_GenomeGene), m_Evaluated(a_G.m_Evaluated),
-    m_initial_num_neurons(a_G.m_initial_num_neurons),
-    m_initial_num_links(a_G.m_initial_num_links),
-    m_PhenotypeBehavior(a_G.m_PhenotypeBehavior)
-{
-}
-
-Genome &Genome::operator=(const Genome &a_G)
-{
-    if (this != &a_G)
-    {
-        m_ID = a_G.m_ID;
-        m_Fitness = a_G.m_Fitness;
-        m_AdjustedFitness = a_G.m_AdjustedFitness;
-        m_OffspringAmount = a_G.m_OffspringAmount;
-        m_EvaluationSamples = a_G.m_EvaluationSamples;
-        m_BehaviorDescriptor = a_G.m_BehaviorDescriptor;
-        m_Lineage = a_G.m_Lineage;
-        m_Depth = a_G.m_Depth;
-        m_NumInputs = a_G.m_NumInputs;
-        m_NumOutputs = a_G.m_NumOutputs;
-        m_Evaluated = a_G.m_Evaluated;
-        m_PhenotypeBehavior = a_G.m_PhenotypeBehavior;
-
-        m_NeuronGenes = a_G.m_NeuronGenes;
-        m_LinkGenes = a_G.m_LinkGenes;
-        m_GenomeGene = a_G.m_GenomeGene;
-
-        m_initial_num_neurons = a_G.m_initial_num_neurons;
-        m_initial_num_links = a_G.m_initial_num_links;
-    }
-    return *this;
-}
-
 bool Genome::Validate(std::string* error) const
 {
     const auto fail = [error](const std::string& message)
@@ -367,10 +324,10 @@ bool Genome::Validate(std::string* error) const
         return fail("Genome input/output counts cannot be negative");
     if (m_Depth < 0)
         return fail("Genome depth cannot be negative");
-    if (!std::isfinite(m_Fitness) ||
-        !std::isfinite(m_AdjustedFitness) ||
-        !std::isfinite(m_OffspringAmount))
-        return fail("Genome fitness and offspring state must be finite");
+    // Scalar fitness bookkeeping (fitness, adjusted fitness, offspring
+    // amount, lineage parent score) may be non-finite: SetFitness accepts
+    // such values by design and Parameters::RejectNonFiniteFitness is the
+    // policy boundary. Serialize/deserialize round-trips inf and nan.
     std::set<std::uint64_t> evaluation_case_ids;
     for (const auto& sample : m_EvaluationSamples)
     {
@@ -389,8 +346,6 @@ bool Genome::Validate(std::string* error) const
         if (!std::isfinite(value))
             return fail("Genome behavior descriptor must be finite");
     }
-    if (!std::isfinite(m_Lineage.best_parent_score))
-        return fail("Genome lineage parent score must be finite");
     if (std::any_of(
             m_Lineage.emitter_parameters.begin(),
             m_Lineage.emitter_parameters.end(),
@@ -509,6 +464,20 @@ bool Genome::Validate(std::string* error) const
 
 
 Genome::Genome(const Parameters &a_Parameters, const GenomeInitStruct &in)
+    : Genome()
+{
+    // Historical behaviour: an unseeded generator. Callers that need
+    // reproducible FS-NEAT topology or initial traits pass their own RNG.
+    RNG t_RNG;
+    t_RNG.TimeSeed();
+    *this = Genome(a_Parameters, in, t_RNG);
+}
+
+
+Genome::Genome(const Parameters &a_Parameters,
+               const GenomeInitStruct &in,
+               RNG &t_RNG)
+    : Genome()
 {
     const int usable_inputs =
         a_Parameters.DontUseBiasNeuron ? in.NumInputs : in.NumInputs - 1;
@@ -527,8 +496,6 @@ Genome::Genome(const Parameters &a_Parameters, const GenomeInitStruct &in)
             "Genome: FS_NEAT_links exceeds the number of unique "
             "input-to-output links.");
     }
-    RNG t_RNG;
-    t_RNG.TimeSeed();
 
     m_ID = 0;
     m_Fitness = 0.0;
@@ -674,6 +641,10 @@ Genome::Genome(const Parameters &a_Parameters, const GenomeInitStruct &in)
         else
         {
             std::vector<std::pair<int, int>> used;
+            // Each output receives at most one bias link, however many
+            // inputs FS-NEAT connects to it.
+            std::vector<bool> output_has_bias(
+                static_cast<std::size_t>(in.NumOutputs), false);
             int linkcount = 0;
             while (linkcount < in.FS_NEAT_links)
             {
@@ -702,8 +673,10 @@ Genome::Genome(const Parameters &a_Parameters, const GenomeInitStruct &in)
                         L.InitTraits(a_Parameters.LinkTraits, t_RNG);
                         m_LinkGenes.push_back(L);
                         ++t_innovnum;
-                        if (!a_Parameters.DontUseBiasNeuron)
+                        if (!a_Parameters.DontUseBiasNeuron &&
+                            !output_has_bias[i])
                         {
+                            output_has_bias[i] = true;
                             LinkGene BL(t_bias_id, t_out_id, t_innovnum, 0.0, false);
                             InitializeLinkSpiking(BL, a_Parameters);
                             BL.InitTraits(a_Parameters.LinkTraits, t_RNG);
@@ -733,6 +706,65 @@ Genome::Genome(std::istream &data)
 {
     if (!data)
         throw std::runtime_error("Invalid input stream provided to Genome constructor.");
+
+    // Accept the "inf"/"nan" spellings Serialize() writes for non-finite
+    // fitness bookkeeping, restoring the caller's locale afterwards.
+    struct LocaleRestorer
+    {
+        std::istream& stream;
+        std::locale previous;
+        ~LocaleRestorer() { stream.imbue(previous); }
+    } restorer{data, data.getloc()};
+    Serialization::UseRoundTripParsing(data);
+
+    try
+    {
+        ReadFromStream(data);
+    }
+    catch (const std::runtime_error&)
+    {
+        throw;
+    }
+    catch (const std::exception& error)
+    {
+        // Every malformed input is reported as std::runtime_error, including
+        // allocation or length failures from corrupt element counts.
+        throw std::runtime_error(
+            std::string("Genome: malformed serialized data: ") +
+            error.what());
+    }
+}
+
+
+void Genome::ReadFromStream(std::istream &data)
+{
+    // Reads `count` values one at a time so a corrupt count cannot trigger a
+    // huge up-front allocation; truncated data fails on the stream instead.
+    const auto read_doubles =
+        [&data](std::size_t count, std::vector<double>& values,
+                const char* context)
+    {
+        values.clear();
+        for (std::size_t index = 0; index < count; ++index)
+        {
+            double value = 0.0;
+            data >> value;
+            if (!data)
+                throw std::runtime_error(
+                    std::string("Genome: truncated ") + context + ".");
+            values.push_back(value);
+        }
+    };
+    const auto read_count =
+        [&data](const char* context)
+    {
+        std::size_t count = 0;
+        data >> count;
+        if (!data)
+            throw std::runtime_error(
+                std::string("Genome: malformed ") + context + " count.");
+        return count;
+    };
 
     std::string token;
     while (data >> token && token != "GenomeStart")
@@ -779,54 +811,57 @@ Genome::Genome(std::istream &data)
         }
         else if (token == "EvaluationSamples")
         {
-            std::size_t count = 0;
-            data >> count;
+            const std::size_t count = read_count("evaluation sample");
             m_EvaluationSamples.clear();
-            m_EvaluationSamples.reserve(count);
             for (std::size_t index = 0; index < count; ++index)
             {
                 data >> token;
-                if (token != "EvaluationSample")
+                if (!data || token != "EvaluationSample")
                     throw std::runtime_error(
                         "Genome: missing EvaluationSample marker.");
                 EvaluationSample sample;
                 int has_success = 0;
                 int success = 0;
-                std::size_t descriptor_count = 0;
                 data >> sample.case_id >> sample.score >> has_success
-                     >> success >> descriptor_count;
+                     >> success;
                 sample.has_success = has_success != 0;
                 sample.success = success != 0;
-                sample.behavior_descriptor.resize(descriptor_count);
-                for (double& value : sample.behavior_descriptor)
-                    data >> value;
+                read_doubles(
+                    read_count("evaluation descriptor"),
+                    sample.behavior_descriptor,
+                    "evaluation descriptor");
                 m_EvaluationSamples.push_back(std::move(sample));
             }
         }
         else if (token == "BehaviorDescriptor")
         {
-            std::size_t count = 0;
-            data >> count;
-            m_BehaviorDescriptor.resize(count);
-            for (double& value : m_BehaviorDescriptor)
-                data >> value;
+            read_doubles(
+                read_count("behavior descriptor"),
+                m_BehaviorDescriptor,
+                "behavior descriptor");
         }
         else if (token == "Lineage")
         {
-            std::size_t parent_count = 0;
-            std::size_t operator_count = 0;
-            data >> parent_count;
-            m_Lineage.parent_ids.resize(parent_count);
-            for (int& parent : m_Lineage.parent_ids)
+            const std::size_t parent_count = read_count("lineage parent");
+            m_Lineage.parent_ids.clear();
+            for (std::size_t index = 0; index < parent_count; ++index)
+            {
+                int parent = 0;
                 data >> parent;
-            data >> operator_count;
+                if (!data)
+                    throw std::runtime_error(
+                        "Genome: truncated lineage parents.");
+                m_Lineage.parent_ids.push_back(parent);
+            }
+            const std::size_t operator_count =
+                read_count("lineage operator");
             m_Lineage.operators.clear();
-            m_Lineage.operators.reserve(operator_count);
             for (std::size_t index = 0; index < operator_count; ++index)
             {
                 int encoded = 0;
                 data >> encoded;
-                if (encoded < WEIGHT_MUTATION_OPERATOR ||
+                if (!data ||
+                    encoded < WEIGHT_MUTATION_OPERATOR ||
                     encoded >= OPERATOR_KIND_COUNT)
                 {
                     throw std::runtime_error(
@@ -839,21 +874,35 @@ Genome::Genome(std::istream &data)
                  >> m_Lineage.origin_species_id;
             if (format_version >= 6)
             {
-                std::size_t emitter_parameter_count = 0;
-                data >> m_Lineage.archive_replacement
-                     >> emitter_parameter_count;
-                m_Lineage.emitter_parameters.resize(
-                    emitter_parameter_count);
-                for (double& value : m_Lineage.emitter_parameters)
-                    data >> value;
+                data >> m_Lineage.archive_replacement;
+                if (!data)
+                    throw std::runtime_error(
+                        "Genome: malformed lineage record.");
+                read_doubles(
+                    read_count("emitter parameter"),
+                    m_Lineage.emitter_parameters,
+                    "emitter parameters");
             }
         }
         else if (token == "Neuron")
         {
-            int id, type, activation;
-            double split_y, a, b, time_constant, bias;
+            int id = 0;
+            int type = 0;
+            int activation = 0;
+            double split_y = 0.0, a = 0.0, b = 0.0, time_constant = 0.0,
+                   bias = 0.0;
             data >> id >> type >> split_y >> activation >> a >> b
                  >> time_constant >> bias;
+            if (!data)
+                throw std::runtime_error("Genome: malformed neuron.");
+            // Range-check before casting: out-of-range enum values are not
+            // representable and would make the cast unspecified.
+            if (type < INPUT || type > OUTPUT)
+                throw std::runtime_error(
+                    "Genome: invalid serialized neuron type.");
+            if (activation < SIGNED_SIGMOID || activation > MCCULLOCH_PITTS)
+                throw std::runtime_error(
+                    "Genome: invalid serialized activation function.");
             NeuronGene neuron(static_cast<NeuronType>(type), id, split_y);
             neuron.m_ActFunction =
                 static_cast<ActivationFunction>(activation);
@@ -1289,6 +1338,15 @@ bool Genome::IsDeadEndNeuron(int a_ID) const
     return (t_no_incoming || t_no_outgoing);
 }
 
+bool Genome::IsIsolatedLoopedOutput(int a_ID) const
+{
+    // One outgoing and one incoming link that are the same self-loop. An
+    // output with a real input and a separate outgoing link is connected.
+    return LinksInputtingFrom(a_ID) == 1 &&
+           LinksOutputtingTo(a_ID) == 1 &&
+           HasLink(a_ID, a_ID);
+}
+
 int Genome::LinksInputtingFrom(int a_ID) const
 {
     int t_counter = 0;
@@ -1596,6 +1654,51 @@ void Genome::BuildHyperNEATPhenotype(NeuralNetwork &net, Substrate &subst)
     }
     ASSERT(static_cast<int>(m_NumOutputs) >= subst.GetMinCPPNOutputs());
 
+    // m_custom_connectivity is publicly writable, so every entry is
+    // validated here (before the network is touched) the same way
+    // Substrate::SetCustomConnectivity validates it.
+    const auto network_index =
+        [&subst](int type, int index) -> int
+    {
+        std::size_t offset = 0;
+        std::size_t count = 0;
+        switch (type)
+        {
+        case INPUT:
+        case BIAS:
+            count = subst.m_input_coords.size();
+            break;
+        case OUTPUT:
+            offset = subst.m_input_coords.size();
+            count = subst.m_output_coords.size();
+            break;
+        case HIDDEN:
+            offset = subst.m_input_coords.size() +
+                     subst.m_output_coords.size();
+            count = subst.m_hidden_coords.size();
+            break;
+        default:
+            throw std::invalid_argument(
+                "Custom substrate connection has an invalid neuron type");
+        }
+        if (index < 0 || static_cast<std::size_t>(index) >= count)
+        {
+            throw std::out_of_range(
+                "Custom substrate connection neuron index is out of range");
+        }
+        return static_cast<int>(offset + static_cast<std::size_t>(index));
+    };
+    for (const auto &conn : subst.m_custom_connectivity)
+    {
+        if (conn.size() != 4)
+        {
+            throw std::invalid_argument(
+                "Malformed custom substrate connection");
+        }
+        network_index(conn[0], conn[1]);
+        network_index(conn[2], conn[3]);
+    }
+
     net.Clear();
     net.SetInputOutputDimentions(static_cast<unsigned short>(subst.m_input_coords.size()),
                                   static_cast<unsigned short>(subst.m_output_coords.size()));
@@ -1692,19 +1795,8 @@ void Genome::BuildHyperNEATPhenotype(NeuralNetwork &net, Substrate &subst)
                 throw std::invalid_argument(
                     "Malformed custom substrate connection");
             }
-            NeuronType st = static_cast<NeuronType>(conn[0]);
-            int sidx       = conn[1];
-            NeuronType dt = static_cast<NeuronType>(conn[2]);
-            int didx       = conn[3];
-
-            int j = 0, k = 0;
-            if (st == INPUT || st == BIAS) j = sidx;
-            else if (st == OUTPUT) j = static_cast<int>(subst.m_input_coords.size() + sidx);
-            else if (st == HIDDEN) j = static_cast<int>(subst.m_input_coords.size() + subst.m_output_coords.size() + sidx);
-
-            if (dt == INPUT || dt == BIAS) k = didx;
-            else if (dt == OUTPUT) k = static_cast<int>(subst.m_input_coords.size() + didx);
-            else if (dt == HIDDEN) k = static_cast<int>(subst.m_input_coords.size() + subst.m_output_coords.size() + didx);
+            const int j = network_index(conn[0], conn[1]);
+            const int k = network_index(conn[2], conn[3]);
 
             if (!subst.m_custom_conn_obeys_flags || !(
                 ((!subst.m_allow_input_hidden_links) &&
@@ -3809,6 +3901,14 @@ bool Genome::Mutate_RemoveSimpleNeuron(InnovationDatabase &a_Innovs, const Param
         };
         double t_weight =
             incoming.GetWeight();
+        // The merged link inherits recurrence from either half of the path.
+        // A self-loop is always recurrent. When both halves were
+        // feed-forward the merged link cannot close a cycle: any path back
+        // from its target to its source would already have formed a
+        // feed-forward cycle through the removed neuron.
+        const bool t_recurrent =
+            incoming.IsRecurrent() || outgoing.IsRecurrent() ||
+            incoming.FromNeuronID() == outgoing.ToNeuronID();
         int t_innovid = a_Innovs.CheckInnovation(
             m_LinkGenes[static_cast<std::size_t>(t_l1idx)].FromNeuronID(),
             m_LinkGenes[static_cast<std::size_t>(t_l2idx)].ToNeuronID(),
@@ -3821,7 +3921,7 @@ bool Genome::Mutate_RemoveSimpleNeuron(InnovationDatabase &a_Innovs, const Param
                 m_LinkGenes[static_cast<std::size_t>(t_l2idx)].ToNeuronID();
             RemoveNeuronGene(m_NeuronGenes[t_neurons_to_delete[t_choice]].ID());
             int t_newinnov = a_Innovs.AddLinkInnovation(from, to);
-            LinkGene lg(from, to, t_newinnov, t_weight, false);
+            LinkGene lg(from, to, t_newinnov, t_weight, t_recurrent);
             apply_combined_spiking(lg);
             lg.InitTraits(a_Parameters.LinkTraits, a_RNG);
             m_LinkGenes.push_back(lg);
@@ -3834,7 +3934,7 @@ bool Genome::Mutate_RemoveSimpleNeuron(InnovationDatabase &a_Innovs, const Param
             int to =
                 m_LinkGenes[static_cast<std::size_t>(t_l2idx)].ToNeuronID();
             RemoveNeuronGene(m_NeuronGenes[t_neurons_to_delete[t_choice]].ID());
-            LinkGene lg(from, to, t_innovid, t_weight, false);
+            LinkGene lg(from, to, t_innovid, t_weight, t_recurrent);
             apply_combined_spiking(lg);
             lg.InitTraits(a_Parameters.LinkTraits, a_RNG);
             m_LinkGenes.push_back(lg);
@@ -3861,11 +3961,14 @@ bool Genome::Cleanup()
     {
         if (m_NeuronGenes[i].Type() == OUTPUT)
         {
-            if ((LinksInputtingFrom(m_NeuronGenes[i].ID()) == 1) && (LinksOutputtingTo(m_NeuronGenes[i].ID()) == 1))
+            const int output_id = m_NeuronGenes[i].ID();
+            if (IsIsolatedLoopedOutput(output_id))
             {
+                // Drop the isolated self-loop itself, not some other link.
                 for (std::size_t j = 0; j < m_LinkGenes.size(); ++j)
                 {
-                    if (m_LinkGenes[j].ToNeuronID() == m_NeuronGenes[i].ID())
+                    if (m_LinkGenes[j].FromNeuronID() == output_id &&
+                        m_LinkGenes[j].ToNeuronID() == output_id)
                     {
                         RemoveLinkGene(m_LinkGenes[j].InnovationID());
                         t_removed = true;
@@ -3894,7 +3997,7 @@ bool Genome::HasDeadEnds() const
     {
         if (ng.Type() == OUTPUT)
         {
-            if ((LinksInputtingFrom(ng.ID()) == 1) && (LinksOutputtingTo(ng.ID()) == 1))
+            if (IsIsolatedLoopedOutput(ng.ID()))
             {
                 return true;
             }
@@ -3957,10 +4060,27 @@ Genome Genome::MateWithMode(
     }
 
     Genome t_baby;
-    std::vector<LinkGene> mom_links = m_LinkGenes;
-    std::vector<LinkGene> dad_links = a_Dad.m_LinkGenes;
-    std::sort(mom_links.begin(), mom_links.end());
-    std::sort(dad_links.begin(), dad_links.end());
+    // Align genes by innovation through pointers. Copying both parent gene
+    // vectors (each gene owns a trait map) dominated crossover time.
+    const auto sorted_links = [](const std::vector<LinkGene>& links)
+    {
+        std::vector<const LinkGene*> sorted;
+        sorted.reserve(links.size());
+        for (const auto& link : links)
+            sorted.push_back(&link);
+        std::sort(
+            sorted.begin(),
+            sorted.end(),
+            [](const LinkGene* lhs, const LinkGene* rhs)
+            {
+                return lhs->InnovationID() < rhs->InnovationID();
+            });
+        return sorted;
+    };
+    const std::vector<const LinkGene*> mom_links =
+        sorted_links(m_LinkGenes);
+    const std::vector<const LinkGene*> dad_links =
+        sorted_links(a_Dad.m_LinkGenes);
     auto t_curMom = mom_links.begin();
     auto t_curDad = dad_links.begin();
     const bool average_traits =
@@ -3990,28 +4110,32 @@ Genome Genome::MateWithMode(
          index < m_NumInputs + m_NumOutputs;
          ++index)
     {
-        const NeuronGene mom = GetNeuronByIndex(index);
-        const NeuronGene dad = a_Dad.GetNeuronByIndex(index);
+        const NeuronGene& mom =
+            m_NeuronGenes.at(static_cast<std::size_t>(index));
+        const NeuronGene& dad =
+            a_Dad.m_NeuronGenes.at(static_cast<std::size_t>(index));
         if (mom.ID() != dad.ID() || mom.Type() != dad.Type())
         {
             throw std::invalid_argument(
                 "Cannot mate genomes with incompatible input/output neurons");
         }
-        NeuronGene child = mom;
         if (average_traits)
         {
+            NeuronGene child = mom;
             child.MateTraits(dad.m_Traits, a_RNG);
+            t_baby.m_NeuronGenes.push_back(std::move(child));
         }
         else if (a_RNG.RandFloat() <
                  a_Parameters.PreferFitterParentRate)
         {
-            child = (t_better == MOM) ? mom : dad;
+            t_baby.m_NeuronGenes.push_back(
+                (t_better == MOM) ? mom : dad);
         }
         else
         {
-            child = (a_RNG.RandFloat() < 0.5) ? mom : dad;
+            t_baby.m_NeuronGenes.push_back(
+                (a_RNG.RandFloat() < 0.5) ? mom : dad);
         }
-        t_baby.m_NeuronGenes.push_back(std::move(child));
     }
 
     std::size_t matching_link_count = 0;
@@ -4021,13 +4145,13 @@ Genome Genome::MateWithMode(
         auto dad = dad_links.begin();
         while (mom != mom_links.end() && dad != dad_links.end())
         {
-            if (mom->InnovationID() == dad->InnovationID())
+            if ((*mom)->InnovationID() == (*dad)->InnovationID())
             {
                 ++matching_link_count;
                 ++mom;
                 ++dad;
             }
-            else if (mom->InnovationID() < dad->InnovationID())
+            else if ((*mom)->InnovationID() < (*dad)->InnovationID())
             {
                 ++mom;
             }
@@ -4109,10 +4233,12 @@ Genome Genome::MateWithMode(
         child_neuron_ids.insert(neuron_id);
     };
 
-    LinkGene t_emptygene(0, 0, -1, 0, false);
+    // Recombined genes are built in `combined`; inherited genes are copied
+    // only once, when they are accepted into the child.
+    LinkGene combined;
     while (!(t_curMom == mom_links.end() && t_curDad == dad_links.end()))
     {
-        LinkGene t_selectedgene = t_emptygene;
+        const LinkGene* t_selectedgene = nullptr;
         bool t_skip = false;
         if (t_curMom == mom_links.end())
         {
@@ -4130,8 +4256,10 @@ Genome Genome::MateWithMode(
         }
         else
         {
-            const int t_innov_mom = t_curMom->InnovationID();
-            const int t_innov_dad = t_curDad->InnovationID();
+            const LinkGene& mom_gene = **t_curMom;
+            const LinkGene& dad_gene = **t_curDad;
+            const int t_innov_mom = mom_gene.InnovationID();
+            const int t_innov_dad = dad_gene.InnovationID();
             if(t_innov_mom == t_innov_dad)
             {
                 switch (a_Mode)
@@ -4145,12 +4273,13 @@ Genome Genome::MateWithMode(
                     break;
 
                 case AVERAGE:
-                    t_selectedgene = *t_curMom;
-                    t_selectedgene.SetWeight(
-                        (t_curDad->GetWeight() +
-                         t_curMom->GetWeight()) /
+                    combined = mom_gene;
+                    combined.SetWeight(
+                        (dad_gene.GetWeight() +
+                         mom_gene.GetWeight()) /
                         2.0);
-                    t_selectedgene.MateTraits(t_curDad->m_Traits, a_RNG);
+                    combined.MateTraits(dad_gene.m_Traits, a_RNG);
+                    t_selectedgene = &combined;
                     break;
 
                 case SINGLE_POINT:
@@ -4165,9 +4294,9 @@ Genome Genome::MateWithMode(
 
                 case BLEND:
                 {
-                    t_selectedgene = *t_curMom;
-                    const double mom_weight = t_curMom->GetWeight();
-                    const double dad_weight = t_curDad->GetWeight();
+                    combined = mom_gene;
+                    const double mom_weight = mom_gene.GetWeight();
+                    const double dad_weight = dad_gene.GetWeight();
                     const double minimum =
                         std::min(mom_weight, dad_weight);
                     const double maximum =
@@ -4184,15 +4313,15 @@ Genome Genome::MateWithMode(
                         weight,
                         a_Parameters.MinWeight,
                         a_Parameters.MaxWeight);
-                    t_selectedgene.SetWeight(weight);
-                    t_selectedgene.MateTraits(
-                        t_curDad->m_Traits, a_RNG);
+                    combined.SetWeight(weight);
+                    combined.MateTraits(dad_gene.m_Traits, a_RNG);
+                    t_selectedgene = &combined;
                     break;
                 }
 
                 case SIMULATED_BINARY:
                 {
-                    t_selectedgene = *t_curMom;
+                    combined = mom_gene;
                     const double draw = a_RNG.RandFloat();
                     const double exponent =
                         1.0 / (a_Parameters.CrossoverSBXEta + 1.0);
@@ -4202,8 +4331,8 @@ Genome Genome::MateWithMode(
                             : std::pow(
                                   1.0 / (2.0 * (1.0 - draw)),
                                   exponent);
-                    const double first = t_curMom->GetWeight();
-                    const double second = t_curDad->GetWeight();
+                    const double first = mom_gene.GetWeight();
+                    const double second = dad_gene.GetWeight();
                     double weight =
                         a_RNG.RandFloat() < 0.5
                             ? 0.5 *
@@ -4216,9 +4345,9 @@ Genome Genome::MateWithMode(
                         weight,
                         a_Parameters.MinWeight,
                         a_Parameters.MaxWeight);
-                    t_selectedgene.SetWeight(weight);
-                    t_selectedgene.MateTraits(
-                        t_curDad->m_Traits, a_RNG);
+                    combined.SetWeight(weight);
+                    combined.MateTraits(dad_gene.m_Traits, a_RNG);
+                    t_selectedgene = &combined;
                     break;
                 }
                 }
@@ -4246,16 +4375,17 @@ Genome Genome::MateWithMode(
             t_skip = false;
         }
 
-        if (t_selectedgene.InnovationID() > 0 && !t_skip)
+        if (t_selectedgene != nullptr &&
+            t_selectedgene->InnovationID() > 0 && !t_skip)
         {
             const std::uint64_t key = endpoint_key(
-                t_selectedgene.FromNeuronID(),
-                t_selectedgene.ToNeuronID());
+                t_selectedgene->FromNeuronID(),
+                t_selectedgene->ToNeuronID());
             if (child_endpoints.insert(key).second)
             {
-                t_baby.m_LinkGenes.push_back(t_selectedgene);
-                add_child_neuron(t_selectedgene.FromNeuronID());
-                add_child_neuron(t_selectedgene.ToNeuronID());
+                t_baby.m_LinkGenes.push_back(*t_selectedgene);
+                add_child_neuron(t_selectedgene->FromNeuronID());
+                add_child_neuron(t_selectedgene->ToNeuronID());
             }
         }
     }
@@ -4273,29 +4403,6 @@ void Genome::SortGenes()
               [](const NeuronGene &lhs, const NeuronGene &rhs) { return lhs.ID() < rhs.ID(); });
     std::sort(m_LinkGenes.begin(), m_LinkGenes.end(),
               [](const LinkGene &lhs, const LinkGene &rhs) { return lhs.InnovationID() < rhs.InnovationID(); });
-}
-
-unsigned int Genome::NeuronDepth(int a_NeuronID, unsigned int a_Depth)
-{
-    unsigned int t_max_depth = a_Depth;
-    if(a_Depth > 16384)
-        return 16384;
-    if(GetNeuronByID(a_NeuronID).Type() == INPUT || GetNeuronByID(a_NeuronID).Type() == BIAS)
-        return a_Depth;
-    std::vector<int> t_inputting_links_idx;
-    for (unsigned int i = 0; i < NumLinks(); ++i)
-    {
-        if(m_LinkGenes[i].ToNeuronID() == a_NeuronID)
-            t_inputting_links_idx.push_back(static_cast<int>(i));
-    }
-    for (int idx : t_inputting_links_idx)
-    {
-        LinkGene t_link = GetLinkByIndex(idx);
-        unsigned int t_current_depth = NeuronDepth(t_link.FromNeuronID(), a_Depth + 1);
-        if(t_current_depth > t_max_depth)
-            t_max_depth = t_current_depth;
-    }
-    return t_max_depth;
 }
 
 void Genome::CalculateDepth()
@@ -4395,56 +4502,32 @@ void Genome::Save(const char *a_FileName)
     {
         throw std::runtime_error("Cannot open genome file for writing");
     }
-    Save(fp);
-    fclose(fp);
+    try
+    {
+        Save(fp);
+    }
+    catch (...)
+    {
+        fclose(fp);
+        throw;
+    }
+    if (fclose(fp) != 0)
+        throw std::runtime_error("Failed to close genome file");
 }
 
 void Genome::Save(FILE *fp)
 {
-    fprintf(fp, "GenomeStart %d\n", m_ID);
-    for (const auto &ng : m_NeuronGenes)
+    if (fp == nullptr)
+        throw std::invalid_argument("Genome::Save: file is null");
+    // Emit the complete current format (traits, MCP veto, neuron x/y,
+    // GenomeState, evaluation samples, lineage). Each record is framed by
+    // GenomeStart/GenomeEnd, so several genomes can share one file.
+    const std::string serialized = Serialize();
+    if (std::fputs(serialized.c_str(), fp) < 0 ||
+        std::fputs("\n", fp) < 0)
     {
-        fprintf(fp, "Neuron %d %d %3.8f %d %3.8f %3.8f %3.8f %3.8f\n",
-                ng.m_ID, static_cast<int>(ng.m_Type), ng.m_SplitY,
-                static_cast<int>(ng.m_ActFunction), ng.m_A, ng.m_B,
-                ng.m_TimeConstant, ng.m_Bias);
-        fprintf(
-            fp,
-            "NeuronSpiking %3.18f %3.18f %3.18f %3.18f %3.18f "
-            "%3.18f %3.18f %3.18f %3.18f %3.18f %3.18f %3.18f\n",
-            ng.m_SpikeThreshold,
-            ng.m_ResetPotential,
-            ng.m_RestingPotential,
-            ng.m_RefractoryPeriod,
-            ng.m_MembraneResistance,
-            ng.m_AdaptationTimeConstant,
-            ng.m_AdaptationIncrement,
-            ng.m_RateTimeConstant,
-            ng.m_IzhikevichA,
-            ng.m_IzhikevichB,
-            ng.m_IzhikevichC,
-            ng.m_IzhikevichD);
+        throw std::runtime_error("Genome::Save: failed to write genome");
     }
-    for (const auto &lg : m_LinkGenes)
-    {
-        fprintf(fp, "Link %d %d %d %d %3.8f\n",
-                lg.m_FromNeuronID, lg.m_ToNeuronID, lg.m_InnovationID,
-                static_cast<int>(lg.m_IsRecurrent), lg.m_Weight);
-        fprintf(
-            fp,
-            "LinkSpiking %3.18f %3.18f %d %3.18f %3.18f "
-            "%3.18f %3.18f %3.18f %3.18f\n",
-            lg.m_SynapticDelay,
-            lg.m_SynapticTimeConstant,
-            static_cast<int>(lg.m_STDPEnabled),
-            lg.m_STDPPlus,
-            lg.m_STDPMinus,
-            lg.m_STDPTauPlus,
-            lg.m_STDPTauMinus,
-            lg.m_STDPMinWeight,
-            lg.m_STDPMaxWeight);
-    }
-    fprintf(fp, "GenomeEnd\n\n");
 }
 
 void Genome::PrintTraits(std::map<std::string, Trait>& traits)
@@ -4555,6 +4638,7 @@ bool Genome::IsIdenticalTo(const Genome& other) const
             n1.m_IzhikevichB != n2.m_IzhikevichB ||
             n1.m_IzhikevichC != n2.m_IzhikevichC ||
             n1.m_IzhikevichD != n2.m_IzhikevichD ||
+            n1.m_MCPInhibitoryVeto != n2.m_MCPInhibitoryVeto ||
             n1.m_Traits != n2.m_Traits)
         {
             return false;

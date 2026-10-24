@@ -713,11 +713,15 @@ public:
     ////////////////////////////////////
 
     // Load the parameters from a file
-    // returns 0 on success
+    // returns 0 on success. On failure the object is left unchanged. The
+    // CustomConstraints function pointer and callback are not part of the
+    // file format and are preserved across a successful Load.
     int Load(const char* filename);
     // Load the parameters from an already opened file for reading
     int Load(std::ifstream& a_DataFile);
 
+    // Serializes first and only then replaces the file, so an invalid trait
+    // schema raises std::invalid_argument without truncating the file.
     void Save(const char* filename);
     // Saves the parameters to an already opened file for writing
     void Save(FILE* a_fstream);
@@ -751,6 +755,18 @@ public:
 
     // Checks ranges and cross-field invariants without changing values.
     bool Validate(std::string* error = nullptr) const;
+
+    // Converts numeric trait dependency values to the value type of the
+    // trait they depend on when the conversion is exact (for example 1.0 ->
+    // 1 for an "int" dependency, or 3 -> intsetelement{3} for an "intset"
+    // dependency). Mismatched values can otherwise never match during
+    // evolution. Values that cannot be converted are left for Validate.
+    void NormalizeTraitSchemas();
+
+    // Throws std::invalid_argument naming the offending trait when a
+    // schema's type string is unsupported or does not match the alternative
+    // held by m_Details. Serialize() and Save() call this first.
+    void RequireConsistentTraitSchemas() const;
 
     // Python callbacks cannot be represented by the legacy function-pointer
     // field. These helpers preserve that field for existing C++ users while

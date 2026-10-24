@@ -1,289 +1,209 @@
 #!/usr/bin/env python3
-"""Fast tests for the shared Box2D/MuJoCo example machinery."""
+"""Tests for the standalone Box2D/MuJoCo demos in demos/box2d and demos/mujoco.
+
+Every demo is a self-contained script, so it is exercised as a subprocess:
+static checks (compile, no repo-module imports, --help) always run; --inspect
+and --smoke run for every task whose physics backend imports.  Exit code 77
+skips the dynamic part when gymnasium, numpy or pymultineat is unavailable.
+"""
 
 from __future__ import annotations
 
+import ast
+import importlib.util
+import json
+import os
 import py_compile
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEMOS = ROOT / "demos"
-sys.path.insert(0, str(DEMOS))
+BOX2D = sorted((DEMOS / "box2d").glob("*_box2d.py"))
+MUJOCO = sorted((DEMOS / "mujoco").glob("*_mujoco.py"))
+SCRIPTS = BOX2D + MUJOCO
 
-try:
-    import gymnasium as gym
-    import numpy as np
-    from gymnasium import spaces
-except ImportError:
-    raise SystemExit(77)
+EXPECTED_BOX2D = {
+    "bipedal_walker", "bipedal_walker_hardcore", "car_racing", "car_racing_discrete",
+    "car_racing_nofx", "lunar_lander", "lunar_lander_continuous", "lunar_lander_wind",
+}
+EXPECTED_MUJOCO = {
+    "ant", "halfcheetah", "hopper", "humanoid", "humanoid_standup",
+    "inverted_double_pendulum", "inverted_pendulum", "pusher", "reacher", "swimmer",
+    "walker2d",
+}
+# Third-party modules a standalone demo may import (besides the stdlib).
+ALLOWED_IMPORTS = {"gymnasium", "numpy", "pymultineat", "matplotlib", "imageio"}
+FORBIDDEN_NAMES = ("neattools", "spiking_neat", "gymnasium_neat")
+# Smoke every policy variant on one discrete, one pixel and one MuJoCo task.
+VARIANT_TASKS = {"lunar_lander_box2d.py", "car_racing_box2d.py", "reacher_mujoco.py"}
 
-import gymnasium_neat as demo  # noqa: E402
 
-if demo.neat is None:
-    raise SystemExit(77)
-
-
-def check(condition, message):
+def check(condition: bool, message: str) -> None:
     if not condition:
         raise AssertionError(message)
 
 
-box2d_tasks = list(demo.catalog("box2d"))
-mujoco_tasks = list(demo.catalog("mujoco"))
-check(len(box2d_tasks) == 7, "Box2D catalog should contain seven tasks")
-check(len(mujoco_tasks) == 11, "MuJoCo catalog should contain eleven tasks")
+def run(script: Path, *flags: str, timeout: float = 60.0) -> subprocess.CompletedProcess:
+    environment = dict(os.environ, PYTHONUNBUFFERED="1")
+    return subprocess.run(
+        [sys.executable, str(script), *flags],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+        check=False,
+        env=environment,
+    )
+
+
+def last_json(result: subprocess.CompletedProcess) -> dict:
+    lines = [line for line in result.stdout.splitlines() if line.strip()]
+    check(bool(lines), "no output")
+    return json.loads(lines[-1])
+
+
+# --- Static checks: need nothing but Python ---------------------------------
+
 check(
-    {task.env_id for task in mujoco_tasks}
-    == {
-        "Ant-v5",
-        "HalfCheetah-v5",
-        "Hopper-v5",
-        "Humanoid-v5",
-        "HumanoidStandup-v5",
-        "InvertedDoublePendulum-v5",
-        "InvertedPendulum-v5",
-        "Pusher-v5",
-        "Reacher-v5",
-        "Swimmer-v5",
-        "Walker2d-v5",
-    },
-    "MuJoCo catalog should cover every official v5 task",
+    {p.name.removesuffix("_box2d.py") for p in BOX2D} == EXPECTED_BOX2D,
+    f"unexpected Box2D demos: {[p.name for p in BOX2D]}",
 )
-
-live_display = demo.resolve_display_plan(False, 1, 0)
 check(
-    live_display.training_render_mode == "human"
-    and live_display.preview_every == 0,
-    "serial physics demos should open a live GUI by default",
+    {p.name.removesuffix("_mujoco.py") for p in MUJOCO} == EXPECTED_MUJOCO,
+    f"unexpected MuJoCo demos: {[p.name for p in MUJOCO]}",
 )
-fast_display = demo.resolve_display_plan(True, 1, 0)
-check(
-    fast_display.training_render_mode is None
-    and fast_display.preview_every == 0,
-    "fast mode should retain only headless physics",
-)
-parallel_display = demo.resolve_display_plan(False, 4, 0)
-check(
-    parallel_display.training_render_mode is None
-    and parallel_display.preview_every == 1,
-    "parallel runs should render one champion in the main process",
-)
-periodic_display = demo.resolve_display_plan(False, 1, 3)
-check(
-    periodic_display.training_render_mode is None
-    and periodic_display.preview_every == 3,
-    "render-every should use periodic champion replays",
-)
-try:
-    demo.resolve_display_plan(True, 1, 2)
-except ValueError:
-    pass
-else:
-    raise AssertionError("fast mode accepted an incompatible render schedule")
+check(not (DEMOS / "gymnasium_neat.py").exists(), "shared gymnasium_neat.py should be gone")
 
-vector_space = spaces.Box(
-    low=np.array([-2.0, -np.inf, 0.0]),
-    high=np.array([2.0, np.inf, 10.0]),
-    dtype=np.float64,
-)
-vector_encoder = demo.ObservationEncoder(vector_space)
-encoded = vector_encoder.encode(np.array([2.0, np.inf, 5.0]))
-check(encoded.shape == (3,), "vector encoder changed dimensionality")
-check(np.all(np.isfinite(encoded)), "vector encoder emitted non-finite values")
-check(np.all(encoded <= 1.0) and np.all(encoded >= -1.0), "encoding out of range")
-check(np.allclose(encoded[[0, 2]], [1.0, 0.0]), "bounded scaling is wrong")
-
-image = np.zeros((24, 30, 3), dtype=np.uint8)
-image[:, 15:, :] = 255
-image_encoder = demo.ObservationEncoder(
-    spaces.Box(0, 255, shape=image.shape, dtype=np.uint8),
-    image_size=(4, 5),
-)
-image_values = image_encoder.encode(image)
-check(image_values.shape == (20,), "image pooling dimensions are wrong")
-check(image_values.min() == -1.0, "black pixels should normalize to -1")
-check(image_values.max() == 1.0, "white pixels should normalize to 1")
-
-discrete = demo.ActionAdapter(spaces.Discrete(4))
-check(discrete.output_size == 4, "discrete output size is wrong")
-check(discrete.convert([-1.0, 0.0, 0.8, 0.1]) == 2, "argmax action is wrong")
-
-continuous_space = spaces.Box(
-    low=np.array([-2.0, 0.0, -1.0], dtype=np.float32),
-    high=np.array([2.0, 10.0, 1.0], dtype=np.float32),
-)
-continuous = demo.ActionAdapter(continuous_space)
-action = continuous.convert([-1.0, 0.0, 1.0])
-check(
-    np.allclose(action, [-2.0, 5.0, 1.0]),
-    "continuous bound mapping is wrong",
-)
-check(continuous_space.contains(action), "adapter emitted an invalid action")
-
-
-class TinyControlEnv(gym.Env):
-    metadata = {"render_modes": []}
-
-    def __init__(self):
-        self.observation_space = spaces.Box(
-            -np.inf, np.inf, shape=(3,), dtype=np.float64
-        )
-        self.action_space = spaces.Box(
-            low=np.array([-2.0, 0.0], dtype=np.float32),
-            high=np.array([2.0, 1.0], dtype=np.float32),
-        )
-        self.steps = 0
-
-    def reset(self, *, seed=None, options=None):
-        super().reset(seed=seed)
-        self.steps = 0
-        return np.array([0.25, -0.5, 1.0]), {}
-
-    def step(self, action):
-        check(self.action_space.contains(action), "policy action left its space")
-        self.steps += 1
-        observation = np.array([action[0], action[1], self.steps])
-        reward = 1.0 - float(np.square(action).mean())
-        return observation, reward, self.steps >= 3, False, {}
-
-
-tiny_config = demo.TaskConfig(
-    key="test_tiny",
-    family="test",
-    env_id="TinyControl-v0",
-    description="In-process integration environment.",
-    recurrent=False,
-)
-fake_unwrapped = type("FakeUnwrapped", (), {"render_mode": "human"})()
-fake_env = type("FakeEnv", (), {"unwrapped": fake_unwrapped})()
-display_controller = demo.InteractiveDisplay(tiny_config)
-display_controller.attach(fake_env)
-display_controller.toggle()
-check(
-    fake_unwrapped.render_mode is None,
-    "F-style fast mode should disable rendering without replacing physics",
-)
-display_controller.toggle()
-check(
-    fake_unwrapped.render_mode == "human",
-    "F-style visual mode should restore native rendering",
-)
-tiny_shape = demo.TaskShape(3, 2, "Box(3)", "Box(2)")
-population = demo.create_population(
-    tiny_shape,
-    tiny_config,
-    population_size=6,
-    seed=17,
-    profile="ranked",
-    initial_connectivity="full",
-)
-tiny_env = TinyControlEnv()
-fitnesses = []
-for species in population.m_Species:
-    for genome in species.m_Individuals:
-        fitness = demo.evaluate_on_environment(
-            genome,
-            tiny_env,
-            tiny_config,
-            episode_seeds=(1, 2),
-            max_steps=4,
-            activation_steps=2,
-        )
-        check(np.isfinite(fitness), "demo evaluation produced non-finite fitness")
-        genome.SetFitness(fitness)
-        genome.SetEvaluated()
-        fitnesses.append(fitness)
-check(len(fitnesses) == 6, "not every demo genome was evaluated")
-population.Epoch()
-if hasattr(population, "Validate"):
-    valid, error = population.Validate()
-    check(valid, f"demo evolution produced invalid population: {error}")
-tiny_env.close()
-
-spiking_population = demo.create_population(
-    tiny_shape,
-    tiny_config,
-    population_size=4,
-    seed=23,
-    profile="default",
-    initial_connectivity="full",
-    spiking=True,
-)
-spiking_env = TinyControlEnv()
-spiking_settings = demo.SpikingPolicySettings(
-    simulation_steps=4,
-    time_step=0.001,
-    input_rate_hz=200.0,
-    output_rate_hz=200.0,
-)
-spiking_fitnesses = []
-for species in spiking_population.m_Species:
-    for genome in species.m_Individuals:
-        phenotype = demo.neat.NeuralNetwork()
-        genome.BuildPhenotype(phenotype)
-        check(phenotype.IsSpiking(), "spiking demo built a rate phenotype")
-        policy = demo.SpikingPolicy(phenotype, spiking_settings)
-        check(
-            np.allclose(
-                policy.encode([-1.0, 0.0, 1.0, np.inf]),
-                [0.0, 100.0, 200.0, 100.0],
-            ),
-            "spiking observation-to-rate encoding is wrong",
-        )
-        try:
-            policy.encode([0.0])
-        except ValueError:
-            pass
+stdlib = set(sys.stdlib_module_names)
+for script in SCRIPTS:
+    py_compile.compile(str(script), doraise=True)
+    source = script.read_text(encoding="utf-8")
+    for name in FORBIDDEN_NAMES:
+        check(name not in source, f"{script.name} references repo module {name}")
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            modules = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            check(node.level == 0, f"{script.name} uses a relative import")
+            modules = [node.module or ""]
         else:
-            raise AssertionError("spiking policy accepted the wrong input size")
-        fitness = demo.evaluate_on_environment(
-            genome,
-            spiking_env,
-            tiny_config,
-            episode_seeds=(3,),
-            max_steps=3,
-            activation_steps=1,
-            spiking_settings=spiking_settings,
-        )
-        check(
-            np.isfinite(fitness),
-            "spiking demo evaluation produced non-finite fitness",
-        )
-        genome.SetFitness(fitness)
-        genome.SetEvaluated()
-        spiking_fitnesses.append(fitness)
-check(len(spiking_fitnesses) == 4, "not every spiking genome was evaluated")
-spiking_population.Epoch()
-spiking_env.close()
+            continue
+        for module in modules:
+            top = module.split(".")[0]
+            check(
+                top in stdlib or top in ALLOWED_IMPORTS or top == "__future__",
+                f"{script.name} imports {module!r}; demos must be self-contained",
+            )
 
-mcp_population = demo.create_population(
-    tiny_shape,
-    tiny_config,
-    population_size=4,
-    seed=29,
-    profile="default",
-    initial_connectivity="full",
-    spiking=True,
-    mcculloch_pitts=True,
+for script in SCRIPTS:
+    result = run(script, "--help", timeout=30)
+    check(result.returncode == 0, f"{script.name} --help failed: {result.stderr}")
+    for flag in ("--spiking", "--mcculloch-pitts", "--fast", "--smoke", "--inspect",
+                 "--legacy-evolution", "--resume", "--checkpoint-every", "--workers",
+                 "--plot", "--record-video", "--output-dir", "--profile"):
+        check(flag in result.stdout, f"{script.name} --help does not list {flag}")
+
+listing = subprocess.run(
+    [sys.executable, str(DEMOS / "run_gymnasium_suite.py")],
+    capture_output=True, text=True, timeout=30, check=False,
 )
-mcp_genome = mcp_population.m_Species[0].m_Individuals[0]
-mcp_phenotype = demo.neat.NeuralNetwork()
-mcp_genome.BuildPhenotype(mcp_phenotype)
-check(mcp_phenotype.IsSpiking(), "MCP demo built a rate phenotype")
-check(
-    all(
-        neuron.m_type in {demo.neat.INPUT, demo.neat.BIAS}
-        or neuron.m_activation_function_type == demo.neat.MCCULLOCH_PITTS
-        for neuron in mcp_phenotype.m_neurons
-    ),
-    "Gymnasium MCP variant did not use McCulloch-Pitts neurons",
-)
+check(listing.returncode == 0, f"suite listing failed: {listing.stderr}")
+check(len(listing.stdout.strip().splitlines()) == len(SCRIPTS), "suite should list every demo")
 
-wrappers = list((DEMOS / "box2d").glob("*_box2d.py"))
-wrappers += list((DEMOS / "mujoco").glob("*_mujoco.py"))
-check(len(wrappers) == 20, "expected eight Box2D and twelve MuJoCo scripts")
-for wrapper in wrappers:
-    py_compile.compile(str(wrapper), doraise=True)
+# --- Dynamic checks: need gymnasium, numpy and pymultineat ------------------
 
-print("Gymnasium demo tests passed.")
+if str(ROOT) not in sys.path:
+    sys.path.append(str(ROOT))
+try:
+    import gymnasium  # noqa: F401
+    import numpy as np
+    import pymultineat  # noqa: F401
+except ImportError as error:
+    print(f"skipping dynamic demo checks: {error}")
+    raise SystemExit(77)
+
+
+def backend_available(module: str) -> bool:
+    try:
+        __import__(module)
+    except Exception:
+        return False
+    return True
+
+
+available = {
+    "box2d": backend_available("Box2D"),
+    "mujoco": backend_available("mujoco"),
+}
+runnable = [p for p in SCRIPTS if available[p.parent.name]]
+skipped = [p.name for p in SCRIPTS if not available[p.parent.name]]
+
+
+def load(script: Path):
+    spec = importlib.util.spec_from_file_location(script.stem, script)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[script.stem] = module  # dataclasses resolve annotations via sys.modules
+    spec.loader.exec_module(module)
+    return module
+
+
+# Encoders/decoders are pure numpy and work without the physics backend.
+lander = load(DEMOS / "box2d" / "lunar_lander_box2d.py")
+encoded = lander.encode_observation([2.5, -2.5, 0.0, 99.0, 0.0, float("nan"), 0.0, 1.0])
+check(np.allclose(encoded, [1.0, -1.0, 0.0, 1.0, 0.0, 0.0, -1.0, 1.0]), "bounded scaling")
+check(lander.decode_action([-1.0, 0.0, 0.8, 0.1]) == 2, "discrete argmax action")
+
+car = load(DEMOS / "box2d" / "car_racing_box2d.py")
+frame = np.zeros((96, 96, 3), dtype=np.uint8)
+frame[:, 48:] = 255
+pixels = car.encode_observation(frame)
+check(len(pixels) == car.NUM_INPUTS - 1 == 144, "CarRacing should pool to 12x12")
+check(min(pixels) == -1.0 and max(pixels) == 1.0, "black/white pixels should map to -1/+1")
+check(np.allclose(car.decode_action([-1.0, 0.0, 1.0]), [-1.0, 0.5, 1.0]), "box action bounds")
+
+humanoid = load(DEMOS / "mujoco" / "humanoid_mujoco.py")
+action = humanoid.decode_action([2.0] * 17)
+check(action.shape == (17,) and np.allclose(action, 0.4), "symmetric action bound")
+check(np.allclose(humanoid.encode_observation([np.inf, -np.inf, 0.0]), [1, -1, 0]), "tanh")
+
+for script in runnable:
+    result = run(script, "--inspect")
+    check(result.returncode == 0, f"{script.name} --inspect failed: {result.stderr}")
+    shape = json.loads(result.stdout)
+    check(shape["network_inputs"] > 1 and shape["network_outputs"] >= 1,
+          f"{script.name} reported an empty network")
+
+    variants = [()]
+    if script.name in VARIANT_TASKS:
+        variants += [("--spiking",), ("--mcculloch-pitts",), ("--legacy-evolution",)]
+    for variant in variants:
+        result = run(script, "--smoke", *variant)
+        check(result.returncode == 0,
+              f"{script.name} --smoke {' '.join(variant)} failed: {result.stderr}")
+        summary = last_json(result)
+        expected_policy = ("mcculloch-pitts" if "--mcculloch-pitts" in variant
+                           else "lif" if "--spiking" in variant else "rate")
+        check(summary["policy"] == expected_policy, f"{script.name}: wrong policy {summary}")
+        check(summary["generations"] == 1 and summary["population"] == 4,
+              f"{script.name}: smoke run was not tiny: {summary}")
+        check(np.isfinite(summary["best_fitness"]), f"{script.name}: non-finite fitness")
+
+if available["box2d"]:
+    script = DEMOS / "box2d" / "lunar_lander_box2d.py"
+    with tempfile.TemporaryDirectory() as directory:
+        output = Path(directory) / "run"
+        result = run(script, "--smoke", "--output-dir", str(output))
+        check(result.returncode == 0, f"smoke with --output-dir failed: {result.stderr}")
+        for name in ("best_genome.txt", "population.state", "metrics.jsonl"):
+            check((output / name).is_file(), f"--output-dir did not produce {name}")
+        result = run(script, "--smoke", "--resume", str(output))
+        check(result.returncode == 0, f"--resume failed: {result.stderr}")
+        result = run(script, "--smoke", "--spiking", "--resume", str(output))
+        check(result.returncode == 2, "resuming a rate checkpoint as spiking should fail")
+
+if skipped:
+    print(f"skipped (physics backend not importable): {', '.join(skipped)}")
+print(f"Gymnasium demo tests passed ({len(runnable)} of {len(SCRIPTS)} demos run).")

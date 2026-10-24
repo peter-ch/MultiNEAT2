@@ -10,6 +10,7 @@
 #include <stdexcept>
 
 #include "Genome.h"
+#include "Serialization.h"
 #include "Species.h"
 #include "Random.h"
 #include "Population.h"
@@ -100,7 +101,8 @@ namespace NEAT
     bool idxfitnesspair_greater(const std::pair<int, double>& ls,
                                 const std::pair<int, double>& rs)
     {
-        return (ls.second > rs.second);
+        return FitnessForOrdering(ls.second) >
+               FitnessForOrdering(rs.second);
     }
 
     bool GenomesAreClones(
@@ -476,40 +478,6 @@ namespace NEAT
         m_B = static_cast<int>(color & 0xffU);
     }
 
-    Species& Species::operator=(const Species& a_S)
-    {
-        // self assignment guard
-        if (this != &a_S)
-        {
-            m_ID = a_S.m_ID;
-            m_BestGenome = a_S.m_BestGenome;
-            m_BestSpecies = a_S.m_BestSpecies;
-            m_WorstSpecies = a_S.m_WorstSpecies;
-            m_BestFitness = a_S.m_BestFitness;
-            m_GensNoImprovement = a_S.m_GensNoImprovement;
-            m_EvalsNoImprovement = a_S.m_EvalsNoImprovement;
-            m_AverageFitness = a_S.m_AverageFitness;
-            m_AgeGenerations = a_S.m_AgeGenerations;
-            m_AgeEvaluations = a_S.m_AgeEvaluations;
-            m_OffspringRqd = a_S.m_OffspringRqd;
-            m_R = a_S.m_R;
-            m_G = a_S.m_G;
-            m_B = a_S.m_B;
-            m_Individuals = a_S.m_Individuals;
-            m_OperatorAlpha = a_S.m_OperatorAlpha;
-            m_OperatorBeta = a_S.m_OperatorBeta;
-            m_OperatorPriorAlpha = a_S.m_OperatorPriorAlpha;
-            m_OperatorPriorBeta = a_S.m_OperatorPriorBeta;
-            m_EmitterTopologySignature = a_S.m_EmitterTopologySignature;
-            m_EmitterStableGenerations = a_S.m_EmitterStableGenerations;
-            m_EmitterMean = a_S.m_EmitterMean;
-            m_EmitterDeviation = a_S.m_EmitterDeviation;
-            m_EmitterSigma = a_S.m_EmitterSigma;
-        }
-
-        return *this;
-    }
-
     void Species::InitializeOperatorPriors(const Parameters& parameters)
     {
         for (std::size_t index = 0; index < OPERATOR_KIND_COUNT; ++index)
@@ -593,7 +561,8 @@ namespace NEAT
         SetNormalizedContinuousParameters(baby, parameters_vector, parameters);
         lineage.parent_ids = {leader.GetID()};
         lineage.operators = {WEIGHT_EMITTER_OPERATOR};
-        lineage.best_parent_score = leader.GetFitness();
+        lineage.best_parent_score =
+            FitnessForOrdering(leader.GetFitness());
         lineage.origin_species_id = m_ID;
         lineage.emitter_parameters = std::move(parameters_vector);
         return true;
@@ -677,8 +646,11 @@ namespace NEAT
                     lineage.emitter_parameters.size() == m_EmitterMean.size() &&
                     TopologySignature(genome) == m_EmitterTopologySignature)
                 {
+                    // Non-finite legacy fitness would break the strict weak
+                    // ordering required by stable_sort below.
                     candidates.emplace_back(
-                        genome.GetFitness(), lineage.emitter_parameters);
+                        FitnessForOrdering(genome.GetFitness()),
+                        lineage.emitter_parameters);
                     emitter_improved = emitter_improved ||
                         genome.GetFitness() > lineage.best_parent_score;
                 }
@@ -785,6 +757,31 @@ namespace NEAT
                     t_Evaluated.begin(),
                     t_Evaluated.end(),
                     idxfitnesspair_greater);
+            }
+        }
+        else if (selection_mode == LEGACY_SELECTION &&
+                 a_Parameters.TruncationSelection)
+        {
+            // Legacy truncation historically relied on Epoch() sorting the
+            // species best-first. Real-time Tick() does not sort, so order
+            // the pool by raw fitness here. The stable sort is a no-op on an
+            // already sorted species and leaves generational runs unchanged.
+            const auto raw_greater =
+                [this](const std::pair<int, double>& lhs,
+                       const std::pair<int, double>& rhs)
+            {
+                return FitnessForOrdering(
+                           m_Individuals[static_cast<std::size_t>(lhs.first)]
+                               .GetFitness()) >
+                       FitnessForOrdering(
+                           m_Individuals[static_cast<std::size_t>(rhs.first)]
+                               .GetFitness());
+            };
+            if (!std::is_sorted(
+                    t_Evaluated.begin(), t_Evaluated.end(), raw_greater))
+            {
+                std::stable_sort(
+                    t_Evaluated.begin(), t_Evaluated.end(), raw_greater);
             }
         }
 
@@ -1418,7 +1415,8 @@ namespace NEAT
                 // times when EliteFraction selects multiple elites.
                 t_baby = m_Individuals[elite_count];
                 t_lineage.parent_ids = {t_baby.GetID()};
-                t_lineage.best_parent_score = t_baby.GetFitness();
+                t_lineage.best_parent_score =
+                    FitnessForOrdering(t_baby.GetFitness());
                 elite_count++;
             }
             else
@@ -1451,7 +1449,8 @@ namespace NEAT
                     {
                         t_baby = select_parent();
                         t_lineage.parent_ids = {t_baby.GetID()};
-                        t_lineage.best_parent_score = t_baby.GetFitness();
+                        t_lineage.best_parent_score =
+                            FitnessForOrdering(t_baby.GetFitness());
                         t_mated = false;
                     }
                     // else we can mate
@@ -1530,12 +1529,12 @@ namespace NEAT
                                     t_dad = a_Pop.m_Species[t_diffspec].GetIndividual(a_Parameters, a_RNG);
                                     t_interspecies = true;
                                 }
-                                else
-                                {
-                                    continue;
-                                }
+                                // Without an eligible partner species, fall back to
+                                // within-species mating below instead of discarding
+                                // this attempt (which burned a constraint trial and
+                                // could leave an empty baby).
                             }
-                            else
+                            if (!t_interspecies)
                             {
                                 // Mate within species
                                 t_mom = select_parent();
@@ -1566,7 +1565,8 @@ namespace NEAT
                             t_lineage.parent_ids = {
                                 t_mom.GetID(), t_dad.GetID()};
                             t_lineage.best_parent_score = std::max(
-                                t_mom.GetFitness(), t_dad.GetFitness());
+                                FitnessForOrdering(t_mom.GetFitness()),
+                                FitnessForOrdering(t_dad.GetFitness()));
                             t_lineage.operators.push_back(
                                 CROSSOVER_OPERATOR);
                         }
@@ -1575,7 +1575,8 @@ namespace NEAT
                         {
                             t_baby = select_parent();
                             t_lineage.parent_ids = {t_baby.GetID()};
-                            t_lineage.best_parent_score = t_baby.GetFitness();
+                            t_lineage.best_parent_score =
+                                FitnessForOrdering(t_baby.GetFitness());
                             t_mated = false;
                         }
                     }
@@ -1828,7 +1829,8 @@ namespace NEAT
             {
                 t_baby = select_parent();
                 lineage.parent_ids = {t_baby.GetID()};
-                lineage.best_parent_score = t_baby.GetFitness();
+                lineage.best_parent_score =
+                    FitnessForOrdering(t_baby.GetFitness());
                 t_mated = false;
             }
             // else we can mate
@@ -1910,12 +1912,12 @@ namespace NEAT
                             t_dad = a_Pop.m_Species[t_diffspec].GetIndividual(a_Parameters, a_RNG);
                             t_interspecies = true;
                         }
-                        else
-                        {
-                            continue;
-                        }
+                        // Without an eligible partner species, fall back to
+                        // within-species mating below instead of discarding
+                        // this attempt (which burned a constraint trial and
+                        // could leave an empty baby).
                     }
-                    else
+                    if (!t_interspecies)
                     {
                         // Mate within species
                         t_mom = select_parent();
@@ -1947,7 +1949,8 @@ namespace NEAT
                     t_mated = true;
                     lineage.parent_ids = {t_mom.GetID(), t_dad.GetID()};
                     lineage.best_parent_score = std::max(
-                        t_mom.GetFitness(), t_dad.GetFitness());
+                        FitnessForOrdering(t_mom.GetFitness()),
+                        FitnessForOrdering(t_dad.GetFitness()));
                     lineage.operators.push_back(CROSSOVER_OPERATOR);
                 }
                 // don't mate - reproduce one individual asexually
@@ -1955,7 +1958,8 @@ namespace NEAT
                 {
                     t_baby = select_parent();
                     lineage.parent_ids = {t_baby.GetID()};
-                    lineage.best_parent_score = t_baby.GetFitness();
+                    lineage.best_parent_score =
+                        FitnessForOrdering(t_baby.GetFitness());
                     t_mated = false;
                 }
             }
@@ -2441,6 +2445,7 @@ std::string Species::Serialize() const
 Species Species::Deserialize(const std::string &data)
 {
     std::istringstream input(data);
+    Serialization::UseRoundTripParsing(input);
     std::string token;
     input >> token;
     if (token != "SpeciesStart")

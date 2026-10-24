@@ -27,6 +27,12 @@ LIF uses:
 dv/dt = (v_rest - v + R * I - adaptation) / tau_membrane
 ```
 
+The solver integrates this exactly over each step, holding the input current
+and adaptation constant, so it remains stable for any time step. Synaptic
+currents, STDP traces, and rate traces decay exponentially and are flushed to
+zero once their magnitude falls below `1e-12`; an inhibitory current therefore
+vetoes a McCulloch-Pitts neuron only while it remains above that floor.
+
 Adaptive LIF uses:
 
 ```text
@@ -77,8 +83,8 @@ adaptive neurons, adaptation eligibility `epsilon_a`. The LIF update follows
 the local state Jacobian:
 
 ```text
-epsilon_v <- (1 - dt/tau_mem) epsilon_v
-             + (dt/tau_mem) R x
+epsilon_v <- exp(-dt/tau_mem) epsilon_v
+             + (1 - exp(-dt/tau_mem)) R x
 e_ji      <- surrogate(v_j - threshold_j) epsilon_v
 gradient  <- gradient + L_j e_ji
 ```
@@ -343,9 +349,9 @@ settings are configurable independently of the NEAT task.
 Spiking XOR renders its phenotype, spike trains, output membrane trace, and
 temporal truth-table responses. Asteroids displays the environment beside
 live motor rates, active topology, and a moving 200 ms raster. Gymnasium
-summary plots combine environment replay, fitness, phenotype, and raster, and
-export an aligned `spiking_trace.npz`; video capture also writes a matching
-spike trace. The suite runner accepts `--spiking` or `--mcculloch-pitts` for
+runs save a fitness curve (`--plot`) and a replay video (`--record-video`).
+Each example is a standalone file with its own inlined plotting code. The
+suite runner accepts `--spiking` or `--mcculloch-pitts` for
 family-wide smoke tests.
 All examples and variants are available from `python demos.py`.
 

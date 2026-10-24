@@ -14,7 +14,10 @@ namespace NEAT
 
     public:
         RNG() { TimeSeed(); }
-        void Seed(long seed);
+        // Accepts any 64-bit seed. Values representable as a 32-bit signed
+        // or unsigned integer seed the engine exactly as earlier releases did;
+        // wider values are folded (low ^ high 32 bits) deterministically.
+        void Seed(long long seed);
         void TimeSeed();
         int RandPosNeg();
         int RandInt(int x, int y);

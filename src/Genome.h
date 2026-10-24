@@ -121,11 +121,14 @@ namespace NEAT
         // Returns the count of links outputting to the specified neuron ID
         int LinksOutputtingTo(int a_id) const;
 
-        // A recursive function returning the max depth from the specified neuron to the inputs
-        unsigned int NeuronDepth(int a_NeuronID, unsigned int a_Depth);
-
         // Returns true is the specified neuron ID is a dead end or isolated
         bool IsDeadEndNeuron(int a_id) const;
+
+        // Returns true if an output's only links are a single self-loop
+        bool IsIsolatedLoopedOutput(int a_id) const;
+
+        // Parses serialized genome text (used by Genome(std::istream&))
+        void ReadFromStream(std::istream &data);
 
     public:
 
@@ -154,11 +157,12 @@ namespace NEAT
 
         Genome();
 
-        // copy constructor
-        Genome(const Genome &a_g);
-
-        // assignment operator
-        Genome &operator=(const Genome &a_g);
+        // Copies and moves are memberwise. Moves matter: genes own trait maps,
+        // so populations, species, and sorting avoid deep copies.
+        Genome(const Genome &a_g) = default;
+        Genome(Genome &&a_g) noexcept = default;
+        Genome &operator=(const Genome &a_g) = default;
+        Genome &operator=(Genome &&a_g) noexcept = default;
 
         bool operator==(Genome const &other) const
         {
@@ -180,9 +184,16 @@ namespace NEAT
         // Builds this genome from an input stream
         Genome(std::istream &data); 
 
-        // This creates a standart minimal genome - perceptron-like structure
+        // This creates a standart minimal genome - perceptron-like structure.
+        // Uses a time-seeded generator for FS-NEAT topology and traits.
         Genome(const Parameters &a_Parameters,
 			   const GenomeInitStruct &init_struct);
+
+        // Same, drawing every random choice (FS-NEAT links, initial traits)
+        // from a_RNG so seeded callers get reproducible genomes.
+        Genome(const Parameters &a_Parameters,
+               const GenomeInitStruct &init_struct,
+               RNG &a_RNG);
 
         /////////////
         // Other possible constructors for different types of networks go here

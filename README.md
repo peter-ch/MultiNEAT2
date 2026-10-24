@@ -69,9 +69,25 @@ cmake -S . -B build -DMULTINEAT_BUILD_PYTHON=OFF
 cmake --build build --config Release --parallel
 ```
 
-The Python extension is created in the selected build configuration
-directory. Add that directory to `PYTHONPATH`, install the CMake project,
-or copy the extension into your environment before importing it.
+### Python package
+
+To install `pymultineat` and `neattools` into the active Python environment,
+build a wheel with scikit-build-core (a C++17 compiler and CMake are still
+required):
+
+```sh
+python -m pip install .
+python -c "import pymultineat; print(pymultineat.__version__)"
+```
+
+Optional extras mirror the requirement files, for example
+`python -m pip install ".[viz,box2d]"`.
+
+For development builds, the extension is created in the selected build
+configuration directory. Add that directory to `PYTHONPATH` (the repository
+root also provides `neattools.py`), or copy the extension into your
+environment. `cmake --install` installs the C++ library, headers, and CMake
+package; it does not place the extension on Python's import path.
 
 For example, in PowerShell with a Visual Studio build:
 
@@ -233,7 +249,7 @@ filtered firing-rate action decoding:
 python demos/xor.py --smoke --spiking
 python demos/asteroid_nav.py --spiking --generations 25
 python demos/box2d/lunar_lander_box2d.py --smoke --spiking
-python demos/mujoco/inverted_pendulum_mujoco.py --spiking --plot
+python demos/mujoco/inverted_pendulum_mujoco.py --spiking --plot --output-dir runs/pendulum
 python demos/xor.py --smoke --mcculloch-pitts
 python demos/run_gymnasium_suite.py --family box2d --smoke --mcculloch-pitts
 ```
@@ -401,10 +417,33 @@ population.SaveState("experiment.state")
 population = neat.Population("experiment.state")
 ```
 
-The older `Population.Save()` method deliberately retains its historical
-parameters/innovations/genomes file format for existing applications.
-Use `SaveState()` when generation counters, RNG state, species state,
-archives, and all trait data must be preserved exactly.
+The older `Population.Save()` method keeps its historical
+parameters/innovations/genomes file layout, but each genome is now written
+in the current genome format, so traits, McCulloch-Pitts vetoes, and
+evaluation evidence survive. Use `SaveState()` when generation counters, RNG
+state, species state, and archives must also be preserved exactly.
+`NeuralNetwork.Save()` stores live spiking state, including in-flight delayed
+spikes, at full double precision. Non-finite values such as a `nan` fitness
+round-trip through every text format.
+
+### Python object ownership
+
+Container-valued properties return copies: `genome.m_NeuronGenes`,
+`genome.m_LinkGenes`, `network.m_neurons`, `network.m_connections`,
+`gene.m_Traits`, `trait.value`, `TraitParameters.m_Details`, the
+`Parameters.*Traits` schemas, evaluation samples, and the QD archive. Modify
+the copy and assign the whole value back:
+
+```python
+neurons = genome.m_NeuronGenes
+neurons[0].x = 10
+genome.m_NeuronGenes = neurons
+```
+
+Genomes and species borrowed from a population (`m_Species`,
+`m_Individuals`, `AccessGenomeByIndex`, `GetLeader`, the genome returned by
+`Tick`) remain live references so their fitness can be set in place; they are
+invalidated by the next `Epoch()` or `Tick()`.
 
 ## Algorithm and safety notes
 
@@ -463,8 +502,11 @@ complex genome. Results depend on compiler, topology, and CPU.
 
 - `src/` — C++ library and pybind11 bindings
 - `tests/` — C++ and Python regression tests plus an installed-package test
-- `demos/` — XOR, Box2D, MuJoCo, and visualization examples
-- `neattools.py` — genome visualization helpers
+- `demos/` — standalone XOR, HyperNEAT, spiking, Asteroids, Box2D, and MuJoCo
+  examples (each file depends only on `pymultineat` and third-party packages)
+- `demos.py` — graphical launcher for every example
+- `neattools.py` — visualization and analysis library
+- `pyproject.toml` — Python wheel build (`pip install .`)
 
 ## License
 

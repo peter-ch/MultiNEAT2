@@ -1,10 +1,13 @@
 #include "Parameters.h"
 
+#include <cerrno>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <limits>
+#include <locale>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -266,19 +269,78 @@ void WriteScalar(std::ostream& output, bool value)
     output << (value ? "true" : "false");
 }
 
+// Parses one complete whitespace-delimited token. The whole token must be
+// consumed: "150.5" is not an int and "-1" is not an unsigned value.
+// Floating-point tokens accept the "inf"/"nan" spellings written for
+// non-finite values.
 template <typename T>
-void ReadScalar(std::istream& input, T& value)
+bool ParseNumericToken(const std::string& token, T& value)
 {
-    if constexpr (std::is_enum_v<T>)
+    if (token.empty())
+        return false;
+    const char* begin = token.c_str();
+    const char* expected_end = begin + token.size();
+    char* end = nullptr;
+    if constexpr (std::is_floating_point_v<T>)
     {
-        std::underlying_type_t<T> encoded{};
-        input >> encoded;
-        if (input)
-            value = static_cast<T>(encoded);
+        const double parsed = std::strtod(begin, &end);
+        if (end != expected_end)
+            return false;
+        value = static_cast<T>(parsed);
+        return true;
+    }
+    else if constexpr (std::is_unsigned_v<T>)
+    {
+        if (token[0] == '-')
+            return false;
+        errno = 0;
+        const unsigned long long parsed = std::strtoull(begin, &end, 10);
+        if (end != expected_end || errno == ERANGE ||
+            parsed > static_cast<unsigned long long>(
+                         std::numeric_limits<T>::max()))
+            return false;
+        value = static_cast<T>(parsed);
+        return true;
     }
     else
     {
-        input >> value;
+        static_assert(std::is_integral_v<T>, "unsupported numeric type");
+        errno = 0;
+        const long long parsed = std::strtoll(begin, &end, 10);
+        if (end != expected_end || errno == ERANGE ||
+            parsed < static_cast<long long>(std::numeric_limits<T>::min()) ||
+            parsed > static_cast<long long>(std::numeric_limits<T>::max()))
+            return false;
+        value = static_cast<T>(parsed);
+        return true;
+    }
+}
+
+template <typename T>
+void ReadScalar(std::istream& input, T& value)
+{
+    std::string token;
+    if (!(input >> token))
+        return;
+    if constexpr (std::is_enum_v<T>)
+    {
+        std::underlying_type_t<T> encoded{};
+        if (!ParseNumericToken(token, encoded))
+        {
+            input.setstate(std::ios::failbit);
+            return;
+        }
+        value = static_cast<T>(encoded);
+    }
+    else
+    {
+        T parsed{};
+        if (!ParseNumericToken(token, parsed))
+        {
+            input.setstate(std::ios::failbit);
+            return;
+        }
+        value = parsed;
     }
 }
 
@@ -325,8 +387,29 @@ void WriteParameters(std::ostream& output, const Parameters& parameters)
     output << "NEAT_ParametersEnd\n";
 }
 
+// Restores a caller-provided stream's locale after round-trip parsing.
+class ScopedRoundTripParsing
+{
+public:
+    explicit ScopedRoundTripParsing(std::istream& input)
+        : m_Input(input), m_Previous(input.getloc())
+    {
+        Serialization::UseRoundTripParsing(m_Input);
+    }
+    ~ScopedRoundTripParsing() { m_Input.imbue(m_Previous); }
+    ScopedRoundTripParsing(const ScopedRoundTripParsing&) = delete;
+    ScopedRoundTripParsing& operator=(const ScopedRoundTripParsing&) = delete;
+
+private:
+    std::istream& m_Input;
+    std::locale m_Previous;
+};
+
 bool ReadParameters(std::istream& input, Parameters& parameters)
 {
+    // Trait schema doubles are read with operator>>; accept the non-finite
+    // spellings that WriteParameters may emit.
+    const ScopedRoundTripParsing round_trip_parsing(input);
     std::string key;
     while (input >> key)
     {
@@ -350,11 +433,24 @@ bool ReadParameters(std::istream& input, Parameters& parameters)
                     { ReadScalar(stream, parameters.EliteFraction); });
     const auto read_double_vector = [](std::istream& stream, auto& values)
     {
+        // Descriptor vectors hold one entry per behaviour dimension; reject
+        // absurd counts instead of attempting a huge allocation.
+        constexpr std::size_t maximum_count = 1u << 20;
         std::size_t count = 0;
-        stream >> count;
-        values.resize(count);
-        for (auto& value : values)
-            stream >> value;
+        ReadScalar(stream, count);
+        if (!stream || count > maximum_count)
+        {
+            stream.setstate(std::ios::failbit);
+            return;
+        }
+        std::remove_reference_t<decltype(values)> parsed(count);
+        for (auto& value : parsed)
+        {
+            ReadScalar(stream, value);
+            if (!stream)
+                return;
+        }
+        values = std::move(parsed);
     };
     readers.emplace(
         "QDDescriptorMinimums",
@@ -766,6 +862,9 @@ int Parameters::Load(std::ifstream& input)
         Parameters loaded;
         if (!ReadParameters(input, loaded))
             return 1;
+        // Callbacks are not serialized; keep the ones the caller installed.
+        loaded.CustomConstraints = CustomConstraints;
+        loaded.m_CustomConstraintsFunction = m_CustomConstraintsFunction;
         *this = std::move(loaded);
         return 0;
     }
@@ -789,17 +888,16 @@ void Parameters::Save(const char* filename)
 {
     if (filename == nullptr)
         throw std::invalid_argument("Parameters::Save: filename is null.");
+    // Serialize before opening: opening with "wb" truncates the existing
+    // file, which must not happen when serialization rejects the schema.
+    const std::string data = Serialize();
     FILE* file = detail::OpenFile(filename, "wb");
     if (file == nullptr)
         throw std::runtime_error("Parameters::Save: cannot open output file.");
-    try
-    {
-        Save(file);
-    }
-    catch (...)
+    if (std::fwrite(data.data(), 1, data.size(), file) != data.size())
     {
         std::fclose(file);
-        throw;
+        throw std::runtime_error("Parameters::Save: failed to write output.");
     }
     if (std::fclose(file) != 0)
         throw std::runtime_error("Parameters::Save: failed to close output file.");
@@ -814,8 +912,78 @@ void Parameters::Save(FILE* file)
         throw std::runtime_error("Parameters::Save: failed to write output.");
 }
 
+void Parameters::RequireConsistentTraitSchemas() const
+{
+    static const char* const detail_names[] = {
+        "IntTraitParameters",
+        "FloatTraitParameters",
+        "StringTraitParameters",
+        "IntSetTraitParameters",
+        "FloatSetTraitParameters"};
+    const auto check = [](const char* group,
+                          const std::map<std::string, TraitParameters>& schemas)
+    {
+        for (const auto& [key, schema] : schemas)
+        {
+            const std::size_t expected =
+                TraitValueIndexForSchemaType(schema.type);
+            if (expected == std::variant_npos)
+            {
+                throw std::invalid_argument(
+                    std::string("Parameters: ") + group + " trait '" + key +
+                    "' has unsupported type '" + schema.type +
+                    "' (expected int, float, str, intset or floatset).");
+            }
+            const std::size_t held = schema.m_Details.index();
+            if (held != expected)
+            {
+                throw std::invalid_argument(
+                    std::string("Parameters: ") + group + " trait '" + key +
+                    "' has type '" + schema.type + "' but m_Details holds " +
+                    (held < 5 ? detail_names[held] : "no value") +
+                    "; assign " + detail_names[expected] +
+                    " to m_Details or change the type.");
+            }
+        }
+    };
+    check("neuron", NeuronTraits);
+    check("link", LinkTraits);
+    check("genome", GenomeTraits);
+}
+
+namespace
+{
+void NormalizeTraitDependencyValues(
+    std::map<std::string, TraitParameters>& schemas)
+{
+    for (auto& entry : schemas)
+    {
+        TraitParameters& schema = entry.second;
+        if (schema.dep_key.empty())
+            continue;
+        const auto dependency = schemas.find(schema.dep_key);
+        if (dependency == schemas.end())
+            continue;
+        const std::size_t target =
+            TraitValueIndexForSchemaType(dependency->second.type);
+        if (target == std::variant_npos)
+            continue;
+        for (auto& value : schema.dep_values)
+            CoerceTraitValue(value, target, true);
+    }
+}
+}
+
+void Parameters::NormalizeTraitSchemas()
+{
+    NormalizeTraitDependencyValues(NeuronTraits);
+    NormalizeTraitDependencyValues(LinkTraits);
+    NormalizeTraitDependencyValues(GenomeTraits);
+}
+
 std::string Parameters::Serialize() const
 {
+    RequireConsistentTraitSchemas();
     std::ostringstream output;
     WriteParameters(output, *this);
     return output.str();
@@ -1484,11 +1652,56 @@ bool Parameters::Validate(std::string* error) const
             }
             if (!schema.dep_key.empty())
             {
-                if (schemas.find(schema.dep_key) == schemas.end())
+                const auto dependency = schemas.find(schema.dep_key);
+                if (dependency == schemas.end())
                     return fail(prefix + "dependency key does not exist");
                 if (schema.dep_values.empty())
                     return fail(
                         prefix + "dependency values cannot be empty");
+                // Trait values compare by variant alternative, so a value
+                // of the wrong type can never match the dependency trait.
+                const std::string& dependency_type = dependency->second.type;
+                const std::size_t expected =
+                    TraitValueIndexForSchemaType(dependency_type);
+                if (expected != std::variant_npos)
+                {
+                    const bool numeric_dependency =
+                        expected == 0 || expected == 1;
+                    bool any_match = false;
+                    for (std::size_t index = 0;
+                         index < schema.dep_values.size();
+                         ++index)
+                    {
+                        const TraitType& value = schema.dep_values[index];
+                        if (value.index() == expected)
+                        {
+                            any_match = true;
+                            continue;
+                        }
+                        const bool numeric_value =
+                            std::holds_alternative<int>(value) ||
+                            std::holds_alternative<double>(value);
+                        if (numeric_dependency && numeric_value)
+                        {
+                            return fail(
+                                prefix + "dependency value " +
+                                std::to_string(index) + " is " +
+                                (std::holds_alternative<int>(value)
+                                     ? "an int"
+                                     : "a float") +
+                                " but dependency trait '" + schema.dep_key +
+                                "' has type '" + dependency_type +
+                                "', so it can never match");
+                        }
+                    }
+                    if (!any_match)
+                    {
+                        return fail(
+                            prefix + "no dependency value has the type '" +
+                            dependency_type + "' of dependency trait '" +
+                            schema.dep_key + "', so the trait never applies");
+                    }
+                }
             }
         }
         return true;

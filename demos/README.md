@@ -79,24 +79,21 @@ threshold neurons through the same NEAT engine:
 python demos/xor.py --spiking --generations 100
 python demos/asteroid_nav.py --spiking --generations 25
 python demos/box2d/lunar_lander_box2d.py \
-  --spiking --generations 300 --plot --record-video
+  --spiking --generations 300 --output-dir runs/lander --plot --record-video
 python demos/mujoco/inverted_pendulum_mujoco.py --smoke --spiking
 python demos/xor.py --smoke --mcculloch-pitts
 python demos/run_gymnasium_suite.py \
   --family mujoco --smoke --mcculloch-pitts
 ```
 
-The shared policy maps normalized observations to deterministic seeded
+Each spiking policy maps normalized observations to deterministic seeded
 Poisson rates, advances the SNN for several solver steps per environment
 action, and decodes filtered output firing rates back into the existing
 action adapters. Use `--spiking-steps`, `--spiking-time-step`,
 `--spiking-input-rate`, and `--spiking-output-rate` to tune that temporal
 interface for the Gymnasium tasks.
 
-Spiking physics plots combine the environment replay, fitness history,
-evolved phenotype, and spike raster. They also save the aligned recording as
-`spiking_trace.npz`; recorded environment videos get a matching
-`*-spikes.npz` trace. Spiking Asteroids adds a live side panel with output-rate
+Spiking Asteroids adds a live side panel with output-rate
 meters, active topology, and a moving 200 ms raster, then automatically
 replays the best policy after a finite visible run. `--screenshot FILE` saves
 the first replay frame. Spiking XOR produces a four-panel phenotype, raster,
@@ -108,9 +105,11 @@ For Box2D and MuJoCo, **Show physics GUI** opens the native viewer immediately;
 visible launcher runs use one evaluator so the window stays live. Clear it to
 launch directly in physics-only fast mode with the configured worker count.
 
-The Box2D and MuJoCo examples use one shared, tested trainer:
-`demos/gymnasium_neat.py`. Every task-specific file is directly runnable and
-accepts the same command-line options.
+Every example is a single standalone file: it depends only on
+`pymultineat`, the Python standard library, and third-party packages, so it
+can be copied out of the repository and read top to bottom. The Box2D and
+MuJoCo scripts share one structure and accept the same command-line options;
+they differ only in their task constants and observation/action encoding.
 
 ## Installation
 
@@ -122,8 +121,8 @@ python -m pip install -r requirements-mujoco.txt
 ```
 
 Install `requirements-demos.txt` to enable every simulator, plots, and
-ImageIO/FFmpeg video support. The Box2D installation follows Gymnasium's
-recommendation to install SWIG before the Box2D extra.
+ImageIO/FFmpeg video support. `gymnasium[box2d]` installs a prebuilt Box2D
+wheel; install SWIG first only if pip has to build Box2D from source.
 
 ## Quick start
 
@@ -136,8 +135,8 @@ python demos/box2d/lunar_lander_box2d.py --smoke
 python demos/mujoco/inverted_pendulum_mujoco.py --smoke
 ```
 
-`--inspect` and `--smoke` are intentionally headless diagnostics. Omit them to
-run the visible interactive demo.
+`--inspect` and `--smoke` are intentionally headless diagnostics; each prints
+a one-line JSON summary. Omit them to run the visible demo.
 
 Start a practical run with explicit output and parallel evaluation:
 
@@ -148,20 +147,16 @@ python demos/box2d/bipedal_walker_box2d.py \
   --checkpoint-every 10
 ```
 
-Serial Box2D and MuJoCo runs now open the simulator's native GUI by default.
-Press **F** in the physics window to toggle fast mode at runtime: rendering
-stops, but the same environment continues stepping its physics. Press **F**
-again to restore the GUI. Start directly in maximum-speed physics-only mode
-with `--fast` (or its `--headless` alias):
+Training always runs headless. Unless `--fast` (or its `--headless` alias)
+is given, the current champion is replayed in the simulator's native window
+every `--render-every` generations (default 1) and once at the end:
 
 ```sh
 python demos/box2d/bipedal_walker_box2d.py --fast
 python demos/mujoco/walker2d_mujoco.py --fast
 ```
 
-Parallel workers remain headless and the main process shows the current
-champion once per generation. Use `--render-every N` to reduce that preview
-frequency, or `--fast` to disable it completely.
+Parallel workers are always headless; replays happen in the main process.
 
 Resume the complete population, innovation database, species, and RNG state:
 
@@ -171,12 +166,9 @@ python demos/box2d/bipedal_walker_box2d.py \
   --generations 200 --output-dir runs/bipedal
 ```
 
-Current MultiNEAT 3 builds write `population.state`. For compatibility, a
-binding too old to round-trip the full state writes `population.legacy`
-through its original `Population.Save` API instead.
-
-Use `--record-video` to record the best policy at the end of a run. Interactive
-rendering and video recording are always performed in the main process.
+An output directory holds `best_genome.txt`, `population.state`,
+`metrics.jsonl`, and, when requested, `fitness.png` (`--plot`) and `best.mp4`
+(`--record-video`, which records the best policy at the end of a run).
 
 ## Example catalog
 
@@ -191,7 +183,7 @@ rendering and video recording are always performed in the main process.
 | `bipedal_walker_hardcore_box2d.py` | BipedalWalker-v3, hardcore terrain |
 | `car_racing_box2d.py` | CarRacing-v3, continuous pooled-pixel control |
 | `car_racing_discrete_box2d.py` | CarRacing-v3, discrete pooled-pixel control |
-| `car_racing_nofx_box2d.py` | Compatibility alias for lightweight racing |
+| `car_racing_nofx_box2d.py` | CarRacing-v3, continuous, explicitly without domain randomization |
 
 ### MuJoCo
 
@@ -211,25 +203,24 @@ The suite covers all eleven Gymnasium MuJoCo tasks:
 | `humanoid_mujoco.py` | Humanoid-v5 |
 | `humanoid_standup_mujoco.py` | HumanoidStandup-v5 |
 
-`bipedal_walker_mujoco.py` remains as a compatibility alias for Walker2d.
-
-## Shared features
+## Common features
 
 - Runtime inference of observation and action dimensions.
 - Correct `terminated or truncated` episode handling.
 - Finite-bound-aware continuous action mapping and discrete argmax policies.
-- Recursive vector/tuple/dictionary observation encoding.
+- Bounded vector observation scaling (Box2D) and `tanh` squashing (MuJoCo).
 - Compact grayscale area pooling for CarRacing images.
 - Common case IDs and disjoint training/validation/test seed streams.
 - Successive-halving evaluation and held-out Wilson certification.
 - Persistent worker environments for parallel evaluation.
-- Native Box2D/MuJoCo windows with an in-place **F** fast-physics toggle.
+- Native Box2D/MuJoCo champion replays, or physics-only `--fast` training.
 - Raw negative fitness support via robust rank-based allocation.
 - Full population checkpoints, best-genome files, JSONL metrics, plots, video,
   and deterministic smoke runs.
 - Default, rank-selection, and exploration-heavy algorithm profiles.
 
-List, inspect, or smoke-test a whole family:
+List, inspect, or smoke-test a whole family (each demo runs as its own
+process):
 
 ```sh
 python demos/run_gymnasium_suite.py

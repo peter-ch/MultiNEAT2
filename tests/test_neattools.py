@@ -91,6 +91,14 @@ assert recorder.as_arrays()["membrane"].shape == (9, 2)
 statistics = neattools.spike_train_statistics(recorder)
 assert statistics["total_spikes"] >= 2
 assert statistics["per_neuron"][0]["spike_count"] == 1
+assert len(recorder.events) == statistics["total_spikes"]
+# clear() without a reset hides earlier events; the next step's input spike
+# is stamped at the clear time and must still be reported.
+recorder.clear()
+assert recorder.events == []
+recorder.step([1.0], time_step=0.001)
+assert [event["input"] for event in recorder.events] == [True]
+recorder.simulate([[1.0], *([[0.0]] * 8)], time_step=0.001)
 neattools.DrawSpikingNetwork(spiking, show=False)
 spatial_neurons = spiking.m_neurons
 spatial_neurons[0].m_z = -1.0
